@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "memclaw"
+version = "0.1.0"
+description = "A lightweight, local-first personal memory assistant powered by AI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["memory", "ai", "assistant", "vector-search", "personal-knowledge", "second-brain"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "claude-agent-sdk>=0.1.0",
+    "openai>=1.0.0",
+    "numpy>=1.24.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+memclaw = "memclaw.cli:cli"
+
+[project.urls]
+Repository = "https://github.com/memclaw/memclaw"
+Issues = "https://github.com/memclaw/memclaw/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["memclaw"]
