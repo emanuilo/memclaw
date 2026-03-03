@@ -160,8 +160,101 @@ def status(ctx):
             f"Memory directory : {config.memory_dir}\n"
             f"Memory files     : {len(files)}\n"
             f"Indexed chunks   : {stats['chunks']}\n"
+            f"Stored images    : {stats['images']}\n"
             f"Database         : {config.db_path}",
             title="Memclaw Status",
             border_style="bright_cyan",
         )
     )
+
+
+# ------------------------------------------------------------------
+# Telegram bot
+# ------------------------------------------------------------------
+
+@cli.command()
+@click.pass_context
+def bot(ctx):
+    """Start the Memclaw Telegram bot."""
+    import sys
+
+    from loguru import logger
+    from openai import AsyncOpenAI
+    from telegram.ext import Application, CommandHandler, MessageHandler, filters
+
+    from .bot.handlers import MessageHandlers
+
+    config: MemclawConfig = ctx.obj["config"]
+
+    if not config.telegram_bot_token:
+        console.print("[red]Error:[/red] TELEGRAM_BOT_TOKEN is not set.")
+        console.print("Set it via environment variable or .env file.")
+        raise SystemExit(1)
+
+    if not config.openai_api_key:
+        console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
+        raise SystemExit(1)
+
+    # Logging
+    logger.remove()
+    logger.add(sys.stderr, level="INFO",
+               format="<green>{time:HH:mm:ss}</green> | <level>{level:<8}</level> | <level>{message}</level>")
+    logger.add(
+        str(config.memory_dir / "bot.log"),
+        rotation="10 MB",
+        retention="7 days",
+        level="DEBUG",
+    )
+
+    async def post_init(application: Application) -> None:
+        openai_client = AsyncOpenAI(api_key=config.openai_api_key)
+        handlers = MessageHandlers(config, openai_client)
+        application.bot_data["handlers"] = handlers
+        logger.info("Memclaw bot initialized")
+
+    app = (
+        Application.builder()
+        .token(config.telegram_bot_token)
+        .post_init(post_init)
+        .build()
+    )
+
+    # Thin wrappers that delegate to the handlers instance
+    async def _start(update, context):
+        await context.bot_data["handlers"].start_command(update, context)
+
+    async def _ask(update, context):
+        await context.bot_data["handlers"].ask_command(update, context)
+
+    async def _search(update, context):
+        await context.bot_data["handlers"].search_command(update, context)
+
+    async def _memories(update, context):
+        await context.bot_data["handlers"].memories_command(update, context)
+
+    async def _stats(update, context):
+        await context.bot_data["handlers"].stats_command(update, context)
+
+    async def _text(update, context):
+        await context.bot_data["handlers"].handle_text(update, context)
+
+    async def _photo(update, context):
+        await context.bot_data["handlers"].handle_photo(update, context)
+
+    async def _voice(update, context):
+        await context.bot_data["handlers"].handle_voice(update, context)
+
+    app.add_handler(CommandHandler("start", _start))
+    app.add_handler(CommandHandler("ask", _ask))
+    app.add_handler(CommandHandler("search", _search))
+    app.add_handler(CommandHandler("memories", _memories))
+    app.add_handler(CommandHandler("stats", _stats))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text))
+    app.add_handler(MessageHandler(filters.PHOTO, _photo))
+    app.add_handler(MessageHandler(filters.VOICE, _voice))
+
+    console.print(
+        f"[green]Starting Memclaw Telegram bot...[/green]  "
+        f"(allowed users: {config.allowed_user_ids_list or 'all'})"
+    )
+    app.run_polling(allowed_updates=["message"])

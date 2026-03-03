@@ -83,6 +83,18 @@ class MemoryIndex:
                 mtime REAL NOT NULL
             )
         """)
+
+        # Telegram image registry — maps file_ids to descriptions for retrieval.
+        self.db.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id TEXT NOT NULL,
+                description TEXT NOT NULL,
+                caption TEXT,
+                embedding BLOB,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
         self.db.commit()
 
     @property
@@ -254,13 +266,64 @@ class MemoryIndex:
         return changed
 
     # ------------------------------------------------------------------
+    # Telegram image registry
+    # ------------------------------------------------------------------
+
+    async def store_telegram_image(
+        self,
+        file_id: str,
+        description: str,
+        caption: str | None = None,
+    ):
+        """Store a Telegram image file_id with its AI-generated description."""
+        embedding = await self.get_embedding(description)
+        self.db.execute(
+            "INSERT INTO telegram_images (file_id, description, caption, embedding) "
+            "VALUES (?, ?, ?, ?)",
+            (file_id, description, caption, self.serialize_embedding(embedding)),
+        )
+        self.db.commit()
+
+    def search_telegram_images(
+        self, query_embedding: np.ndarray, limit: int = 5
+    ) -> list[dict]:
+        """Vector search over stored Telegram images. Returns dicts with file_id."""
+        rows = self.db.execute(
+            "SELECT id, file_id, description, caption, embedding, created_at "
+            "FROM telegram_images WHERE embedding IS NOT NULL"
+        ).fetchall()
+
+        if not rows:
+            return []
+
+        results = []
+        for row in rows:
+            stored_emb = self.deserialize_embedding(row[4])
+            similarity = float(
+                np.dot(query_embedding, stored_emb)
+                / (np.linalg.norm(query_embedding) * np.linalg.norm(stored_emb) + 1e-8)
+            )
+            results.append({
+                "id": row[0],
+                "file_id": row[1],
+                "description": row[2],
+                "caption": row[3],
+                "created_at": row[5],
+                "score": similarity,
+            })
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:limit]
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 
     def get_stats(self) -> dict:
         chunks = self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         files = self.db.execute("SELECT COUNT(*) FROM file_meta").fetchone()[0]
-        return {"chunks": chunks, "files": files}
+        images = self.db.execute("SELECT COUNT(*) FROM telegram_images").fetchone()[0]
+        return {"chunks": chunks, "files": files, "images": images}
 
     def close(self):
         self.db.close()

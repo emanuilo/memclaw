@@ -20,11 +20,19 @@ class MemclawConfig:
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
+    # Telegram bot settings
+    telegram_bot_token: str = ""
+    allowed_user_ids: str = ""
+
     def __post_init__(self):
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
         if not self.anthropic_api_key:
             self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not self.telegram_bot_token:
+            self.telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if not self.allowed_user_ids:
+            self.allowed_user_ids = os.environ.get("ALLOWED_USER_IDS", "")
         self.memory_dir = Path(self.memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_subdir.mkdir(exist_ok=True)
@@ -44,3 +52,13 @@ class MemclawConfig:
     def daily_file(self, dt: date | None = None) -> Path:
         dt = dt or date.today()
         return self.memory_subdir / f"{dt.isoformat()}.md"
+
+    @property
+    def allowed_user_ids_list(self) -> list[int]:
+        if not self.allowed_user_ids:
+            return []
+        return [
+            int(uid.strip())
+            for uid in self.allowed_user_ids.split(",")
+            if uid.strip()
+        ]

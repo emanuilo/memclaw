@@ -27,6 +27,10 @@ dependencies = [
     "numpy>=1.24.0",
     "click>=8.0.0",
     "rich>=13.0.0",
+    "python-telegram-bot>=21.0",
+    "httpx>=0.27.0",
+    "beautifulsoup4>=4.12.0",
+    "loguru>=0.7.0",
 ]
 
 [project.scripts]

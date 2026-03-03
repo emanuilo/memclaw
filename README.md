@@ -149,8 +149,12 @@ memclaw --memory-dir ~/my-vault
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | For interactive mode | Powers the Claude agent |
 | `OPENAI_API_KEY` | Yes | Embeddings + image descriptions |
+| `ANTHROPIC_API_KEY` | For interactive / /ask | Powers the Claude agent |
+| `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
+| `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
+
+See [`.env.example`](.env.example) for a template.
 
 ### Directory Structure
 
@@ -173,6 +177,59 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **NumPy for vectors** — cosine similarity computed in-memory, no native extensions required
 - **Claude Agent SDK** — intelligent agent loop that autonomously decides how to handle your input
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
+
+## Telegram Bot
+
+Memclaw ships with a built-in Telegram bot. Send it text, photos, or voice messages and it silently stores everything. Use `/ask` to query your memories with the Claude agent.
+
+### Setup
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
+2. Get your Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot)).
+3. Set the environment variables:
+
+```bash
+export TELEGRAM_BOT_TOKEN=your-bot-token
+export ALLOWED_USER_IDS=your-user-id
+export OPENAI_API_KEY=your-openai-key
+export ANTHROPIC_API_KEY=your-anthropic-key
+```
+
+4. Start the bot:
+
+```bash
+memclaw bot
+```
+
+### Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message with command list |
+| `/ask <question>` | Ask anything — Claude searches your memories and responds |
+| `/search <query>` | Direct hybrid search through your memories |
+| `/memories` | Show today's entries and memory stats |
+| `/stats` | Show overall statistics |
+
+### What gets stored
+
+| Message type | What happens |
+|-------------|-------------|
+| **Text** | Stored as a note. Links are extracted, fetched, and summarized. |
+| **Photo** | AI-described via vision model, description stored and indexed. Telegram file ID saved for later retrieval via `/ask`. |
+| **Voice** | Transcribed via Whisper, stored as text. Links extracted. |
+
+All storage is silent — the bot doesn't reply to regular messages. It only responds to commands.
+
+### Image Retrieval
+
+Ask the bot to find images you've sent before:
+
+```
+/ask show me the photo of the whiteboard from last week
+```
+
+The agent searches your stored image descriptions and sends the matching photo back.
 
 ## Using as a Library
 

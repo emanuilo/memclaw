@@ -198,3 +198,156 @@ class MemclawAgent:
 
     def close(self):
         self.components["index"].close()
+
+
+# ======================================================================
+# Telegram-specific agent
+# ======================================================================
+
+TELEGRAM_SYSTEM_PROMPT = """\
+Today's date: {today}
+
+You are a personal AI assistant with access to the user's memories.
+
+=== MEMORY CONTEXT ===
+{context}
+
+=== INSTRUCTIONS ===
+- Use the memory context above to answer questions.
+- If you need more specific memories, use the memory_search tool.
+- When the user asks to retrieve, show, or send an image, use the image_search tool.
+  The image will be sent automatically — just acknowledge it briefly.
+- Be concise and helpful.
+- Reference specific memories with dates when relevant.
+- If information conflicts, prefer more recent data.
+"""
+
+
+class TelegramAgent:
+    """Agent for the Telegram bot — builds context then uses Claude Agent SDK."""
+
+    def __init__(
+        self,
+        config: MemclawConfig,
+        store: MemoryStore,
+        index: MemoryIndex,
+        search_engine: HybridSearch,
+    ):
+        self.config = config
+        self.store = store
+        self.index = index
+        self.search = search_engine
+        self._found_images: list[dict] = []
+
+        tools = self._create_tools()
+        self.server = create_sdk_mcp_server(
+            name="memclaw-tg", version="0.1.0", tools=tools
+        )
+        self.tool_names = [
+            "mcp__memclaw-tg__memory_search",
+            "mcp__memclaw-tg__image_search",
+        ]
+
+    def _create_tools(self):
+        search = self.search
+        index = self.index
+        found_images = self._found_images
+
+        @tool(
+            "memory_search",
+            "Search through stored memories using natural language",
+            {"query": str},
+        )
+        async def memory_search_tool(args):
+            results = await search.search(args["query"], limit=args.get("limit", 10))
+            formatted = _format_results(results)
+            return {"content": [{"type": "text", "text": formatted}]}
+
+        @tool(
+            "image_search",
+            "Search for previously stored images to send to the user. "
+            "Use when the user asks to retrieve, show, or send an image. "
+            "The image will be sent automatically.",
+            {"query": str},
+        )
+        async def image_search_tool(args):
+            query_emb = await index.get_embedding(args["query"])
+            results = index.search_telegram_images(query_emb, limit=3)
+            found_images.extend(results)
+
+            if results:
+                lines = []
+                for r in results:
+                    line = f"- {r['description']}"
+                    if r.get("caption"):
+                        line += f" (caption: {r['caption']})"
+                    lines.append(line)
+                return {
+                    "content": [{
+                        "type": "text",
+                        "text": (
+                            f"Found {len(results)} image(s):\n"
+                            + "\n".join(lines)
+                            + "\nImages will be sent automatically."
+                        ),
+                    }]
+                }
+            return {
+                "content": [{"type": "text", "text": "No matching images found."}]
+            }
+
+        return [memory_search_tool, image_search_tool]
+
+    async def build_context(self, question: str) -> str:
+        """Build memory context to inject into the system prompt."""
+        parts: list[str] = []
+
+        # Always include permanent memory
+        memory_content = self.store.read_file(self.config.memory_file)
+        if memory_content.strip():
+            parts.append("### Permanent Memory")
+            parts.append(memory_content[:3000])
+
+        # Semantic search for query-relevant memories
+        results = await self.search.search(question, limit=10)
+        if results:
+            parts.append("\n### Relevant Memories")
+            for r in results:
+                source = Path(r.file_path).stem
+                parts.append(f"[{source}] {r.content.strip()}")
+
+        return "\n\n".join(parts) if parts else "No memories found yet."
+
+    async def ask(self, question: str) -> tuple[str, list[dict]]:
+        """Run the agent for a /ask query.
+
+        Returns (response_text, found_images).
+        """
+        self._found_images.clear()
+
+        context = await self.build_context(question)
+
+        opts = ClaudeAgentOptions(
+            system_prompt=TELEGRAM_SYSTEM_PROMPT.format(
+                today=date.today().isoformat(),
+                context=context,
+            ),
+            mcp_servers={"memclaw-tg": self.server},
+            allowed_tools=self.tool_names,
+            permission_mode="bypassPermissions",
+            max_turns=10,
+        )
+
+        last_text = ""
+        async for message in query(prompt=question, options=opts):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if hasattr(block, "text"):
+                        last_text = block.text
+            elif isinstance(message, ResultMessage) and hasattr(message, "result"):
+                last_text = message.result or last_text
+
+        return (
+            last_text or "I couldn't generate a response.",
+            list(self._found_images),
+        )

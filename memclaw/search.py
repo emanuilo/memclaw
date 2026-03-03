@@ -30,6 +30,12 @@ class HybridSearch:
         self.config = config
         self.index = index
 
+    async def search_images(self, query: str, limit: int = 5) -> list[dict]:
+        """Search stored Telegram images by semantic similarity."""
+        await self.index.sync()
+        query_embedding = await self.index.get_embedding(query)
+        return self.index.search_telegram_images(query_embedding, limit=limit)
+
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         # Make sure the index is fresh before searching.
         await self.index.sync()
