@@ -1,15 +1,12 @@
 """Telegram bot message handlers for Memclaw.
 
-Handles incoming messages (text, photo, voice) and commands.
-Silently stores all incoming content as memories; uses the Claude Agent SDK
-for the /ask command.
+Every message (text, photo, voice) goes through the Claude agent, which
+autonomously decides whether to store, search, or just respond.
 """
 
 from __future__ import annotations
 
 import base64
-from functools import wraps
-from pathlib import Path
 
 from loguru import logger
 from openai import AsyncOpenAI
@@ -24,23 +21,8 @@ from ..store import MemoryStore
 from .link_processor import LinkProcessor
 
 
-def restricted(allowed_user_ids: list[int]):
-    """Decorator that silently drops messages from unauthorised users."""
-
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-            if update.effective_user.id not in allowed_user_ids:
-                return
-            return await func(self, update, context)
-
-        return wrapper
-
-    return decorator
-
-
 class MessageHandlers:
-    """Handles all Telegram message types and bot commands."""
+    """Routes every Telegram message through the Claude agent."""
 
     def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
         self.config = config
@@ -54,8 +36,29 @@ class MessageHandlers:
     def _check_user(self, user_id: int) -> bool:
         return user_id in self.config.allowed_user_ids_list
 
+    async def _send_response(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        response_text: str,
+        found_images: list[dict],
+    ):
+        """Send agent response: images first, then text."""
+        for img in found_images:
+            try:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=img["file_id"],
+                    caption=img.get("caption") or None,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send image {img.get('file_id')}: {e}")
+
+        if response_text:
+            await update.message.reply_text(response_text[:4096])
+
     # ------------------------------------------------------------------
-    # Commands
+    # /start — the only command
     # ------------------------------------------------------------------
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,100 +67,13 @@ class MessageHandlers:
 
         await update.message.reply_text(
             "Hi! I'm your personal memory assistant powered by Memclaw.\n\n"
-            "Send me text, images, or voice messages — I'll remember everything.\n\n"
-            "Commands:\n"
-            "/ask <question> - Ask me anything based on your memories\n"
-            "/search <query> - Search your memories\n"
-            "/memories - Show today's entries\n"
-            "/stats - Show statistics"
-        )
-
-    async def ask_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /ask — uses Claude Agent SDK with memory context."""
-        if not self._check_user(update.effective_user.id):
-            return
-
-        question = " ".join(context.args) if context.args else ""
-        if not question:
-            await update.message.reply_text("Usage: /ask <your question>")
-            return
-
-        logger.info(f"/ask from user {update.effective_user.id}: {question}")
-
-        response_text, found_images = await self.agent.ask(question)
-
-        # Send images first
-        image_sent = False
-        for img in found_images:
-            try:
-                await context.bot.send_photo(
-                    chat_id=update.effective_chat.id,
-                    photo=img["file_id"],
-                    caption=img.get("caption") or None,
-                )
-                image_sent = True
-            except Exception as e:
-                logger.error(f"Failed to send image {img.get('file_id')}: {e}")
-
-        # Always send the text response
-        if response_text:
-            await update.message.reply_text(response_text[:4096])
-
-    async def search_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._check_user(update.effective_user.id):
-            return
-
-        query_text = " ".join(context.args) if context.args else ""
-        if not query_text:
-            await update.message.reply_text("Usage: /search <query>")
-            return
-
-        results = await self.search.search(query_text, limit=5)
-        if not results:
-            await update.message.reply_text("No relevant memories found.")
-            return
-
-        response = "Search Results:\n\n"
-        for i, r in enumerate(results, 1):
-            source = Path(r.file_path).stem
-            response += f"{i}. [{source}] {r.content.strip()[:200]}\n\n"
-
-        await update.message.reply_text(response[:4096])
-
-    async def memories_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._check_user(update.effective_user.id):
-            return
-
-        files = self.store.list_files()
-        stats = self.index.get_stats()
-
-        response = f"Memory files: {len(files)}  |  Chunks: {stats['chunks']}  |  Images: {stats['images']}\n\n"
-
-        today_file = self.config.daily_file()
-        if today_file.exists():
-            response += f"Today's entries:\n{self.store.read_file(today_file)[:3000]}"
-        else:
-            response += "No entries today yet."
-
-        await update.message.reply_text(response[:4096])
-
-    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._check_user(update.effective_user.id):
-            return
-
-        files = self.store.list_files()
-        stats = self.index.get_stats()
-
-        await update.message.reply_text(
-            f"Memclaw Statistics:\n\n"
-            f"Memory files: {len(files)}\n"
-            f"Indexed chunks: {stats['chunks']}\n"
-            f"Stored images: {stats['images']}\n"
-            f"Memory directory: {self.config.memory_dir}"
+            "Just send me anything — text, photos, or voice messages.\n\n"
+            "I'll automatically decide whether to remember it, search your "
+            "memories, or retrieve images. No commands needed, just talk to me."
         )
 
     # ------------------------------------------------------------------
-    # Message handlers — silent storage
+    # Message handlers — everything goes through the agent
     # ------------------------------------------------------------------
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -167,17 +83,22 @@ class MessageHandlers:
         text = update.message.text
         logger.info(f"Text from user {update.effective_user.id}: {text[:100]}")
 
-        # Process links
+        # Pre-process links and include summaries in the prompt
+        prompt_parts = [text]
         links = await self.link_processor.process_links(text)
         for link in links:
             if link.get("summary"):
+                # Store link summary in index for future retrieval
                 link_entry = f"Link: {link['url']}\nSummary: {link['summary']}"
                 file_path = self.store.save(link_entry, entry_type="link")
                 await self.index.index_file(file_path)
+                prompt_parts.append(
+                    f"\n[Link summary] {link['url']}: {link['summary']}"
+                )
 
-        # Store the message itself
-        file_path = self.store.save(text, entry_type="note")
-        await self.index.index_file(file_path)
+        prompt = "\n".join(prompt_parts)
+        response_text, found_images = await self.agent.handle(prompt)
+        await self._send_response(update, context, response_text, found_images)
 
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_user(update.effective_user.id):
@@ -188,22 +109,21 @@ class MessageHandlers:
 
         logger.info(f"Photo from user {update.effective_user.id}")
 
-        # Download and encode
+        # Download and describe via vision API
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
         base64_image = base64.b64encode(photo_bytes).decode("utf-8")
 
-        # Generate description via vision API
-        prompt = "Describe this image in detail in about 50 tokens."
+        vision_prompt = "Describe this image in detail in about 50 tokens."
         if caption:
-            prompt += f" Caption: {caption}"
+            vision_prompt += f" Caption: {caption}"
 
         response = await self.openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": vision_prompt},
                     {
                         "type": "image_url",
                         "image_url": {
@@ -217,7 +137,7 @@ class MessageHandlers:
         )
         description = response.choices[0].message.content
 
-        # Store in memory as text
+        # Store image description in memory
         combined = f"Image: {description}."
         if caption:
             combined += f" Caption: {caption}"
@@ -233,6 +153,7 @@ class MessageHandlers:
         )
 
         # Process links in caption
+        link_info = ""
         if caption:
             links = await self.link_processor.process_links(caption)
             for link in links:
@@ -242,6 +163,12 @@ class MessageHandlers:
                         entry_type="link",
                     )
                     await self.index.index_file(lp)
+                    link_info += f"\n[Link summary] {link['url']}: {link['summary']}"
+
+        # Send to agent so it can respond
+        prompt = f"[Image received] {combined}{link_info}"
+        response_text, found_images = await self.agent.handle(prompt)
+        await self._send_response(update, context, response_text, found_images)
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_user(update.effective_user.id):
@@ -265,7 +192,8 @@ class MessageHandlers:
         file_path = self.store.save(text, entry_type="voice")
         await self.index.index_file(file_path)
 
-        # Process links from transcription
+        # Process links
+        link_info = ""
         links = await self.link_processor.process_links(text)
         for link in links:
             if link.get("summary"):
@@ -274,6 +202,12 @@ class MessageHandlers:
                     entry_type="link",
                 )
                 await self.index.index_file(lp)
+                link_info += f"\n[Link summary] {link['url']}: {link['summary']}"
+
+        # Send to agent so it can respond
+        prompt = f"[Voice message] {text}{link_info}"
+        response_text, found_images = await self.agent.handle(prompt)
+        await self._send_response(update, context, response_text, found_images)
 
     def close(self):
         self.index.close()

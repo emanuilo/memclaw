@@ -31,6 +31,14 @@ def cli(ctx, memory_dir):
     ctx.obj["config"] = config
 
     if ctx.invoked_subcommand is None:
+        if not config.anthropic_api_key:
+            console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
+            console.print("Set it in your environment, .env file, or ~/.memclaw/.env")
+            raise SystemExit(1)
+        if not config.openai_api_key:
+            console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
+            console.print("Set it in your environment, .env file, or ~/.memclaw/.env")
+            raise SystemExit(1)
         asyncio.run(_interactive(config))
 
 
@@ -66,8 +74,12 @@ async def _interactive(config: MemclawConfig):
             if not stripped:
                 continue
 
-            with console.status("[cyan]Thinking...[/cyan]"):
-                response = await agent.chat(stripped)
+            try:
+                with console.status("[cyan]Thinking...[/cyan]"):
+                    response = await agent.chat(stripped)
+            except Exception as e:
+                console.print(f"\n[red]Error:[/red] {e}\n")
+                continue
 
             if response:
                 console.print()
@@ -223,18 +235,6 @@ def bot(ctx):
     async def _start(update, context):
         await context.bot_data["handlers"].start_command(update, context)
 
-    async def _ask(update, context):
-        await context.bot_data["handlers"].ask_command(update, context)
-
-    async def _search(update, context):
-        await context.bot_data["handlers"].search_command(update, context)
-
-    async def _memories(update, context):
-        await context.bot_data["handlers"].memories_command(update, context)
-
-    async def _stats(update, context):
-        await context.bot_data["handlers"].stats_command(update, context)
-
     async def _text(update, context):
         await context.bot_data["handlers"].handle_text(update, context)
 
@@ -245,10 +245,6 @@ def bot(ctx):
         await context.bot_data["handlers"].handle_voice(update, context)
 
     app.add_handler(CommandHandler("start", _start))
-    app.add_handler(CommandHandler("ask", _ask))
-    app.add_handler(CommandHandler("search", _search))
-    app.add_handler(CommandHandler("memories", _memories))
-    app.add_handler(CommandHandler("stats", _stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text))
     app.add_handler(MessageHandler(filters.PHOTO, _photo))
     app.add_handler(MessageHandler(filters.VOICE, _voice))
