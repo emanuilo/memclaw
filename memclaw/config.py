@@ -5,6 +5,12 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load .env from current directory and ~/.memclaw/.env
+load_dotenv()
+load_dotenv(Path.home() / ".memclaw" / ".env")
+
 
 @dataclass
 class MemclawConfig:

@@ -7,9 +7,9 @@ from pathlib import Path
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ClaudeSDKClient,
     ResultMessage,
     create_sdk_mcp_server,
-    query,
     tool,
 )
 from openai import AsyncOpenAI
@@ -152,7 +152,7 @@ def create_memclaw_tools(config: MemclawConfig):
 
 
 class MemclawAgent:
-    """High-level agent that wraps the Claude Agent SDK."""
+    """High-level agent that wraps the Claude Agent SDK using ClaudeSDKClient."""
 
     TOOL_NAMES = [
         "mcp__memclaw__memory_save",
@@ -166,11 +166,10 @@ class MemclawAgent:
         self.server = create_sdk_mcp_server(
             name="memclaw", version="0.1.0", tools=self.tools
         )
-        self._session_id: str | None = None
 
     async def chat(self, prompt: str) -> str:
         """Send a message to the agent and return its text response."""
-        opts: dict = dict(
+        options = ClaudeAgentOptions(
             system_prompt=SYSTEM_PROMPT.format(today=date.today().isoformat()),
             mcp_servers={"memclaw": self.server},
             allowed_tools=self.TOOL_NAMES,
@@ -178,21 +177,16 @@ class MemclawAgent:
             max_turns=10,
         )
 
-        if self._session_id:
-            opts["resume"] = self._session_id
-
-        options = ClaudeAgentOptions(**opts)
-
         last_text = ""
-        async for message in query(prompt=prompt, options=options):
-            if hasattr(message, "subtype") and message.subtype == "init":
-                self._session_id = message.session_id
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if hasattr(block, "text"):
-                        last_text = block.text
-            elif isinstance(message, ResultMessage) and hasattr(message, "result"):
-                last_text = message.result or last_text
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(prompt)
+            async for message in client.receive_response():
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if hasattr(block, "text"):
+                            last_text = block.text
+                elif isinstance(message, ResultMessage) and hasattr(message, "result"):
+                    last_text = message.result or last_text
 
         return last_text
 
@@ -207,24 +201,40 @@ class MemclawAgent:
 TELEGRAM_SYSTEM_PROMPT = """\
 Today's date: {today}
 
-You are a personal AI assistant with access to the user's memories.
+You are Memclaw, a personal memory assistant on Telegram. Every message the user \
+sends comes to you. You must decide what to do based on the user's intent:
+
+1. **Store**: When the user shares information, thoughts, notes, facts, or anything \
+worth remembering — save it using the memory_save tool. Briefly confirm what you saved.
+2. **Search**: When the user asks a question or wants to recall something — search \
+their memories using memory_search. Present results clearly with dates.
+3. **Images**: When the user asks to retrieve, show, or find an image — use \
+image_search. The image will be sent automatically, just acknowledge it briefly.
+4. **Conversation**: Sometimes the user just wants to chat. Respond naturally. If they \
+mention something worth remembering, save it too.
+
+You may also receive pre-processed content:
+- "[Image received]" followed by an AI-generated description — the image is already \
+stored. Acknowledge it and remember the content.
+- "[Voice message]" followed by a transcription — the voice is already transcribed \
+and stored. Respond to the content.
+- "[Link summary]" entries — links have been fetched and summarized for you.
 
 === MEMORY CONTEXT ===
 {context}
 
-=== INSTRUCTIONS ===
-- Use the memory context above to answer questions.
-- If you need more specific memories, use the memory_search tool.
-- When the user asks to retrieve, show, or send an image, use the image_search tool.
-  The image will be sent automatically — just acknowledge it briefly.
+=== GUIDELINES ===
+- Always respond to the user. Never be silent.
 - Be concise and helpful.
+- When intent is ambiguous, lean towards storing when sharing info and searching \
+when asking questions.
 - Reference specific memories with dates when relevant.
 - If information conflicts, prefer more recent data.
 """
 
 
 class TelegramAgent:
-    """Agent for the Telegram bot — builds context then uses Claude Agent SDK."""
+    """Agent for the Telegram bot — every message goes through this agent."""
 
     def __init__(
         self,
@@ -244,14 +254,29 @@ class TelegramAgent:
             name="memclaw-tg", version="0.1.0", tools=tools
         )
         self.tool_names = [
+            "mcp__memclaw-tg__memory_save",
             "mcp__memclaw-tg__memory_search",
             "mcp__memclaw-tg__image_search",
         ]
 
     def _create_tools(self):
-        search = self.search
+        store = self.store
         index = self.index
+        search = self.search
         found_images = self._found_images
+
+        @tool("memory_save", "Save a new memory, thought, or note", {"content": str})
+        async def memory_save_tool(args):
+            content: str = args["content"]
+            permanent: bool = args.get("permanent", False)
+            entry_type: str = args.get("entry_type", "note")
+            tags = args.get("tags")
+
+            file_path = store.save(
+                content, permanent=permanent, entry_type=entry_type, tags=tags
+            )
+            await index.index_file(file_path)
+            return {"content": [{"type": "text", "text": f"Memory saved to {file_path.name}"}]}
 
         @tool(
             "memory_search",
@@ -296,9 +321,9 @@ class TelegramAgent:
                 "content": [{"type": "text", "text": "No matching images found."}]
             }
 
-        return [memory_search_tool, image_search_tool]
+        return [memory_save_tool, memory_search_tool, image_search_tool]
 
-    async def build_context(self, question: str) -> str:
+    async def build_context(self, message: str) -> str:
         """Build memory context to inject into the system prompt."""
         parts: list[str] = []
 
@@ -308,8 +333,8 @@ class TelegramAgent:
             parts.append("### Permanent Memory")
             parts.append(memory_content[:3000])
 
-        # Semantic search for query-relevant memories
-        results = await self.search.search(question, limit=10)
+        # Semantic search for message-relevant memories
+        results = await self.search.search(message, limit=10)
         if results:
             parts.append("\n### Relevant Memories")
             for r in results:
@@ -318,16 +343,16 @@ class TelegramAgent:
 
         return "\n\n".join(parts) if parts else "No memories found yet."
 
-    async def ask(self, question: str) -> tuple[str, list[dict]]:
-        """Run the agent for a /ask query.
+    async def handle(self, message: str) -> tuple[str, list[dict]]:
+        """Process any message through the agent.
 
         Returns (response_text, found_images).
         """
         self._found_images.clear()
 
-        context = await self.build_context(question)
+        context = await self.build_context(message)
 
-        opts = ClaudeAgentOptions(
+        options = ClaudeAgentOptions(
             system_prompt=TELEGRAM_SYSTEM_PROMPT.format(
                 today=date.today().isoformat(),
                 context=context,
@@ -339,13 +364,15 @@ class TelegramAgent:
         )
 
         last_text = ""
-        async for message in query(prompt=question, options=opts):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if hasattr(block, "text"):
-                        last_text = block.text
-            elif isinstance(message, ResultMessage) and hasattr(message, "result"):
-                last_text = message.result or last_text
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(message)
+            async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    for block in msg.content:
+                        if hasattr(block, "text"):
+                            last_text = block.text
+                elif isinstance(msg, ResultMessage) and hasattr(msg, "result"):
+                    last_text = msg.result or last_text
 
         return (
             last_text or "I couldn't generate a response.",

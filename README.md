@@ -30,7 +30,9 @@ Think of it as your second brain — one that actually remembers.
 ## Quick Start
 
 ```bash
-pip install memclaw
+git clone https://github.com/memclaw/memclaw.git
+cd memclaw
+pip install -e .
 ```
 
 Set your API keys:
@@ -180,7 +182,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 
 ## Telegram Bot
 
-Memclaw ships with a built-in Telegram bot. Send it text, photos, or voice messages and it silently stores everything. Use `/ask` to query your memories with the Claude agent.
+Memclaw ships with a built-in Telegram bot. Just talk to it naturally — no commands needed. The agent figures out what to do with every message: store it, search your memories, retrieve images, or just chat.
 
 ### Setup
 
@@ -201,35 +203,32 @@ export ANTHROPIC_API_KEY=your-anthropic-key
 memclaw bot
 ```
 
-### Bot Commands
+### How it works
 
-| Command | Description |
-|---------|-------------|
-| `/start` | Welcome message with command list |
-| `/ask <question>` | Ask anything — Claude searches your memories and responds |
-| `/search <query>` | Direct hybrid search through your memories |
-| `/memories` | Show today's entries and memory stats |
-| `/stats` | Show overall statistics |
-
-### What gets stored
+Every message goes through the Claude agent, which autonomously decides what to do:
 
 | Message type | What happens |
 |-------------|-------------|
-| **Text** | Stored as a note. Links are extracted, fetched, and summarized. |
-| **Photo** | AI-described via vision model, description stored and indexed. Telegram file ID saved for later retrieval via `/ask`. |
-| **Voice** | Transcribed via Whisper, stored as text. Links extracted. |
+| **Text** | Agent decides: store as memory, search existing memories, or both. Links are extracted, fetched, and summarized automatically. |
+| **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. File ID saved for later retrieval. |
+| **Voice** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
 
-All storage is silent — the bot doesn't reply to regular messages. It only responds to commands.
+The bot always responds — it's a conversation, not a silent inbox.
 
-### Image Retrieval
-
-Ask the bot to find images you've sent before:
+### Examples
 
 ```
-/ask show me the photo of the whiteboard from last week
-```
+> Just had coffee with Alex. She's moving to Berlin for a role at Stripe.
+Got it! I've saved that Alex is moving to Berlin for a new role at Stripe.
 
-The agent searches your stored image descriptions and sends the matching photo back.
+> Who is Alex?
+Based on your memories, Alex is someone you had coffee with recently.
+She's moving to Berlin for a new role at Stripe.
+
+> Show me the whiteboard photo from last week
+[sends the matching photo]
+Here's the sprint planning whiteboard you saved last week.
+```
 
 ## Using as a Library
 
