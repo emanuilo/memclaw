@@ -76,7 +76,7 @@ async def _interactive(config: MemclawConfig):
 
             try:
                 with console.status("[cyan]Thinking...[/cyan]"):
-                    response = await agent.chat(stripped)
+                    response, _images = await agent.handle(stripped)
             except Exception as e:
                 console.print(f"\n[red]Error:[/red] {e}\n")
                 continue

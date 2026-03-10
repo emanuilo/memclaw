@@ -1,7 +1,7 @@
 """Telegram bot message handlers for Memclaw.
 
-Every message (text, photo, voice) goes through the Claude agent, which
-autonomously decides whether to store, search, or just respond.
+Every message (text, photo, voice) goes through the unified MemclawAgent,
+which autonomously decides whether to store, search, or just respond.
 """
 
 from __future__ import annotations
@@ -13,24 +13,18 @@ from openai import AsyncOpenAI
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ..agent import TelegramAgent
+from ..agent import MemclawAgent
 from ..config import MemclawConfig
-from ..index import MemoryIndex
-from ..search import HybridSearch
-from ..store import MemoryStore
 from .link_processor import LinkProcessor
 
 
 class MessageHandlers:
-    """Routes every Telegram message through the Claude agent."""
+    """Routes every Telegram message through the unified Memclaw agent."""
 
     def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
         self.config = config
         self.openai_client = openai_client
-        self.store = MemoryStore(config)
-        self.index = MemoryIndex(config)
-        self.search = HybridSearch(config, self.index)
-        self.agent = TelegramAgent(config, self.store, self.index, self.search)
+        self.agent = MemclawAgent(config)
         self.link_processor = LinkProcessor(openai_client)
 
     def _check_user(self, user_id: int) -> bool:
@@ -88,10 +82,9 @@ class MessageHandlers:
         links = await self.link_processor.process_links(text)
         for link in links:
             if link.get("summary"):
-                # Store link summary in index for future retrieval
                 link_entry = f"Link: {link['url']}\nSummary: {link['summary']}"
-                file_path = self.store.save(link_entry, entry_type="link")
-                await self.index.index_file(file_path)
+                file_path = self.agent.store.save(link_entry, entry_type="link")
+                await self.agent.index.index_file(file_path)
                 prompt_parts.append(f"\n[Link summary] {link['url']}: {link['summary']}")
 
         prompt = "\n".join(prompt_parts)
@@ -119,15 +112,13 @@ class MessageHandlers:
             links = await self.link_processor.process_links(caption)
             for link in links:
                 if link.get("summary"):
-                    lp = self.store.save(
+                    lp = self.agent.store.save(
                         f"Link: {link['url']}\nSummary: {link['summary']}",
                         entry_type="link",
                     )
-                    await self.index.index_file(lp)
+                    await self.agent.index.index_file(lp)
                     link_info += f"\n[Link summary] {link['url']}: {link['summary']}"
 
-        # Pass image directly to the agent — it sees the image, describes it,
-        # and uses telegram_image_save to store description + file_id
         prompt_text = f"User sent a photo. file_id={photo.file_id}"
         if caption:
             prompt_text += f"\nCaption: {caption}"
@@ -160,25 +151,24 @@ class MessageHandlers:
         logger.debug(f"Transcribed: {text[:100]}")
 
         # Store transcription
-        file_path = self.store.save(text, entry_type="voice")
-        await self.index.index_file(file_path)
+        file_path = self.agent.store.save(text, entry_type="voice")
+        await self.agent.index.index_file(file_path)
 
         # Process links
         link_info = ""
         links = await self.link_processor.process_links(text)
         for link in links:
             if link.get("summary"):
-                lp = self.store.save(
+                lp = self.agent.store.save(
                     f"Link: {link['url']}\nSummary: {link['summary']}",
                     entry_type="link",
                 )
-                await self.index.index_file(lp)
+                await self.agent.index.index_file(lp)
                 link_info += f"\n[Link summary] {link['url']}: {link['summary']}"
 
-        # Send to agent so it can respond
         prompt = f"[Voice message] {text}{link_info}"
         response_text, found_images = await self.agent.handle(prompt)
         await self._send_response(update, context, response_text, found_images)
 
     def close(self):
-        self.index.close()
+        self.agent.close()
