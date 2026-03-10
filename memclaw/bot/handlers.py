@@ -82,10 +82,10 @@ class MessageHandlers:
         links = await self.link_processor.process_links(text)
         for link in links:
             if link.get("summary"):
-                link_entry = f"Link: {link['url']}\nSummary: {link['summary']}"
-                file_path = self.agent.store.save(link_entry, entry_type="link")
-                await self.agent.index.index_file(file_path)
-                prompt_parts.append(f"\n[Link summary] {link['url']}: {link['summary']}")
+                prompt_parts.append(
+                    f"\n[Link summary] {link['url']}: {link['summary']}"
+                    "\nThis summary has NOT been saved yet. Save it if the content is worth remembering."
+                )
 
         prompt = "\n".join(prompt_parts)
         response_text, found_images = await self.agent.handle(prompt)
@@ -112,12 +112,10 @@ class MessageHandlers:
             links = await self.link_processor.process_links(caption)
             for link in links:
                 if link.get("summary"):
-                    lp = self.agent.store.save(
-                        f"Link: {link['url']}\nSummary: {link['summary']}",
-                        entry_type="link",
+                    link_info += (
+                        f"\n[Link summary] {link['url']}: {link['summary']}"
+                        "\nThis summary has NOT been saved yet. Save it if the content is worth remembering."
                     )
-                    await self.agent.index.index_file(lp)
-                    link_info += f"\n[Link summary] {link['url']}: {link['summary']}"
 
         prompt_text = f"User sent a photo. file_id={photo.file_id}"
         if caption:
@@ -150,23 +148,22 @@ class MessageHandlers:
         text = transcription.text
         logger.debug(f"Transcribed: {text[:100]}")
 
-        # Store transcription
-        file_path = self.agent.store.save(text, entry_type="voice")
-        await self.agent.index.index_file(file_path)
-
         # Process links
         link_info = ""
         links = await self.link_processor.process_links(text)
         for link in links:
             if link.get("summary"):
-                lp = self.agent.store.save(
-                    f"Link: {link['url']}\nSummary: {link['summary']}",
-                    entry_type="link",
+                link_info += (
+                    f"\n[Link summary] {link['url']}: {link['summary']}"
+                    "\nThis summary has NOT been saved yet. Save it if the content is worth remembering."
                 )
-                await self.agent.index.index_file(lp)
-                link_info += f"\n[Link summary] {link['url']}: {link['summary']}"
 
-        prompt = f"[Voice message] {text}{link_info}"
+        # Send to agent so it can respond — transcription is NOT pre-saved
+        prompt = (
+            f"[Voice message] {text}"
+            "\nThis transcription has NOT been saved yet. Save it if the content is worth remembering."
+            f"{link_info}"
+        )
         response_text, found_images = await self.agent.handle(prompt)
         await self._send_response(update, context, response_text, found_images)
 
