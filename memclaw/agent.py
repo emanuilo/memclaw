@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import AsyncIterator
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +96,7 @@ class MemclawAgent:
         self.index = MemoryIndex(config)
         self.search = HybridSearch(config, self.index)
         self._found_images: list[dict] = []
+        self._history: list[dict] = []
 
         tools = self._create_tools()
         self.server = create_sdk_mcp_server(name="memclaw", version="0.1.0", tools=tools)
@@ -294,6 +295,14 @@ class MemclawAgent:
         """
         self._found_images.clear()
 
+        # Append user message to history (use placeholder for images)
+        history_content = "[User sent a photo]" if image_b64 else message
+        self._history.append({
+            "role": "user",
+            "content": history_content,
+            "timestamp": datetime.now().isoformat(),
+        })
+
         context = await self.build_context(message)
 
         options = ClaudeAgentOptions(
@@ -307,9 +316,9 @@ class MemclawAgent:
             max_turns=10,
         )
 
-        # Build content blocks — text only, or text + image
+        # Build content blocks for the current message
         if image_b64:
-            content_blocks: list[dict[str, Any]] = [
+            current_content: list[dict[str, Any]] | str = [
                 {
                     "type": "image",
                     "source": {
@@ -321,20 +330,27 @@ class MemclawAgent:
                 {"type": "text", "text": message},
             ]
         else:
-            content_blocks = None
+            current_content = message
+
+        # Build messages iterator: prior history + current message
+        history_snapshot = list(self._history[:-1])  # exclude the just-appended entry
+
+        async def _messages() -> AsyncIterator[dict[str, Any]]:
+            # Send prior conversation history
+            for entry in history_snapshot:
+                yield {
+                    "type": "user" if entry["role"] == "user" else "assistant",
+                    "message": {"role": entry["role"], "content": entry["content"]},
+                }
+            # Send the current user message
+            yield {
+                "type": "user",
+                "message": {"role": "user", "content": current_content},
+            }
 
         last_text = ""
         async with ClaudeSDKClient(options=options) as client:
-            if content_blocks is not None:
-                async def _image_msg() -> AsyncIterator[dict[str, Any]]:
-                    yield {
-                        "type": "user",
-                        "message": {"role": "user", "content": content_blocks},
-                    }
-
-                await client.query(_image_msg())
-            else:
-                await client.query(message)
+            await client.query(_messages())
 
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
@@ -358,8 +374,21 @@ class MemclawAgent:
                         cost=cost,
                     )
 
+        # Append assistant response to history
+        response_text = last_text or "I couldn't generate a response."
+        self._history.append({
+            "role": "assistant",
+            "content": response_text,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+        # Trim history to keep last N pairs (2N entries)
+        max_entries = self.config.conversation_history_limit * 2
+        if len(self._history) > max_entries:
+            self._history = self._history[-max_entries:]
+
         return (
-            last_text or "I couldn't generate a response.",
+            response_text,
             list(self._found_images),
         )
 

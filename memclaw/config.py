@@ -26,6 +26,9 @@ class MemclawConfig:
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
+    # Conversation continuity
+    conversation_history_limit: int = 10
+
     # Telegram bot settings
     telegram_bot_token: str = ""
     allowed_user_ids: str = ""
