@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -80,3 +81,24 @@ class MemoryStore:
             if content.strip():
                 result.append((path, content))
         return result
+
+    _DAILY_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
+
+    def list_unconsolidated_files(self, consolidated_through: date | None = None) -> list[Path]:
+        """List daily files whose date is after *consolidated_through*.
+
+        If *consolidated_through* is None, returns all daily files.
+        Results are sorted by date ascending.
+        """
+        daily_files: list[tuple[date, Path]] = []
+        for path in self.config.memory_subdir.glob("*.md"):
+            m = self._DAILY_RE.match(path.name)
+            if m is None:
+                continue
+            file_date = date.fromisoformat(m.group(1))
+            if consolidated_through is not None and file_date <= consolidated_through:
+                continue
+            daily_files.append((file_date, path))
+
+        daily_files.sort(key=lambda t: t[0])
+        return [path for _, path in daily_files]

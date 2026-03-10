@@ -154,6 +154,49 @@ def search(ctx, query_text, limit):
         )
 
 
+@cli.command()
+@click.option("--since", "since_date", default=None, help="Consolidate daily files after this date (YYYY-MM-DD)")
+@click.pass_context
+def consolidate(ctx, since_date):
+    """Consolidate daily memory files into MEMORY.md."""
+    from datetime import date as date_type
+
+    from .agent import MemclawAgent
+
+    config: MemclawConfig = ctx.obj["config"]
+
+    if not config.anthropic_api_key:
+        console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
+        raise SystemExit(1)
+    if not config.openai_api_key:
+        console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
+        raise SystemExit(1)
+
+    override = None
+    if since_date:
+        try:
+            override = date_type.fromisoformat(since_date)
+        except ValueError:
+            console.print(f"[red]Error:[/red] Invalid date format: {since_date}. Use YYYY-MM-DD.")
+            raise SystemExit(1)
+
+    async def _run():
+        agent = MemclawAgent(config)
+        try:
+            with console.status("[cyan]Running consolidation...[/cyan]"):
+                result = await agent._maybe_consolidate(
+                    force=True, consolidated_through_override=override
+                )
+            if result:
+                console.print("[green]Consolidation complete.[/green] MEMORY.md has been updated.")
+            else:
+                console.print("[yellow]No daily files to consolidate.[/yellow]")
+        finally:
+            agent.close()
+
+    asyncio.run(_run())
+
+
 @cli.command(name="index")
 @click.pass_context
 def rebuild_index(ctx):

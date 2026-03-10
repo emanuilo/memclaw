@@ -8,6 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import anthropic
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -73,6 +74,40 @@ when asking questions.
 """
 
 
+_CONSOLIDATION_PROMPT = """\
+You are a memory consolidation assistant. Your job is to distill daily memory \
+logs into a curated, permanent knowledge base.
+
+You will receive:
+1. The content of several daily memory files (chronological notes, thoughts, \
+saved links, voice transcriptions, etc.)
+2. The current content of MEMORY.md (the permanent memory file), which may be \
+empty if this is the first consolidation.
+
+Your task:
+- Extract durable facts, preferences, decisions, and important events from the \
+daily files.
+- Ignore transient entries: one-off reminders that have passed, trivial \
+greetings, temporary notes, etc.
+- Merge the extracted information with the existing MEMORY.md content. Update \
+existing entries if new information supersedes them. Remove outdated entries.
+- Output the complete updated MEMORY.md content in structured markdown with \
+sections such as:
+  ## Preferences
+  ## Projects
+  ## People
+  ## Key Facts
+  ## Decisions
+  ## Important Events
+- Only include sections that have content. You may add other sections if \
+appropriate.
+- Place the most important and frequently referenced information at the top.
+- Keep the output concise — target under 5,000 characters.
+- Output ONLY the markdown content for MEMORY.md. Do not include any \
+explanation or preamble.
+"""
+
+
 def _format_results(results: list[SearchResult]) -> str:
     parts = []
     for i, r in enumerate(results, 1):
@@ -135,6 +170,126 @@ class MemclawAgent:
                     pass  # best-effort; will retry next interval
 
         self._sync_task = asyncio.create_task(_sync_loop())
+
+    # ------------------------------------------------------------------
+    # Memory Consolidation (spec #2)
+    # ------------------------------------------------------------------
+
+    async def _maybe_consolidate(
+        self,
+        *,
+        force: bool = False,
+        consolidated_through_override: date | None = None,
+    ) -> bool:
+        """Consolidate daily files into MEMORY.md if threshold is reached.
+
+        Args:
+            force: If True, consolidate regardless of threshold.
+            consolidated_through_override: If set, use this date instead of
+                the value stored in meta.json.
+
+        Returns:
+            True if consolidation was performed.
+        """
+        meta_path = self.config.memory_dir / "meta.json"
+
+        # Load consolidated_through from meta.json
+        consolidated_through: date | None = None
+        if consolidated_through_override is not None:
+            consolidated_through = consolidated_through_override
+        elif meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+                ct = meta.get("consolidated_through")
+                if ct:
+                    consolidated_through = date.fromisoformat(ct)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        unconsolidated = self.store.list_unconsolidated_files(consolidated_through)
+
+        if not unconsolidated:
+            return False
+
+        if len(unconsolidated) < self.config.consolidation_threshold and not force:
+            return False
+
+        # Gather content from unconsolidated files (up to 30000 chars)
+        daily_content_parts: list[str] = []
+        total_chars = 0
+        for path in unconsolidated:
+            content = self.store.read_file(path)
+            if not content.strip():
+                continue
+            header = f"\n### {path.stem}\n\n"
+            chunk = header + content
+            if total_chars + len(chunk) > 30000:
+                remaining = 30000 - total_chars
+                if remaining > 0:
+                    daily_content_parts.append(chunk[:remaining])
+                break
+            daily_content_parts.append(chunk)
+            total_chars += len(chunk)
+
+        daily_text = "\n".join(daily_content_parts)
+        if not daily_text.strip():
+            return False
+
+        # Read existing MEMORY.md content
+        existing_memory = self.store.read_file(self.config.memory_file)
+
+        # Build the user message for the consolidation call
+        user_message = "## Daily Memory Files\n\n" + daily_text
+        if existing_memory.strip():
+            user_message += "\n\n## Current MEMORY.md\n\n" + existing_memory
+
+        # Call Claude via anthropic.AsyncAnthropic directly
+        client = anthropic.AsyncAnthropic(api_key=self.config.anthropic_api_key)
+        response = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            system=_CONSOLIDATION_PROMPT,
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+        # Extract text from response
+        result_text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                result_text += block.text
+
+        if not result_text.strip():
+            return False
+
+        # Write result to MEMORY.md (overwrite)
+        self.config.memory_file.write_text(result_text)
+
+        # Update consolidated_through in meta.json
+        # Use the date from the last unconsolidated file
+        last_date_str = unconsolidated[-1].stem  # e.g. "2025-03-10"
+        try:
+            new_consolidated_through = date.fromisoformat(last_date_str)
+        except ValueError:
+            new_consolidated_through = date.today()
+
+        meta: dict = {}
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (json.JSONDecodeError, ValueError):
+                pass
+        meta["consolidated_through"] = new_consolidated_through.isoformat()
+        meta_path.write_text(json.dumps(meta, indent=2))
+
+        # Re-index MEMORY.md
+        await self.index.index_file(self.config.memory_file)
+
+        logger.info(
+            "Consolidation complete: {n} files → MEMORY.md (through {d})",
+            n=len(unconsolidated),
+            d=new_consolidated_through.isoformat(),
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Tools
@@ -281,11 +436,23 @@ class MemclawAgent:
         """Build memory context to inject into the system prompt."""
         parts: list[str] = []
 
-        # Always include permanent memory
+        # Always include permanent memory (spec #3: smart strategy)
         memory_content = self.store.read_file(self.config.memory_file)
         if memory_content.strip():
             parts.append("### Permanent Memory")
-            parts.append(memory_content[:3000])
+            if len(memory_content) <= 4000:
+                # Small enough to include in full
+                parts.append(memory_content)
+            else:
+                # Include first 2000 chars + semantic search within MEMORY.md
+                parts.append(memory_content[:2000])
+                memory_results = await self.search.search(
+                    message, limit=3, file_filter="MEMORY.md"
+                )
+                if memory_results:
+                    parts.append("\n#### Relevant Permanent Memory Sections")
+                    for r in memory_results:
+                        parts.append(r.content.strip())
 
         # Semantic search for message-relevant memories
         results = await self.search.search(message, limit=10)
@@ -322,6 +489,12 @@ class MemclawAgent:
             with Telegram file_ids; empty in console mode.
         """
         self._found_images.clear()
+
+        # Run consolidation check (spec #2) — errors must not break normal flow
+        try:
+            await self._maybe_consolidate()
+        except Exception as exc:
+            logger.warning("Consolidation check failed: {exc}", exc=exc)
 
         # Append user message to history (use placeholder for images)
         history_content = "[User sent a photo]" if image_b64 else message

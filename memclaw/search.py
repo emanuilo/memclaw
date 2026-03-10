@@ -43,7 +43,9 @@ class HybridSearch:
         query_embedding = await self.index.get_embedding(query)
         return self.index.search_telegram_images(query_embedding, limit=limit)
 
-    async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+    async def search(
+        self, query: str, limit: int = 10, file_filter: str | None = None
+    ) -> list[SearchResult]:
         query_embedding = await self.index.get_embedding(query)
 
         # Oversample: retrieve 3x candidates for MMR filtering
@@ -54,6 +56,10 @@ class HybridSearch:
 
         # Merge produces internal_limit candidates (not yet truncated)
         candidates = self._merge(vector_hits, keyword_hits, internal_limit)
+
+        # Filter by file path substring when requested
+        if file_filter is not None:
+            candidates = [r for r in candidates if file_filter in r.file_path]
 
         # Apply temporal decay (spec #4)
         candidates = self._apply_decay(candidates)

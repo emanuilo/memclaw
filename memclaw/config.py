@@ -31,6 +31,9 @@ class MemclawConfig:
     # Conversation continuity
     conversation_history_limit: int = 10
 
+    # Memory consolidation
+    consolidation_threshold: int = 7
+
     # Telegram bot settings
     telegram_bot_token: str = ""
     allowed_user_ids: str = ""
