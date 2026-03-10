@@ -33,16 +33,17 @@ class HybridSearch:
         self.config = config
         self.index = index
 
+        # Spec #8 Phase 1: cache the embedding matrix to avoid re-reading
+        # all embeddings from SQLite on every search call.
+        self._embedding_cache: tuple[np.ndarray, list[int]] | None = None
+        self._cache_chunk_count: int = 0
+
     async def search_images(self, query: str, limit: int = 5) -> list[dict]:
         """Search stored Telegram images by semantic similarity."""
-        await self.index.sync()
         query_embedding = await self.index.get_embedding(query)
         return self.index.search_telegram_images(query_embedding, limit=limit)
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
-        # Make sure the index is fresh before searching.
-        await self.index.sync()
-
         query_embedding = await self.index.get_embedding(query)
 
         # Oversample: retrieve 3x candidates for MMR filtering
@@ -67,20 +68,38 @@ class HybridSearch:
     def _vector_search(
         self, query_embedding: np.ndarray, limit: int
     ) -> list[tuple[int, float]]:
-        rows = self.index.db.execute(
-            "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL"
-        ).fetchall()
+        # Spec #8 Phase 1: use cached embedding matrix when chunk count
+        # hasn't changed, avoiding repeated deserialization from SQLite.
+        current_count = self.index.db.execute(
+            "SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL"
+        ).fetchone()[0]
 
-        if not rows:
+        if current_count == 0:
             return []
 
-        ids = []
-        embeddings = []
-        for chunk_id, blob in rows:
-            ids.append(chunk_id)
-            embeddings.append(MemoryIndex.deserialize_embedding(blob))
+        if (
+            self._embedding_cache is not None
+            and current_count == self._cache_chunk_count
+        ):
+            matrix, ids = self._embedding_cache
+        else:
+            rows = self.index.db.execute(
+                "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL"
+            ).fetchall()
 
-        matrix = np.stack(embeddings)
+            if not rows:
+                return []
+
+            ids = []
+            embeddings = []
+            for chunk_id, blob in rows:
+                ids.append(chunk_id)
+                embeddings.append(MemoryIndex.deserialize_embedding(blob))
+
+            matrix = np.stack(embeddings)
+            self._embedding_cache = (matrix, ids)
+            self._cache_chunk_count = current_count
+
         norms = np.linalg.norm(matrix, axis=1)
         q_norm = np.linalg.norm(query_embedding)
         similarities = (matrix @ query_embedding) / (norms * q_norm + 1e-8)

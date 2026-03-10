@@ -72,6 +72,10 @@ async def _interactive(config: MemclawConfig):
 
     agent = MemclawAgent(config)
 
+    # Spec #9: run a full index sync once at startup
+    with console.status("[cyan]Syncing index...[/cyan]"):
+        await agent.start()
+
     try:
         while True:
             try:
@@ -233,6 +237,11 @@ def bot(ctx):
         openai_client = AsyncOpenAI(api_key=config.openai_api_key)
         handlers = MessageHandlers(config, openai_client)
         application.bot_data["handlers"] = handlers
+
+        # Spec #9: run startup sync and start periodic background sync
+        await handlers.agent.start()
+        await handlers.agent.start_background_sync(interval=60)
+
         logger.info("Memclaw bot initialized")
 
     app = (

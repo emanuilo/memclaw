@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import AsyncIterator
@@ -107,6 +108,33 @@ class MemclawAgent:
             "mcp__memclaw__telegram_image_save",
             "mcp__memclaw__image_search",
         ]
+
+    # ------------------------------------------------------------------
+    # Startup sync and background sync (spec #9)
+    # ------------------------------------------------------------------
+
+    async def start(self):
+        """Run a full index sync once at startup to catch any changes
+        made while the process was not running."""
+        await self.index.sync()
+
+    async def start_background_sync(self, interval: int = 60):
+        """Start a background task that periodically syncs the index.
+
+        Intended for long-running processes (e.g. Telegram bot) to pick
+        up external file edits without blocking the search path.
+        """
+        index = self.index
+
+        async def _sync_loop():
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    await index.sync()
+                except Exception:
+                    pass  # best-effort; will retry next interval
+
+        self._sync_task = asyncio.create_task(_sync_loop())
 
     # ------------------------------------------------------------------
     # Tools
