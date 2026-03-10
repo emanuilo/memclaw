@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import AsyncIterator
 from datetime import date
 from pathlib import Path
@@ -14,6 +15,7 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
     tool,
 )
+from loguru import logger
 
 from .config import MemclawConfig
 from .index import MemoryIndex
@@ -115,6 +117,7 @@ class MemclawAgent:
 
             file_path = store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
             await index.index_file(file_path)
+            logger.info("  → memory_save result: saved to {file}", file=file_path.name)
             return {"content": [{"type": "text", "text": f"Memory saved to {file_path.name}"}]}
 
         @tool(
@@ -125,6 +128,13 @@ class MemclawAgent:
         async def memory_search_tool(args):
             results = await search.search(args["query"], limit=args.get("limit", 10))
             formatted = _format_results(results)
+            logger.info("  → memory_search result: {n} hits", n=len(results))
+            for i, r in enumerate(results, 1):
+                source = Path(r.file_path).stem
+                snippet = r.content.strip().replace("\n", " ")
+                if len(snippet) > 120:
+                    snippet = snippet[:120] + "..."
+                logger.info("    [{i}] ({score:.2f}, {src}) {snippet}", i=i, score=r.score, src=source, snippet=snippet)
             return {"content": [{"type": "text", "text": formatted}]}
 
         @tool(
@@ -138,6 +148,7 @@ class MemclawAgent:
             caption: str = args.get("caption", "")
 
             if not image_path.exists():
+                logger.info("  → image_save result: not found {path}", path=image_path)
                 return {"content": [{"type": "text", "text": f"Image not found: {image_path}"}]}
 
             memory_content = f"**Image:** {image_path.name}\n"
@@ -148,6 +159,7 @@ class MemclawAgent:
             file_path = store.save(memory_content, entry_type="image")
             await index.index_file(file_path)
 
+            logger.info("  → image_save result: saved {name}", name=image_path.name)
             return {"content": [{"type": "text", "text": f"Image saved from {image_path.name}"}]}
 
         @tool(
@@ -175,6 +187,7 @@ class MemclawAgent:
                 caption=caption,
             )
 
+            logger.info("  → telegram_image_save result: {desc}", desc=description[:100])
             return {"content": [{"type": "text", "text": f"Image saved: {description[:100]}"}]}
 
         @tool(
@@ -196,6 +209,9 @@ class MemclawAgent:
                     if r.get("caption"):
                         line += f" (caption: {r['caption']})"
                     lines.append(line)
+                logger.info("  → image_search result: {n} image(s) found", n=len(results))
+                for line in lines:
+                    logger.info("    {line}", line=line)
                 return {
                     "content": [
                         {
@@ -208,6 +224,7 @@ class MemclawAgent:
                         }
                     ]
                 }
+            logger.info("  → image_search result: no matching images")
             return {"content": [{"type": "text", "text": "No matching images found."}]}
 
         return [
@@ -313,10 +330,24 @@ class MemclawAgent:
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
                     for block in msg.content:
-                        if hasattr(block, "text"):
+                        if hasattr(block, "name") and hasattr(block, "input"):
+                            # ToolUseBlock
+                            args_str = json.dumps(block.input, ensure_ascii=False)
+                            if len(args_str) > 300:
+                                args_str = args_str[:300] + "..."
+                            logger.info("Tool call: {name}({args})", name=block.name, args=args_str)
+                        elif hasattr(block, "text"):
                             last_text = block.text
-                elif isinstance(msg, ResultMessage) and hasattr(msg, "result"):
-                    last_text = msg.result or last_text
+                elif isinstance(msg, ResultMessage):
+                    if hasattr(msg, "result") and msg.result:
+                        last_text = msg.result
+                    cost = f"${msg.total_cost_usd:.4f}" if msg.total_cost_usd else "n/a"
+                    logger.info(
+                        "Agent done: {turns} turns, {ms}ms, cost {cost}",
+                        turns=msg.num_turns,
+                        ms=msg.duration_ms,
+                        cost=cost,
+                    )
 
         return (
             last_text or "I couldn't generate a response.",

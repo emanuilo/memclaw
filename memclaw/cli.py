@@ -47,7 +47,18 @@ def cli(ctx, memory_dir):
 # ------------------------------------------------------------------
 
 async def _interactive(config: MemclawConfig):
+    import sys
+
+    from loguru import logger
+
     from .agent import MemclawAgent
+
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level="INFO",
+        format="<green>{time:HH:mm:ss}</green> | <level>{level:<8}</level> | <level>{message}</level>",
+    )
 
     console.print(
         Panel(
