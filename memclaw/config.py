@@ -23,6 +23,8 @@ class MemclawConfig:
     chunk_overlap_words: int = 60
     vector_weight: float = 0.7
     text_weight: float = 0.3
+    decay_half_life_days: int = 30
+    mmr_lambda: float = 0.7
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
