@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +82,16 @@ class MemoryIndex:
             CREATE TABLE IF NOT EXISTS file_meta (
                 file_path TEXT PRIMARY KEY,
                 mtime REAL NOT NULL
+            )
+        """)
+
+        # Embedding cache — avoids redundant OpenAI API calls for unchanged content.
+        self.db.execute("""
+            CREATE TABLE IF NOT EXISTS embedding_cache (
+                content_hash TEXT PRIMARY KEY,
+                embedding    BLOB NOT NULL,
+                model        TEXT NOT NULL,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
 
@@ -174,11 +185,42 @@ class MemoryIndex:
     async def get_embeddings(self, texts: list[str]) -> list[np.ndarray]:
         if not texts:
             return []
-        response = await self.openai.embeddings.create(
-            model=self.config.embedding_model,
-            input=texts,
-        )
-        return [np.array(item.embedding, dtype=np.float32) for item in response.data]
+
+        model = self.config.embedding_model
+
+        # Compute content hashes and check cache
+        hashes = [hashlib.sha256(t.encode()).hexdigest() for t in texts]
+        results: list[np.ndarray | None] = [None] * len(texts)
+        uncached_indices: list[int] = []
+
+        for i, h in enumerate(hashes):
+            row = self.db.execute(
+                "SELECT embedding FROM embedding_cache WHERE content_hash = ? AND model = ?",
+                (h, model),
+            ).fetchone()
+            if row is not None:
+                results[i] = self.deserialize_embedding(row[0])
+            else:
+                uncached_indices.append(i)
+
+        # Fetch embeddings for uncached texts only
+        if uncached_indices:
+            uncached_texts = [texts[i] for i in uncached_indices]
+            response = await self.openai.embeddings.create(
+                model=model,
+                input=uncached_texts,
+            )
+            new_embeddings = [np.array(item.embedding, dtype=np.float32) for item in response.data]
+
+            for idx, emb in zip(uncached_indices, new_embeddings):
+                results[idx] = emb
+                self.db.execute(
+                    "INSERT OR REPLACE INTO embedding_cache (content_hash, embedding, model) VALUES (?, ?, ?)",
+                    (hashes[idx], self.serialize_embedding(emb), model),
+                )
+            self.db.commit()
+
+        return results  # type: ignore[return-value]
 
     async def get_embedding(self, text: str) -> np.ndarray:
         results = await self.get_embeddings([text])
