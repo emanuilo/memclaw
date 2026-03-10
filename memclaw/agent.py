@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections.abc import AsyncIterator
 from datetime import date
@@ -139,6 +140,34 @@ class MemclawAgent:
         self.tools, self.components = create_memclaw_tools(config)
         self.server = create_sdk_mcp_server(name="memclaw", version="0.1.0", tools=self.tools)
 
+    # ------------------------------------------------------------------
+    # Spec #9: startup sync and background sync
+    # ------------------------------------------------------------------
+
+    async def start(self):
+        """Run a full index sync once at startup to catch any changes
+        made while the process was not running."""
+        index: MemoryIndex = self.components["index"]
+        await index.sync()
+
+    async def start_background_sync(self, interval: int = 60):
+        """Start a background task that periodically syncs the index.
+
+        Intended for long-running processes (e.g. Telegram bot) to pick
+        up external file edits without blocking the search path.
+        """
+        index: MemoryIndex = self.components["index"]
+
+        async def _sync_loop():
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    await index.sync()
+                except Exception:
+                    pass  # best-effort; will retry next interval
+
+        self._sync_task = asyncio.create_task(_sync_loop())
+
     async def chat(self, prompt: str) -> str:
         """Send a message to the agent and return its text response."""
         options = ClaudeAgentOptions(
@@ -230,6 +259,33 @@ class TelegramAgent:
             "mcp__memclaw-tg__image_search",
             "mcp__memclaw-tg__telegram_image_save",
         ]
+
+    # ------------------------------------------------------------------
+    # Spec #9: startup sync and background sync
+    # ------------------------------------------------------------------
+
+    async def start(self):
+        """Run a full index sync once at startup to catch any changes
+        made while the process was not running."""
+        await self.index.sync()
+
+    async def start_background_sync(self, interval: int = 60):
+        """Start a background task that periodically syncs the index.
+
+        Intended for long-running processes (e.g. Telegram bot) to pick
+        up external file edits without blocking the search path.
+        """
+        index = self.index
+
+        async def _sync_loop():
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    await index.sync()
+                except Exception:
+                    pass  # best-effort; will retry next interval
+
+        self._sync_task = asyncio.create_task(_sync_loop())
 
     def _create_tools(self):
         store = self.store
