@@ -65,14 +65,18 @@ class LinkProcessor:
             or soup.find(class_=re.compile(r"content|article|post", re.I))
             or soup.find("body")
         )
-        text = main.get_text(separator=" ", strip=True) if main else soup.get_text(separator=" ", strip=True)
+        text = (
+            main.get_text(separator=" ", strip=True)
+            if main
+            else soup.get_text(separator=" ", strip=True)
+        )
         text = re.sub(r"\s+", " ", text).strip()
         return text[:max_chars]
 
     async def summarize(self, content: str, url: str) -> str:
         try:
             response = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5-mini",
                 messages=[
                     {
                         "role": "system",
@@ -83,7 +87,7 @@ class LinkProcessor:
                     },
                     {"role": "user", "content": f"Summarize content from {url}:\n\n{content}"},
                 ],
-                max_tokens=100,
+                max_completion_tokens=100,
             )
             return response.choices[0].message.content or ""
         except Exception as e:

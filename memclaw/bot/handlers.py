@@ -92,9 +92,7 @@ class MessageHandlers:
                 link_entry = f"Link: {link['url']}\nSummary: {link['summary']}"
                 file_path = self.store.save(link_entry, entry_type="link")
                 await self.index.index_file(file_path)
-                prompt_parts.append(
-                    f"\n[Link summary] {link['url']}: {link['summary']}"
-                )
+                prompt_parts.append(f"\n[Link summary] {link['url']}: {link['summary']}")
 
         prompt = "\n".join(prompt_parts)
         response_text, found_images = await self.agent.handle(prompt)
@@ -107,50 +105,13 @@ class MessageHandlers:
         photo = update.message.photo[-1]
         caption = update.message.caption or ""
 
-        logger.info(f"Photo from user {update.effective_user.id}")
+        logger.info(f"Photo from user {update.effective_user.id}, caption={caption!r}")
 
-        # Download and describe via vision API
+        # Download photo and base64 encode
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
         base64_image = base64.b64encode(photo_bytes).decode("utf-8")
-
-        vision_prompt = "Describe this image in detail in about 50 tokens."
-        if caption:
-            vision_prompt += f" Caption: {caption}"
-
-        response = await self.openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": vision_prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}",
-                            "detail": "low",
-                        },
-                    },
-                ],
-            }],
-            max_tokens=100,
-        )
-        description = response.choices[0].message.content
-
-        # Store image description in memory
-        combined = f"Image: {description}."
-        if caption:
-            combined += f" Caption: {caption}"
-
-        file_path = self.store.save(combined, entry_type="image")
-        await self.index.index_file(file_path)
-
-        # Store in Telegram image registry for file_id retrieval
-        await self.index.store_telegram_image(
-            file_id=photo.file_id,
-            description=combined,
-            caption=caption,
-        )
+        logger.debug(f"Downloaded photo: {len(photo_bytes)} bytes")
 
         # Process links in caption
         link_info = ""
@@ -165,9 +126,19 @@ class MessageHandlers:
                     await self.index.index_file(lp)
                     link_info += f"\n[Link summary] {link['url']}: {link['summary']}"
 
-        # Send to agent so it can respond
-        prompt = f"[Image received] {combined}{link_info}"
-        response_text, found_images = await self.agent.handle(prompt)
+        # Pass image directly to the agent — it sees the image, describes it,
+        # and uses telegram_image_save to store description + file_id
+        prompt_text = f"User sent a photo. file_id={photo.file_id}"
+        if caption:
+            prompt_text += f"\nCaption: {caption}"
+        if link_info:
+            prompt_text += link_info
+
+        response_text, found_images = await self.agent.handle(
+            prompt_text,
+            image_b64=base64_image,
+            image_media_type="image/jpeg",
+        )
         await self._send_response(update, context, response_text, found_images)
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import AsyncIterator
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -12,7 +14,6 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
     tool,
 )
-from openai import AsyncOpenAI
 
 from .config import MemclawConfig
 from .index import MemoryIndex
@@ -48,9 +49,7 @@ def _format_results(results: list[SearchResult]) -> str:
         source = Path(r.file_path).stem
         if source == "MEMORY":
             source = "permanent memory"
-        parts.append(
-            f"**[{i}]** (score: {r.score:.2f}, source: {source})\n{r.content.strip()}"
-        )
+        parts.append(f"**[{i}]** (score: {r.score:.2f}, source: {source})\n{r.content.strip()}")
     return "\n\n---\n\n".join(parts) if parts else "No matching memories found."
 
 
@@ -63,7 +62,6 @@ def create_memclaw_tools(config: MemclawConfig):
     store = MemoryStore(config)
     index = MemoryIndex(config)
     search = HybridSearch(config, index)
-    openai_client = AsyncOpenAI(api_key=config.openai_api_key)
 
     @tool("memory_save", "Save a new memory, thought, or note", {"content": str})
     async def memory_save(args):
@@ -72,9 +70,7 @@ def create_memclaw_tools(config: MemclawConfig):
         entry_type: str = args.get("entry_type", "note")
         tags = args.get("tags")
 
-        file_path = store.save(
-            content, permanent=permanent, entry_type=entry_type, tags=tags
-        )
+        file_path = store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
         await index.index_file(file_path)
         return {"content": [{"type": "text", "text": f"Memory saved to {file_path.name}"}]}
 
@@ -93,7 +89,8 @@ def create_memclaw_tools(config: MemclawConfig):
 
     @tool(
         "image_save",
-        "Save an image by generating an AI description and storing it as a memory",
+        "Save an image by generating an AI description and storing it as a memory. "
+        "You can see the image — describe it yourself and pass your description as content.",
         {"image_path": str},
     )
     async def image_save(args):
@@ -101,50 +98,27 @@ def create_memclaw_tools(config: MemclawConfig):
         caption: str = args.get("caption", "")
 
         if not image_path.exists():
-            return {
-                "content": [{"type": "text", "text": f"Image not found: {image_path}"}]
-            }
+            return {"content": [{"type": "text", "text": f"Image not found: {image_path}"}]}
 
         image_data = base64.b64encode(image_path.read_bytes()).decode()
         suffix = image_path.suffix.lower().lstrip(".")
         media_type = {
-            "jpg": "jpeg", "jpeg": "jpeg", "png": "png",
-            "gif": "gif", "webp": "webp",
+            "jpg": "jpeg",
+            "jpeg": "jpeg",
+            "png": "png",
+            "gif": "gif",
+            "webp": "webp",
         }.get(suffix, "jpeg")
-
-        prompt_text = "Describe this image in detail in about 50 words."
-        if caption:
-            prompt_text += f" Context: {caption}"
-
-        response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt_text},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/{media_type};base64,{image_data}",
-                            "detail": "low",
-                        },
-                    },
-                ],
-            }],
-            max_tokens=150,
-        )
-        description = response.choices[0].message.content
 
         memory_content = f"**Image:** {image_path.name}\n"
         if caption:
             memory_content += f"**Caption:** {caption}\n"
-        memory_content += f"**Description:** {description}\n"
         memory_content += f"**Path:** {image_path}\n"
 
         file_path = store.save(memory_content, entry_type="image")
         await index.index_file(file_path)
 
-        return {"content": [{"type": "text", "text": f"Image saved: {description}"}]}
+        return {"content": [{"type": "text", "text": f"Image saved from {image_path.name}"}]}
 
     tools = [memory_save, memory_search_tool, image_save]
     components = {"store": store, "index": index, "search": search}
@@ -163,9 +137,7 @@ class MemclawAgent:
     def __init__(self, config: MemclawConfig):
         self.config = config
         self.tools, self.components = create_memclaw_tools(config)
-        self.server = create_sdk_mcp_server(
-            name="memclaw", version="0.1.0", tools=self.tools
-        )
+        self.server = create_sdk_mcp_server(name="memclaw", version="0.1.0", tools=self.tools)
 
     async def chat(self, prompt: str) -> str:
         """Send a message to the agent and return its text response."""
@@ -210,12 +182,13 @@ worth remembering — save it using the memory_save tool. Briefly confirm what y
 their memories using memory_search. Present results clearly with dates.
 3. **Images**: When the user asks to retrieve, show, or find an image — use \
 image_search. The image will be sent automatically, just acknowledge it briefly.
-4. **Conversation**: Sometimes the user just wants to chat. Respond naturally. If they \
+4. **Image received**: When you see an image in the message, describe what you see \
+in detail and save the description using telegram_image_save with the provided file_id. \
+Always confirm what you saved.
+5. **Conversation**: Sometimes the user just wants to chat. Respond naturally. If they \
 mention something worth remembering, save it too.
 
 You may also receive pre-processed content:
-- "[Image received]" followed by an AI-generated description — the image is already \
-stored. Acknowledge it and remember the content.
 - "[Voice message]" followed by a transcription — the voice is already transcribed \
 and stored. Respond to the content.
 - "[Link summary]" entries — links have been fetched and summarized for you.
@@ -250,13 +223,12 @@ class TelegramAgent:
         self._found_images: list[dict] = []
 
         tools = self._create_tools()
-        self.server = create_sdk_mcp_server(
-            name="memclaw-tg", version="0.1.0", tools=tools
-        )
+        self.server = create_sdk_mcp_server(name="memclaw-tg", version="0.1.0", tools=tools)
         self.tool_names = [
             "mcp__memclaw-tg__memory_save",
             "mcp__memclaw-tg__memory_search",
             "mcp__memclaw-tg__image_search",
+            "mcp__memclaw-tg__telegram_image_save",
         ]
 
     def _create_tools(self):
@@ -272,11 +244,38 @@ class TelegramAgent:
             entry_type: str = args.get("entry_type", "note")
             tags = args.get("tags")
 
-            file_path = store.save(
-                content, permanent=permanent, entry_type=entry_type, tags=tags
-            )
+            file_path = store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
             await index.index_file(file_path)
             return {"content": [{"type": "text", "text": f"Memory saved to {file_path.name}"}]}
+
+        @tool(
+            "telegram_image_save",
+            "Save a Telegram image with your description for later retrieval. "
+            "You MUST call this when you receive an image. Describe the image in "
+            "detail and pass the description along with the file_id from the message.",
+            {"description": str, "file_id": str},
+        )
+        async def telegram_image_save_tool(args):
+            description: str = args["description"]
+            file_id: str = args["file_id"]
+            caption: str = args.get("caption", "")
+
+            combined = f"Image: {description}"
+            if caption:
+                combined += f" Caption: {caption}"
+
+            # Save to markdown memory
+            file_path = store.save(combined, entry_type="image")
+            await index.index_file(file_path)
+
+            # Save to telegram image registry for file_id retrieval
+            await index.store_telegram_image(
+                file_id=file_id,
+                description=combined,
+                caption=caption,
+            )
+
+            return {"content": [{"type": "text", "text": f"Image saved: {description[:100]}"}]}
 
         @tool(
             "memory_search",
@@ -308,20 +307,20 @@ class TelegramAgent:
                         line += f" (caption: {r['caption']})"
                     lines.append(line)
                 return {
-                    "content": [{
-                        "type": "text",
-                        "text": (
-                            f"Found {len(results)} image(s):\n"
-                            + "\n".join(lines)
-                            + "\nImages will be sent automatically."
-                        ),
-                    }]
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Found {len(results)} image(s):\n"
+                                + "\n".join(lines)
+                                + "\nImages will be sent automatically."
+                            ),
+                        }
+                    ]
                 }
-            return {
-                "content": [{"type": "text", "text": "No matching images found."}]
-            }
+            return {"content": [{"type": "text", "text": "No matching images found."}]}
 
-        return [memory_save_tool, memory_search_tool, image_search_tool]
+        return [memory_save_tool, telegram_image_save_tool, memory_search_tool, image_search_tool]
 
     async def build_context(self, message: str) -> str:
         """Build memory context to inject into the system prompt."""
@@ -343,8 +342,20 @@ class TelegramAgent:
 
         return "\n\n".join(parts) if parts else "No memories found yet."
 
-    async def handle(self, message: str) -> tuple[str, list[dict]]:
+    async def handle(
+        self,
+        message: str,
+        *,
+        image_b64: str | None = None,
+        image_media_type: str = "image/jpeg",
+    ) -> tuple[str, list[dict]]:
         """Process any message through the agent.
+
+        Args:
+            message: Text message or prompt to send.
+            image_b64: Optional base64-encoded image data. When provided,
+                the agent sees the image directly and can describe it.
+            image_media_type: MIME type of the image (default: image/jpeg).
 
         Returns (response_text, found_images).
         """
@@ -363,9 +374,37 @@ class TelegramAgent:
             max_turns=10,
         )
 
+        # Build content blocks — text only, or text + image
+        if image_b64:
+            content_blocks: list[dict[str, Any]] = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image_media_type,
+                        "data": image_b64,
+                    },
+                },
+                {"type": "text", "text": message},
+            ]
+        else:
+            content_blocks = message  # type: ignore[assignment]
+
         last_text = ""
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(message)
+            if isinstance(content_blocks, list):
+                # Multimodal: send as async iterable with content blocks
+                async def _image_msg() -> AsyncIterator[dict[str, Any]]:
+                    yield {
+                        "type": "user",
+                        "message": {"role": "user", "content": content_blocks},
+                    }
+
+                await client.query(_image_msg())
+            else:
+                # Text only
+                await client.query(content_blocks)
+
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
                     for block in msg.content:
