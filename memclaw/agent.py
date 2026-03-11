@@ -13,7 +13,10 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    PermissionResultAllow,
+    PermissionResultDeny,
     ResultMessage,
+    ToolPermissionContext,
     create_sdk_mcp_server,
     tool,
 )
@@ -84,6 +87,63 @@ explanation or preamble.
 """
 
 
+# ── Filesystem guardrail ──────────────────────────────────────────────
+# Tool names that touch the filesystem and need path validation.
+_FS_TOOLS = {"Write", "Edit", "Read", "Bash", "Glob", "Grep"}
+
+
+def _make_fs_guardrail(memory_dir: Path):
+    """Return a ``can_use_tool`` callback that blocks filesystem access
+    outside *memory_dir*.
+
+    For Write / Edit / Read — the ``file_path`` argument must resolve to
+    a location under *memory_dir*.
+
+    For Bash — the command is denied outright (too hard to parse safely).
+    The agent should use the sandboxed file tools instead.
+    """
+    safe_root = memory_dir.resolve()
+
+    async def _guard(
+        tool_name: str,
+        tool_input: dict[str, Any],
+        _ctx: ToolPermissionContext,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        if tool_name not in _FS_TOOLS:
+            return PermissionResultAllow()
+
+        # Block Bash entirely — can't reliably sandbox shell commands
+        if tool_name == "Bash":
+            return PermissionResultDeny(
+                message=(
+                    f"Shell commands are not allowed. "
+                    f"Use the memclaw tools or file_write/file_read instead."
+                ),
+            )
+
+        # For file-based tools, validate the path
+        raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+        if not raw_path:
+            # Glob/Grep without explicit path — allow (they search cwd)
+            return PermissionResultAllow()
+
+        resolved = Path(raw_path).expanduser().resolve()
+        try:
+            resolved.relative_to(safe_root)
+        except ValueError:
+            return PermissionResultDeny(
+                message=(
+                    f"Access denied: {resolved} is outside the memory "
+                    f"directory ({safe_root}). All file operations must "
+                    f"stay within {safe_root}."
+                ),
+            )
+
+        return PermissionResultAllow()
+
+    return _guard
+
+
 def _format_results(results: list[SearchResult]) -> str:
     parts = []
     for i, r in enumerate(results, 1):
@@ -119,6 +179,8 @@ class MemclawAgent:
             "mcp__memclaw__telegram_image_save",
             "mcp__memclaw__image_search",
             "mcp__memclaw__update_instructions",
+            "mcp__memclaw__file_write",
+            "mcp__memclaw__file_read",
         ]
 
     # ------------------------------------------------------------------
@@ -427,6 +489,66 @@ class MemclawAgent:
             logger.info("  → update_instructions: appended to AGENTS.md")
             return {"content": [{"type": "text", "text": f"Instruction saved: {instruction}"}]}
 
+        # ── Sandboxed file tools ──────────────────────────────────────
+        memory_dir = self.config.memory_dir
+        safe_root = memory_dir.resolve()
+
+        def _resolve_safe(raw_path: str) -> Path | None:
+            """Resolve *raw_path* and return it only if under memory_dir."""
+            resolved = Path(raw_path).expanduser().resolve()
+            try:
+                resolved.relative_to(safe_root)
+            except ValueError:
+                return None
+            return resolved
+
+        @tool(
+            "file_write",
+            "Create or overwrite a file inside the memory directory (~/.memclaw/). "
+            "Use this when the user asks you to create a file such as todos.md, "
+            "notes.md, etc. The path must be relative to ~/.memclaw/ or an "
+            "absolute path under it.",
+            {"file_path": str, "content": str},
+        )
+        async def file_write_tool(args):
+            raw = args["file_path"]
+            # If user gives a bare filename like "todos.md", put it under memory_dir
+            p = Path(raw)
+            if not p.is_absolute():
+                p = memory_dir / raw
+            resolved = p.expanduser().resolve()
+            safe = _resolve_safe(str(resolved))
+            if safe is None:
+                msg = f"Blocked: {resolved} is outside {safe_root}. Files must be under ~/.memclaw/"
+                logger.warning(msg)
+                return {"content": [{"type": "text", "text": msg}]}
+            safe.parent.mkdir(parents=True, exist_ok=True)
+            safe.write_text(args["content"])
+            logger.info("  → file_write: wrote {path}", path=safe)
+            return {"content": [{"type": "text", "text": f"File written: {safe}"}]}
+
+        @tool(
+            "file_read",
+            "Read a file from the memory directory (~/.memclaw/). "
+            "The path must be under ~/.memclaw/.",
+            {"file_path": str},
+        )
+        async def file_read_tool(args):
+            raw = args["file_path"]
+            p = Path(raw)
+            if not p.is_absolute():
+                p = memory_dir / raw
+            resolved = p.expanduser().resolve()
+            safe = _resolve_safe(str(resolved))
+            if safe is None:
+                msg = f"Blocked: {resolved} is outside {safe_root}."
+                return {"content": [{"type": "text", "text": msg}]}
+            if not safe.exists():
+                return {"content": [{"type": "text", "text": f"File not found: {safe}"}]}
+            text = safe.read_text()
+            logger.info("  → file_read: read {path} ({n} chars)", path=safe, n=len(text))
+            return {"content": [{"type": "text", "text": text}]}
+
         return [
             memory_save_tool,
             memory_search_tool,
@@ -434,6 +556,8 @@ class MemclawAgent:
             telegram_image_save_tool,
             image_search_tool,
             update_instructions_tool,
+            file_write_tool,
+            file_read_tool,
         ]
 
     # ------------------------------------------------------------------
@@ -538,6 +662,7 @@ class MemclawAgent:
             allowed_tools=self.tool_names,
             permission_mode="bypassPermissions",
             max_turns=10,
+            can_use_tool=_make_fs_guardrail(self.config.memory_dir),
         )
 
         last_text = ""
