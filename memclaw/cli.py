@@ -287,10 +287,17 @@ def bot(ctx):
 
         logger.info("Memclaw bot initialized")
 
+    async def post_shutdown(application: Application) -> None:
+        handlers = application.bot_data.get("handlers")
+        if handlers:
+            handlers.close()
+            logger.info("Memclaw bot shut down cleanly")
+
     app = (
         Application.builder()
         .token(config.telegram_bot_token)
         .post_init(post_init)
+        .post_shutdown(post_shutdown)
         .build()
     )
 

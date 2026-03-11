@@ -732,4 +732,8 @@ class MemclawAgent:
         )
 
     def close(self):
+        # Cancel background sync task if running
+        task = getattr(self, "_sync_task", None)
+        if task is not None and not task.done():
+            task.cancel()
         self.index.close()
