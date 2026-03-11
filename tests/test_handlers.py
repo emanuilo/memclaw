@@ -120,31 +120,29 @@ class TestTypingIndicator:
 class TestAgentsFile:
     """Verify AGENTS.md (the externalized system prompt) has the right content."""
 
-    def _read_agents(self) -> str:
-        from pathlib import Path
-        # Read the default AGENTS.md that ships with the project
-        agents_path = Path.home() / ".memclaw" / "AGENTS.md"
-        assert agents_path.exists(), "AGENTS.md not found at ~/.memclaw/AGENTS.md"
+    def _read_agents(self, tmp_config) -> str:
+        agents_path = tmp_config.agent_file
+        assert agents_path.exists(), f"AGENTS.md not found at {agents_path}"
         return agents_path.read_text()
 
-    def test_mentions_permanent_memory(self):
-        content = self._read_agents()
+    def test_mentions_permanent_memory(self, tmp_config):
+        content = self._read_agents(tmp_config)
         assert "permanent" in content.lower()
         assert "memory_save" in content
 
-    def test_mentions_not_saved_yet(self):
-        content = self._read_agents()
+    def test_mentions_not_saved_yet(self, tmp_config):
+        content = self._read_agents(tmp_config)
         assert "NOT" in content
         assert "saved" in content.lower()
 
-    def test_mentions_voice_not_saved(self):
-        content = self._read_agents()
+    def test_mentions_voice_not_saved(self, tmp_config):
+        content = self._read_agents(tmp_config)
         assert "Voice message" in content
 
-    def test_mentions_link_not_saved(self):
-        content = self._read_agents()
+    def test_mentions_link_not_saved(self, tmp_config):
+        content = self._read_agents(tmp_config)
         assert "Link summary" in content
 
-    def test_has_user_instructions_section(self):
-        content = self._read_agents()
+    def test_has_user_instructions_section(self, tmp_config):
+        content = self._read_agents(tmp_config)
         assert "User instructions" in content
