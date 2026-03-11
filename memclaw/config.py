@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib.resources
 import os
+import shutil
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -50,6 +52,18 @@ class MemclawConfig:
         self.memory_dir = Path(self.memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_subdir.mkdir(exist_ok=True)
+        self._init_default_files()
+
+    def _init_default_files(self):
+        """Copy default files into memory_dir if they don't exist yet."""
+        defaults = {"AGENTS.md": self.agent_file}
+        for filename, dest in defaults.items():
+            if not dest.exists():
+                src = importlib.resources.files("memclaw.defaults").joinpath(filename)
+                dest.write_text(src.read_text(encoding="utf-8"))
+
+        if not self.memory_file.exists():
+            self.memory_file.write_text("# Personal Memory\n")
 
     @property
     def db_path(self) -> Path:
@@ -62,6 +76,10 @@ class MemclawConfig:
     @property
     def memory_file(self) -> Path:
         return self.memory_dir / "MEMORY.md"
+
+    @property
+    def agent_file(self) -> Path:
+        return self.memory_dir / "AGENTS.md"
 
     def daily_file(self, dt: date | None = None) -> Path:
         dt = dt or date.today()

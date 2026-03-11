@@ -24,57 +24,30 @@ from .index import MemoryIndex
 from .search import HybridSearch, SearchResult
 from .store import MemoryStore
 
-SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT_TEMPLATE = """\
 Today's date: {today}
 
-You are Memclaw, a personal memory assistant. You help users store and retrieve \
-their thoughts, notes, ideas, and images.
-
-Capabilities:
-1. **Store**: When the user shares information, thoughts, notes, facts, or anything \
-worth remembering — save it using the memory_save tool. Briefly confirm what you saved.
-2. **Search**: When the user asks a question or wants to recall something — search \
-their memories using memory_search. Present results clearly with dates.
-3. **Images (local file)**: When the user provides a local image file path, describe \
-and save it with the image_save tool.
-4. **Images (Telegram)**: When you see an image in the message with a file_id, \
-describe what you see in detail and save the description using telegram_image_save \
-with the provided file_id.
-5. **Image retrieval**: When the user asks to retrieve, show, or find an image — use \
-image_search. The image will be sent automatically, just acknowledge it briefly.
-6. **Conversation**: Sometimes the user just wants to chat. Respond naturally. If they \
-mention something worth remembering, save it too.
-
-When the user shares a durable fact, preference, or decision that should be remembered \
-permanently, use memory_save with permanent=true to write it to MEMORY.md. Examples: \
-'My name is X', 'I prefer Y', 'I decided to Z'.
-
-When you receive content marked as 'NOT been saved yet', decide whether it's worth \
-saving. Save it using memory_save if it contains useful information. You may rephrase \
-or extract key points rather than saving verbatim.
-
-You may also receive pre-processed content:
-- "[Voice message]" followed by a transcription — the voice has been transcribed but \
-NOT yet saved. Decide whether to save it based on the content.
-- "[Link summary]" entries — links have been fetched and summarized but NOT yet saved. \
-Decide whether each is worth saving.
+{agent_instructions}
 
 === MEMORY CONTEXT ===
 {context}
 
-=== GUIDELINES ===
-- Always respond to the user. Never be silent.
-- Be concise and helpful.
-- When storing, briefly confirm what was saved.
-- When searching, present the most relevant results clearly with source dates.
-- If intent is ambiguous, lean towards storing when sharing info and searching \
-when asking questions.
-- Reference specific memories with dates when relevant.
-- If information conflicts, prefer more recent data.
-
 === CONVERSATION HISTORY ===
 {history}
+
+IMPORTANT: When the user gives you a behavioural instruction (e.g. "always respond \
+in Spanish", "be more formal", "never use emojis"), you MUST call the \
+update_instructions tool to save it. These are rules you should follow in every \
+future conversation.
 """
+
+
+def _load_agent_instructions(config: MemclawConfig) -> str:
+    """Load the system prompt from AGENTS.md, or return a minimal fallback."""
+    agent_file = config.agent_file
+    if agent_file.exists():
+        return agent_file.read_text().strip()
+    return "You are Memclaw, a personal memory assistant."
 
 
 _CONSOLIDATION_PROMPT = """\
@@ -145,6 +118,7 @@ class MemclawAgent:
             "mcp__memclaw__image_save",
             "mcp__memclaw__telegram_image_save",
             "mcp__memclaw__image_search",
+            "mcp__memclaw__update_instructions",
         ]
 
     # ------------------------------------------------------------------
@@ -433,12 +407,33 @@ class MemclawAgent:
             logger.info("  → image_search result: no matching images")
             return {"content": [{"type": "text", "text": "No matching images found."}]}
 
+        agent_file = self.config.agent_file
+
+        @tool(
+            "update_instructions",
+            "Save a new behavioural instruction to AGENTS.md. Call this whenever the "
+            "user tells you to behave a certain way, respond in a certain style, "
+            "or gives any standing directive (e.g. 'always reply in Serbian', "
+            "'be more concise', 'never use emojis'). Pass a short, clear rule.",
+            {"instruction": str},
+        )
+        async def update_instructions_tool(args):
+            instruction: str = args["instruction"].strip()
+            # Append under the "## User instructions" section
+            current = agent_file.read_text() if agent_file.exists() else ""
+            entry = f"\n- {instruction}\n"
+            with open(agent_file, "a") as f:
+                f.write(entry)
+            logger.info("  → update_instructions: appended to AGENTS.md")
+            return {"content": [{"type": "text", "text": f"Instruction saved: {instruction}"}]}
+
         return [
             memory_save_tool,
             memory_search_tool,
             image_save_tool,
             telegram_image_save_tool,
             image_search_tool,
+            update_instructions_tool,
         ]
 
     # ------------------------------------------------------------------
@@ -530,9 +525,12 @@ class MemclawAgent:
         else:
             history_text = "(no prior messages)"
 
+        agent_instructions = _load_agent_instructions(self.config)
+
         options = ClaudeAgentOptions(
-            system_prompt=SYSTEM_PROMPT.format(
+            system_prompt=_SYSTEM_PROMPT_TEMPLATE.format(
                 today=date.today().isoformat(),
+                agent_instructions=agent_instructions,
                 context=context,
                 history=history_text,
             ),

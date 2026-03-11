@@ -56,25 +56,34 @@ class TestHandlerSourceCode:
         assert "NOT been saved yet" in source
 
 
-class TestSystemPrompt:
-    """Verify the system prompt includes guidance for unsaved content."""
+class TestAgentsFile:
+    """Verify AGENTS.md (the externalized system prompt) has the right content."""
 
-    def test_prompt_mentions_permanent_memory(self):
-        from memclaw.agent import SYSTEM_PROMPT
-        assert "permanent" in SYSTEM_PROMPT.lower()
-        assert "memory_save" in SYSTEM_PROMPT
+    def _read_agents(self) -> str:
+        from pathlib import Path
+        # Read the default AGENTS.md that ships with the project
+        agents_path = Path.home() / ".memclaw" / "AGENTS.md"
+        assert agents_path.exists(), "AGENTS.md not found at ~/.memclaw/AGENTS.md"
+        return agents_path.read_text()
 
-    def test_prompt_mentions_not_saved_yet(self):
-        from memclaw.agent import SYSTEM_PROMPT
-        assert "NOT" in SYSTEM_PROMPT
-        assert "saved" in SYSTEM_PROMPT
+    def test_mentions_permanent_memory(self):
+        content = self._read_agents()
+        assert "permanent" in content.lower()
+        assert "memory_save" in content
 
-    def test_prompt_mentions_voice_not_saved(self):
-        from memclaw.agent import SYSTEM_PROMPT
-        assert "Voice message" in SYSTEM_PROMPT
-        assert "NOT yet saved" in SYSTEM_PROMPT or "NOT been saved" in SYSTEM_PROMPT
+    def test_mentions_not_saved_yet(self):
+        content = self._read_agents()
+        assert "NOT" in content
+        assert "saved" in content.lower()
 
-    def test_prompt_mentions_link_not_saved(self):
-        from memclaw.agent import SYSTEM_PROMPT
-        assert "Link summary" in SYSTEM_PROMPT
-        assert "NOT yet saved" in SYSTEM_PROMPT or "NOT been saved" in SYSTEM_PROMPT
+    def test_mentions_voice_not_saved(self):
+        content = self._read_agents()
+        assert "Voice message" in content
+
+    def test_mentions_link_not_saved(self):
+        content = self._read_agents()
+        assert "Link summary" in content
+
+    def test_has_user_instructions_section(self):
+        content = self._read_agents()
+        assert "User instructions" in content
