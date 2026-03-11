@@ -13,7 +13,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 
 ---
 
-Memclaw is a lightweight, local-first personal memory assistant. It stores your thoughts, notes, and images as **plain Markdown files** and makes them instantly searchable through **hybrid vector + keyword search**.
+Memclaw is a lightweight, local-first personal memory assistant. It stores your thoughts, notes, images, and links as **plain Markdown files** and makes them instantly searchable through **hybrid vector + keyword search**.
 
 Think of it as your second brain — one that actually remembers.
 
@@ -75,6 +75,7 @@ All memories are plain Markdown — human-readable, editable, and git-friendly.
 | File | Purpose |
 |------|---------|
 | `~/.memclaw/MEMORY.md` | Curated long-term facts and preferences |
+| `~/.memclaw/AGENTS.md` | Customizable agent instructions and user preferences |
 | `~/.memclaw/memory/YYYY-MM-DD.md` | Timestamped daily entries |
 | `~/.memclaw/memclaw.db` | SQLite index (vector embeddings + FTS5) |
 
@@ -84,16 +85,21 @@ Every memory is chunked, embedded, and indexed in SQLite. Retrieval combines two
 
 - **Vector search** (70% weight) — cosine similarity via OpenAI embeddings finds semantically related memories even when wording differs
 - **Keyword search** (30% weight) — BM25 via SQLite FTS5 catches exact tokens, names, and identifiers
+- **Temporal decay** — recent memories score higher (30-day half-life), MEMORY.md entries are evergreen
+- **MMR deduplication** — removes near-duplicate results to keep search diverse
 
 ### Agent Layer
 
-Powered by Claude via the [Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview). The agent decides when to **store** vs **search** based on your intent, using three custom tools:
+Powered by Claude via the [Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview). The agent maintains a rolling 10-message-pair conversation history and decides when to **store** vs **search** based on your intent.
 
 | Tool | What it does |
 |------|-------------|
 | `memory_save` | Writes a new entry to today's daily file or MEMORY.md |
 | `memory_search` | Hybrid search across all indexed memories |
 | `image_save` | Generates an AI description of an image and stores it |
+| `image_search` | Retrieves previously stored images by description |
+| `file_write` / `file_read` | Sandboxed file operations within `~/.memclaw/` |
+| `update_instructions` | Appends user preferences to AGENTS.md |
 
 ## Usage
 
@@ -126,6 +132,9 @@ memclaw save "Meeting at 3pm with the design team about the rebrand"
 
 # Search your memories
 memclaw search "design team meetings"
+
+# Consolidate daily files into MEMORY.md
+memclaw consolidate
 
 # Rebuild the search index
 memclaw index
@@ -169,6 +178,7 @@ See [`.env.example`](.env.example) for a template.
 ```
 ~/.memclaw/
 ├── MEMORY.md              # Permanent / curated memories
+├── AGENTS.md              # Agent instructions + user preferences
 ├── memclaw.db             # SQLite index (embeddings + FTS5)
 └── memory/
     ├── 2025-06-15.md      # Daily notes
@@ -185,6 +195,9 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **NumPy for vectors** — cosine similarity computed in-memory, no native extensions required
 - **Claude Agent SDK** — intelligent agent loop that autonomously decides how to handle your input
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
+- **Auto-consolidation** — daily files are periodically distilled into MEMORY.md
+- **Filesystem guardrail** — SDK-level callback blocks all file access outside `~/.memclaw/`
+- **Embedding cache** — SHA-256 content hashing skips redundant API calls
 
 ## Telegram Bot
 
