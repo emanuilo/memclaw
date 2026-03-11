@@ -257,6 +257,8 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **Filesystem guardrail** — SDK-level callback blocks all file access outside `~/.memclaw/`
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
 
+For a deep dive into how memory storage, search, consolidation, and context injection work, see the [Memory Architecture](docs/memory-architecture.md) doc.
+
 ## Using as a Library
 
 ```python
