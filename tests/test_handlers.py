@@ -1,6 +1,7 @@
-"""Tests for Telegram handlers — double storage prevention (spec #7)."""
+"""Tests for Telegram handlers — double storage prevention (spec #7) + typing indicator."""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import textwrap
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -54,6 +55,66 @@ class TestHandlerSourceCode:
         from memclaw.bot.handlers import MessageHandlers
         source = inspect.getsource(MessageHandlers.handle_photo)
         assert "NOT been saved yet" in source
+
+
+# ────────────────────────────────────────────────────────────────────
+# Typing indicator
+# ────────────────────────────────────────────────────────────────────
+
+class TestTypingIndicator:
+    def _make_handlers(self):
+        from memclaw.bot.handlers import MessageHandlers
+
+        with patch.object(MessageHandlers, "__init__", lambda self, *a, **kw: None):
+            handlers = MessageHandlers.__new__(MessageHandlers)
+        handlers.agent = MagicMock()
+        handlers.config = MagicMock()
+        handlers.openai_client = MagicMock()
+        handlers.link_processor = MagicMock()
+        return handlers
+
+    @pytest.mark.asyncio
+    async def test_typing_sent_during_processing(self):
+        """_send_with_typing should send ChatAction.TYPING while agent runs."""
+        from telegram.constants import ChatAction
+
+        handlers = self._make_handlers()
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+        context.bot.send_photo = AsyncMock()
+
+        async def slow_handle(prompt, **kw):
+            await asyncio.sleep(0.05)
+            return ("Response", [])
+
+        handlers.agent.handle = slow_handle
+
+        await handlers._send_with_typing(update, context, "Hi")
+
+        context.bot.send_chat_action.assert_called()
+        call_args = context.bot.send_chat_action.call_args
+        assert call_args.kwargs.get("action") == ChatAction.TYPING or \
+               (call_args.args and ChatAction.TYPING in call_args.args)
+
+    @pytest.mark.asyncio
+    async def test_response_sent_after_agent(self):
+        """_send_with_typing should send the agent response via reply_text."""
+        handlers = self._make_handlers()
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+        context.bot.send_photo = AsyncMock()
+
+        handlers.agent.handle = AsyncMock(return_value=("Hello!", []))
+
+        await handlers._send_with_typing(update, context, "Hi")
+
+        update.message.reply_text.assert_called_once_with("Hello!")
 
 
 class TestAgentsFile:

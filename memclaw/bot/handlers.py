@@ -6,16 +6,31 @@ which autonomously decides whether to store, search, or just respond.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 
 from loguru import logger
 from openai import AsyncOpenAI
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from ..agent import MemclawAgent
 from ..config import MemclawConfig
 from .link_processor import LinkProcessor
+
+
+async def _typing_loop(bot, chat_id: int):
+    """Send 'typing...' action every 4 seconds until cancelled."""
+    try:
+        while True:
+            try:
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            except Exception:
+                pass  # best-effort
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        pass
 
 
 class MessageHandlers:
@@ -50,6 +65,26 @@ class MessageHandlers:
 
         if response_text:
             await update.message.reply_text(response_text[:4096])
+
+    async def _send_with_typing(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        prompt: str,
+        *,
+        image_b64: str | None = None,
+        image_media_type: str = "image/jpeg",
+    ):
+        """Run the agent with a typing indicator, then send the full response."""
+        chat_id = update.effective_chat.id
+        typing_task = asyncio.create_task(_typing_loop(context.bot, chat_id))
+        try:
+            response_text, found_images = await self.agent.handle(
+                prompt, image_b64=image_b64, image_media_type=image_media_type
+            )
+        finally:
+            typing_task.cancel()
+        await self._send_response(update, context, response_text, found_images)
 
     # ------------------------------------------------------------------
     # /start — the only command
@@ -88,8 +123,7 @@ class MessageHandlers:
                 )
 
         prompt = "\n".join(prompt_parts)
-        response_text, found_images = await self.agent.handle(prompt)
-        await self._send_response(update, context, response_text, found_images)
+        await self._send_with_typing(update, context, prompt)
 
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_user(update.effective_user.id):
@@ -123,12 +157,10 @@ class MessageHandlers:
         if link_info:
             prompt_text += link_info
 
-        response_text, found_images = await self.agent.handle(
-            prompt_text,
-            image_b64=base64_image,
-            image_media_type="image/jpeg",
+        await self._send_with_typing(
+            update, context, prompt_text,
+            image_b64=base64_image, image_media_type="image/jpeg",
         )
-        await self._send_response(update, context, response_text, found_images)
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_user(update.effective_user.id):
@@ -164,8 +196,7 @@ class MessageHandlers:
             "\nThis transcription has NOT been saved yet. Save it if the content is worth remembering."
             f"{link_info}"
         )
-        response_text, found_images = await self.agent.handle(prompt)
-        await self._send_response(update, context, response_text, found_images)
+        await self._send_with_typing(update, context, prompt)
 
     def close(self):
         self.agent.close()

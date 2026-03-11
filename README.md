@@ -239,7 +239,7 @@ Every message goes through the Claude agent, which autonomously decides what to 
 | **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. File ID saved for later retrieval. |
 | **Voice** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
 
-The bot always responds — it's a conversation, not a silent inbox.
+The bot shows a **typing indicator** while processing so you know it's working on your request.
 
 ### Examples
 
