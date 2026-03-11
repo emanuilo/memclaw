@@ -39,7 +39,7 @@ Memclaw takes one slice of what OpenClaw does — **memory** — and does it rea
 ## Quick Start
 
 ```bash
-git clone https://github.com/memclaw/memclaw.git
+git clone https://github.com/emanuilo/memclaw.git
 cd memclaw
 pip install -e .
 ```

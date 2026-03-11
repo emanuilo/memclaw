@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "A lightweight, local-first personal memory assistant powered by AI"
 readme = "README.md"
 license = "MIT"
+authors = [
+    { name = "Emanuilo Jovanovic", email = "emanuilo.jovanovic@hotmail.com" },
+]
 requires-python = ">=3.10"
 keywords = ["memory", "ai", "assistant", "vector-search", "personal-knowledge", "second-brain"]
 classifiers = [
@@ -37,8 +40,15 @@ dependencies = [
 memclaw = "memclaw.cli:cli"
 
 [project.urls]
-Repository = "https://github.com/memclaw/memclaw"
-Issues = "https://github.com/memclaw/memclaw/issues"
+Repository = "https://github.com/emanuilo/memclaw"
+Issues = "https://github.com/emanuilo/memclaw/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.0.0",
+    "ruff>=0.9.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["memclaw"]
