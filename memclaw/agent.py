@@ -395,7 +395,17 @@ class MemclawAgent:
         )
         async def image_search_tool(args):
             query_emb = await index.get_embedding(args["query"])
-            results = index.search_telegram_images(query_emb, limit=3)
+            candidates = index.search_telegram_images(query_emb, limit=5)
+
+            # Return the best match; only include extras if their score
+            # is within 90% of the top result (i.e. genuinely similar).
+            if candidates:
+                best_score = candidates[0]["score"]
+                threshold = best_score * 0.9
+                results = [r for r in candidates if r["score"] >= threshold]
+            else:
+                results = []
+
             found_images.extend(results)
 
             if results:
