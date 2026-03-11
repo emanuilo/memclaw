@@ -63,10 +63,10 @@ flowchart LR
     You -->|text / images / links| Agent[Memclaw Agent]
 
     subgraph sandbox ["~/.memclaw/"]
-        Agent -->|save| Tools1[memory_save\nimage_save\nfile_write]
-        Tools1 --> Files[MEMORY.md\ndaily/*.md\nAGENTS.md]
-        Files --> DB[(SQLite\nFTS5 + Vectors)]
-        DB --> Tools2[memory_search\nimage_search]
+        Agent -->|save| Tools1["memory_save<br>image_save<br>file_write"]
+        Tools1 --> Files["MEMORY.md<br>daily/*.md<br>AGENTS.md"]
+        Files --> DB[("SQLite<br>FTS5 + Vectors")]
+        DB --> Tools2["memory_search<br>image_search"]
         Tools2 -->|results| Agent
     end
 
