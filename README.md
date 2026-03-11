@@ -58,12 +58,19 @@ That's it. Start typing.
 
 ## How It Works
 
-```
-You ──► Memclaw Agent ──► Memory Tools ──► Markdown Files + SQLite Index
-              │                                       │
-              │         ◄── Hybrid Search ◄───────────┘
-              │
-              └──► Natural language response
+```mermaid
+flowchart LR
+    You -->|text / images / links| Agent[Memclaw Agent]
+
+    subgraph sandbox ["~/.memclaw/"]
+        Agent -->|save| Tools1[memory_save\nimage_save\nfile_write]
+        Tools1 --> Files[MEMORY.md\ndaily/*.md\nAGENTS.md]
+        Files --> DB[(SQLite\nFTS5 + Vectors)]
+        DB --> Tools2[memory_search\nimage_search]
+        Tools2 -->|results| Agent
+    end
+
+    Agent -->|response + images| You
 ```
 
 Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and is built with the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview).
