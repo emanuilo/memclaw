@@ -59,6 +59,54 @@ memclaw
 
 That's it. Start typing.
 
+## Telegram Bot
+
+The main way to use Memclaw. Just talk to it naturally — no commands needed. Send text, photos, voice messages, or links. The agent figures out what to do: store it, search your memories, retrieve images, or just chat.
+
+The bot shows a **typing indicator** while processing so you know it's working on your request.
+
+### Setup
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
+2. Get your Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot)).
+3. Set the environment variables:
+
+```bash
+export TELEGRAM_BOT_TOKEN=your-bot-token
+export ALLOWED_USER_IDS=your-user-id
+export OPENAI_API_KEY=your-openai-key
+export ANTHROPIC_API_KEY=your-anthropic-key
+```
+
+4. Start the bot:
+
+```bash
+memclaw bot
+```
+
+### What it handles
+
+| Message type | What happens |
+|-------------|-------------|
+| **Text** | Agent decides: store as memory, search existing memories, or both. Links are extracted, fetched, and summarized automatically. |
+| **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. File ID saved for later retrieval. |
+| **Voice** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
+
+### Examples
+
+```
+> Just had coffee with Alex. She's moving to Berlin for a role at Stripe.
+Got it! I've saved that Alex is moving to Berlin for a new role at Stripe.
+
+> Who is Alex?
+Based on your memories, Alex is someone you had coffee with recently.
+She's moving to Berlin for a new role at Stripe.
+
+> Show me the whiteboard photo from last week
+[sends the matching photo]
+Here's the sprint planning whiteboard you saved last week.
+```
+
 ## How It Works
 
 ```mermaid
@@ -208,56 +256,6 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **Auto-consolidation** — daily files are periodically distilled into MEMORY.md
 - **Filesystem guardrail** — SDK-level callback blocks all file access outside `~/.memclaw/`
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
-
-## Telegram Bot
-
-Memclaw ships with a built-in Telegram bot. Just talk to it naturally — no commands needed. The agent figures out what to do with every message: store it, search your memories, retrieve images, or just chat.
-
-### Setup
-
-1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
-2. Get your Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot)).
-3. Set the environment variables:
-
-```bash
-export TELEGRAM_BOT_TOKEN=your-bot-token
-export ALLOWED_USER_IDS=your-user-id
-export OPENAI_API_KEY=your-openai-key
-export ANTHROPIC_API_KEY=your-anthropic-key
-```
-
-4. Start the bot:
-
-```bash
-memclaw bot
-```
-
-### How it works
-
-Every message goes through the Claude agent, which autonomously decides what to do:
-
-| Message type | What happens |
-|-------------|-------------|
-| **Text** | Agent decides: store as memory, search existing memories, or both. Links are extracted, fetched, and summarized automatically. |
-| **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. File ID saved for later retrieval. |
-| **Voice** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
-
-The bot shows a **typing indicator** while processing so you know it's working on your request.
-
-### Examples
-
-```
-> Just had coffee with Alex. She's moving to Berlin for a role at Stripe.
-Got it! I've saved that Alex is moving to Berlin for a new role at Stripe.
-
-> Who is Alex?
-Based on your memories, Alex is someone you had coffee with recently.
-She's moving to Berlin for a new role at Stripe.
-
-> Show me the whiteboard photo from last week
-[sends the matching photo]
-Here's the sprint planning whiteboard you saved last week.
-```
 
 ## Using as a Library
 
