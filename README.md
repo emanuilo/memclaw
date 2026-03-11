@@ -4,7 +4,7 @@
 
 **Your personal memory vault, powered by AI.**
 
-Store your thoughts. Save your images. Ask anything, anytime.
+Store your thoughts. Save your images and links. Ask anything, anytime.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -19,13 +19,19 @@ Think of it as your second brain — one that actually remembers.
 
 ## Why Memclaw?
 
-**Remember everything.** Drop in random thoughts, meeting notes, voice memos, or photos. Memclaw files them away and indexes them for instant retrieval — even months later.
+[OpenClaw](https://github.com/openclaw/openclaw) is great — but it connects to dozens of tools, reads your filesystem, runs shell commands, and does a hundred things you didn't ask for. That makes it slow, expensive, and a security surface you have to think about every time you use it.
 
-**Find anything.** Ask natural language questions like *"What did I note about that restaurant?"* or *"What images did I save from vacation?"* Hybrid search combines semantic understanding with exact keyword matching so nothing slips through.
+Memclaw takes one slice of what OpenClaw does — **memory** — and does it really well, without the rest.
 
-**Own your data.** Everything lives on your machine as plain Markdown files and a local SQLite database. No cloud storage. No subscriptions. No vendor lock-in. Your memories are yours — readable, editable, and version-controllable.
+**Total recall.** Save a thought today, retrieve it six months later with a vague description. *"What was that restaurant Alex told me about?"* — Memclaw finds it. Hybrid vector + keyword search means you don't need to remember exact words.
 
-**Stay lightweight.** No Docker. No Postgres. No heavy infrastructure. Just Python, SQLite, and two API keys. Install in seconds, start remembering immediately.
+**Visual memory.** Send an image and Memclaw generates an AI caption, indexes it, and stores it. Later, just ask *"that food recipe photo"* or *"the whiteboard from last sprint"* and it comes right back.
+
+**Link memory.** Drop a link and Memclaw fetches the page, summarizes it, and indexes the content. Months later, ask *"that article about distributed databases"* and it surfaces the link with context — no bookmarking app needed.
+
+**Sandboxed by design.** Memclaw only touches `~/.memclaw/`. No filesystem access, no shell commands, no path traversal. You don't need to trust it with your whole computer — it can't see it.
+
+**Lightweight and cheap.** No Docker. No Postgres. No sprawling tool graph burning tokens. Just Python, SQLite, and two API keys. Fast responses, minimal cost.
 
 ## Quick Start
 
