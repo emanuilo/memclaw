@@ -71,6 +71,9 @@ Decide whether each is worth saving.
 when asking questions.
 - Reference specific memories with dates when relevant.
 - If information conflicts, prefer more recent data.
+
+=== CONVERSATION HISTORY ===
+{history}
 """
 
 
@@ -506,10 +509,22 @@ class MemclawAgent:
 
         context = await self.build_context(message)
 
+        # Format conversation history for the system prompt
+        history_snapshot = self._history[:-1]  # exclude the just-appended entry
+        if history_snapshot:
+            history_lines = []
+            for entry in history_snapshot:
+                role = "User" if entry["role"] == "user" else "Assistant"
+                history_lines.append(f"{role}: {entry['content']}")
+            history_text = "\n".join(history_lines)
+        else:
+            history_text = "(no prior messages)"
+
         options = ClaudeAgentOptions(
             system_prompt=SYSTEM_PROMPT.format(
                 today=date.today().isoformat(),
                 context=context,
+                history=history_text,
             ),
             mcp_servers={"memclaw": self.server},
             allowed_tools=self.tool_names,
@@ -517,41 +532,31 @@ class MemclawAgent:
             max_turns=10,
         )
 
-        # Build content blocks for the current message
-        if image_b64:
-            current_content: list[dict[str, Any]] | str = [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": image_media_type,
-                        "data": image_b64,
-                    },
-                },
-                {"type": "text", "text": message},
-            ]
-        else:
-            current_content = message
-
-        # Build messages iterator: prior history + current message
-        history_snapshot = list(self._history[:-1])  # exclude the just-appended entry
-
-        async def _messages() -> AsyncIterator[dict[str, Any]]:
-            # Send prior conversation history
-            for entry in history_snapshot:
-                yield {
-                    "type": "user" if entry["role"] == "user" else "assistant",
-                    "message": {"role": entry["role"], "content": entry["content"]},
-                }
-            # Send the current user message
-            yield {
-                "type": "user",
-                "message": {"role": "user", "content": current_content},
-            }
-
         last_text = ""
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(_messages())
+            # For image messages, use an async iterator with content blocks
+            if image_b64:
+                content_blocks: list[dict[str, Any]] = [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image_media_type,
+                            "data": image_b64,
+                        },
+                    },
+                    {"type": "text", "text": message},
+                ]
+
+                async def _image_msg() -> AsyncIterator[dict[str, Any]]:
+                    yield {
+                        "type": "user",
+                        "message": {"role": "user", "content": content_blocks},
+                    }
+
+                await client.query(_image_msg())
+            else:
+                await client.query(message)
 
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
