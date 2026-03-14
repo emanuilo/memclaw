@@ -39,25 +39,11 @@ Memclaw takes one slice of what OpenClaw does — **memory** — and does it rea
 ## Quick Start
 
 ```bash
-git clone https://github.com/emanuilo/memclaw.git
-cd memclaw
-pip install -e .
-```
-
-Set your API keys:
-
-```bash
-export ANTHROPIC_API_KEY=your-anthropic-key
-export OPENAI_API_KEY=your-openai-key
-```
-
-Launch:
-
-```bash
+pip install memclaw
 memclaw
 ```
 
-That's it. Start typing.
+On first run, Memclaw will prompt you for your API keys and save them to `~/.memclaw/.env`. You can update them anytime with `memclaw configure`.
 
 ## Telegram Bot
 
@@ -69,20 +55,13 @@ The bot shows a **typing indicator** while processing so you know it's working o
 
 1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
 2. Get your Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot)).
-3. Set the environment variables:
-
-```bash
-export TELEGRAM_BOT_TOKEN=your-bot-token
-export ALLOWED_USER_IDS=your-user-id
-export OPENAI_API_KEY=your-openai-key
-export ANTHROPIC_API_KEY=your-anthropic-key
-```
-
-4. Start the bot:
+3. Start the bot — on first run you'll be prompted for all keys:
 
 ```bash
 memclaw bot
 ```
+
+To update keys later: `memclaw configure`.
 
 ### What it handles
 
@@ -214,22 +193,22 @@ The image is described by an AI vision model and the description is stored and i
 
 ## Configuration
 
-Memclaw stores everything in `~/.memclaw/` by default. Override with `--memory-dir`:
+On first run, `memclaw` or `memclaw bot` will launch an interactive setup wizard that saves your keys to `~/.memclaw/.env`. Run `memclaw configure` anytime to update them.
+
+You can also set keys via environment variables or a `.env` in the current directory — these take the usual precedence over the saved config.
 
 ```bash
-memclaw --memory-dir ~/my-vault
+memclaw --memory-dir ~/my-vault   # override storage location
 ```
 
-### Environment Variables
+### API Keys
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | Yes | Embeddings + image descriptions |
-| `ANTHROPIC_API_KEY` | For interactive / /ask | Powers the Claude agent |
+| `ANTHROPIC_API_KEY` | Yes | Powers the Claude agent |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
 | `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
-
-See [`.env.example`](.env.example) for a template.
 
 ### Directory Structure
 

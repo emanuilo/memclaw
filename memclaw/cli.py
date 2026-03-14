@@ -11,9 +11,22 @@ from rich.panel import Panel
 from .config import MemclawConfig
 from .index import MemoryIndex
 from .search import HybridSearch
+from .setup import needs_setup, run_setup
 from .store import MemoryStore
 
 console = Console()
+
+
+def _ensure_setup(ctx):
+    """Run first-time setup if ~/.memclaw/.env doesn't exist, then reload config."""
+    if needs_setup():
+        run_setup()
+        # Reload .env so newly saved keys are picked up
+        from dotenv import load_dotenv
+        load_dotenv(Path.home() / ".memclaw" / ".env", override=True)
+        memory_dir = ctx.obj.get("memory_dir")
+        config = MemclawConfig(memory_dir=memory_dir) if memory_dir else MemclawConfig()
+        ctx.obj["config"] = config
 
 
 @click.group(invoke_without_command=True)
@@ -27,17 +40,20 @@ console = Console()
 def cli(ctx, memory_dir):
     """Memclaw -- your personal memory vault, powered by AI."""
     ctx.ensure_object(dict)
+    ctx.obj["memory_dir"] = memory_dir
     config = MemclawConfig(memory_dir=memory_dir) if memory_dir else MemclawConfig()
     ctx.obj["config"] = config
 
     if ctx.invoked_subcommand is None:
+        _ensure_setup(ctx)
+        config = ctx.obj["config"]
         if not config.anthropic_api_key:
             console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
-            console.print("Set it in your environment, .env file, or ~/.memclaw/.env")
+            console.print("Run [bold]memclaw configure[/bold] to set it.")
             raise SystemExit(1)
         if not config.openai_api_key:
             console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
-            console.print("Set it in your environment, .env file, or ~/.memclaw/.env")
+            console.print("Run [bold]memclaw configure[/bold] to set it.")
             raise SystemExit(1)
         asyncio.run(_interactive(config))
 
@@ -244,6 +260,13 @@ def status(ctx):
 
 @cli.command()
 @click.pass_context
+def configure(ctx):
+    """Update API keys and settings."""
+    run_setup(reconfigure=True)
+
+
+@cli.command()
+@click.pass_context
 def bot(ctx):
     """Start the Memclaw Telegram bot."""
     import sys
@@ -254,15 +277,17 @@ def bot(ctx):
 
     from .bot.handlers import MessageHandlers
 
+    _ensure_setup(ctx)
     config: MemclawConfig = ctx.obj["config"]
 
     if not config.telegram_bot_token:
         console.print("[red]Error:[/red] TELEGRAM_BOT_TOKEN is not set.")
-        console.print("Set it via environment variable or .env file.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
     if not config.openai_api_key:
         console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
     # Logging
