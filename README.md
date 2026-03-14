@@ -1,6 +1,6 @@
 <div align="center">
 
-# Memclaw
+<img src="docs/assets/memclaw-logo.png" alt="Memclaw" width="500">
 
 **Your personal memory vault, powered by AI.**
 
@@ -10,6 +10,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Claude Agent SDK](https://img.shields.io/badge/Claude-Agent_SDK-blueviolet.svg)](https://platform.claude.com/docs/en/agent-sdk/overview)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
+[![WhatsApp](https://img.shields.io/badge/WhatsApp-coming_soon-lightgrey.svg)]()
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 </div>
@@ -48,6 +49,8 @@ On first run, Memclaw will prompt you for your API keys and save them to `~/.mem
 ## Telegram Bot
 
 The main way to use Memclaw. Just talk to it naturally — no commands needed. Send text, photos, voice messages, or links. The agent figures out what to do: store it, search your memories, retrieve images, or just chat.
+
+> **WhatsApp support is coming soon.** Telegram is the only supported messaging platform for now.
 
 The bot shows a **typing indicator** while processing so you know it's working on your request.
 
