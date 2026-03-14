@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "memclaw"
-version = "0.1.0"
+version = "0.1.1"
 description = "A lightweight, local-first personal memory assistant powered by AI"
 readme = "README.md"
 license = "MIT"
@@ -35,6 +35,7 @@ dependencies = [
     "httpx>=0.27.0",
     "beautifulsoup4>=4.12.0",
     "loguru>=0.7.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.scripts]
