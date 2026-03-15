@@ -1,31 +1,27 @@
+"""Memclaw agent — raw Anthropic API implementation (no Agent SDK).
+
+Drop-in replacement for ``agent.py``.  Uses ``anthropic.AsyncAnthropic``
+with a hand-rolled agentic while-loop instead of the Claude Agent SDK.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
-from collections.abc import AsyncIterator
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 import anthropic
-from claude_agent_sdk import (
-    AssistantMessage,
-    ClaudeAgentOptions,
-    ClaudeSDKClient,
-    PermissionResultAllow,
-    PermissionResultDeny,
-    ResultMessage,
-    ToolPermissionContext,
-    create_sdk_mcp_server,
-    tool,
-)
 from loguru import logger
 
 from .config import MemclawConfig
 from .index import MemoryIndex
 from .search import HybridSearch, SearchResult
 from .store import MemoryStore
+
+# ── System prompt (identical to SDK version) ─────────────────────────
 
 _SYSTEM_PROMPT_TEMPLATE = """\
 Today's date: {today}
@@ -46,7 +42,6 @@ future conversation.
 
 
 def _load_agent_instructions(config: MemclawConfig) -> str:
-    """Load the system prompt from AGENTS.md, or return a minimal fallback."""
     agent_file = config.agent_file
     if agent_file.exists():
         return agent_file.read_text().strip()
@@ -86,63 +81,147 @@ appropriate.
 explanation or preamble.
 """
 
+# ── Tool definitions (JSON schema) ───────────────────────────────────
 
-# ── Filesystem guardrail ──────────────────────────────────────────────
-# Tool names that touch the filesystem and need path validation.
-_FS_TOOLS = {"Write", "Edit", "Read", "Bash", "Glob", "Grep"}
+TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "name": "memory_save",
+        "description": "Save a new memory, thought, or note",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "The content to save"},
+                "permanent": {
+                    "type": "boolean",
+                    "description": "If true, save to MEMORY.md instead of daily file",
+                },
+                "entry_type": {
+                    "type": "string",
+                    "description": "Type of entry: note, image, link, voice",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional tags for categorization",
+                },
+            },
+            "required": ["content"],
+        },
+    },
+    {
+        "name": "memory_search",
+        "description": "Search through stored memories using natural language",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural language search query"},
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default 10)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "image_save",
+        "description": (
+            "Save a local image by generating an AI description and storing it as "
+            "a memory. You can see the image — describe it yourself and pass your "
+            "description as content."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "image_path": {"type": "string", "description": "Path to the image file"},
+                "caption": {"type": "string", "description": "Optional caption"},
+            },
+            "required": ["image_path"],
+        },
+    },
+    {
+        "name": "telegram_image_save",
+        "description": (
+            "Save a Telegram image with your description for later retrieval. "
+            "You MUST call this when you receive an image with a file_id. Describe "
+            "the image in detail and pass the description along with the file_id."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "Detailed image description"},
+                "file_id": {"type": "string", "description": "Telegram file_id"},
+                "caption": {"type": "string", "description": "Optional caption"},
+            },
+            "required": ["description", "file_id"],
+        },
+    },
+    {
+        "name": "image_search",
+        "description": (
+            "Search for previously stored images to send to the user. "
+            "Use when the user asks to retrieve, show, or send an image. "
+            "The image will be sent automatically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query for images"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "update_instructions",
+        "description": (
+            "Save a new behavioural instruction to AGENTS.md. Call this whenever "
+            "the user tells you to behave a certain way, respond in a certain style, "
+            "or gives any standing directive (e.g. 'always reply in Serbian', "
+            "'be more concise', 'never use emojis'). Pass a short, clear rule."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "instruction": {"type": "string", "description": "The instruction to save"},
+            },
+            "required": ["instruction"],
+        },
+    },
+    {
+        "name": "file_write",
+        "description": (
+            "Create or overwrite a file inside the memory directory (~/.memclaw/). "
+            "Use this when the user asks you to create a file such as todos.md, "
+            "notes.md, etc. The path must be relative to ~/.memclaw/ or an "
+            "absolute path under it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "File path (relative or absolute under ~/.memclaw/)"},
+                "content": {"type": "string", "description": "File content to write"},
+            },
+            "required": ["file_path", "content"],
+        },
+    },
+    {
+        "name": "file_read",
+        "description": (
+            "Read a file from the memory directory (~/.memclaw/). "
+            "The path must be under ~/.memclaw/."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "File path to read"},
+            },
+            "required": ["file_path"],
+        },
+    },
+]
 
 
-def _make_fs_guardrail(memory_dir: Path):
-    """Return a ``can_use_tool`` callback that blocks filesystem access
-    outside *memory_dir*.
-
-    For Write / Edit / Read — the ``file_path`` argument must resolve to
-    a location under *memory_dir*.
-
-    For Bash — the command is denied outright (too hard to parse safely).
-    The agent should use the sandboxed file tools instead.
-    """
-    safe_root = memory_dir.resolve()
-
-    async def _guard(
-        tool_name: str,
-        tool_input: dict[str, Any],
-        _ctx: ToolPermissionContext,
-    ) -> PermissionResultAllow | PermissionResultDeny:
-        if tool_name not in _FS_TOOLS:
-            return PermissionResultAllow()
-
-        # Block Bash entirely — can't reliably sandbox shell commands
-        if tool_name == "Bash":
-            return PermissionResultDeny(
-                message=(
-                    f"Shell commands are not allowed. "
-                    f"Use the memclaw tools or file_write/file_read instead."
-                ),
-            )
-
-        # For file-based tools, validate the path
-        raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
-        if not raw_path:
-            # Glob/Grep without explicit path — allow (they search cwd)
-            return PermissionResultAllow()
-
-        resolved = Path(raw_path).expanduser().resolve()
-        try:
-            resolved.relative_to(safe_root)
-        except ValueError:
-            return PermissionResultDeny(
-                message=(
-                    f"Access denied: {resolved} is outside the memory "
-                    f"directory ({safe_root}). All file operations must "
-                    f"stay within {safe_root}."
-                ),
-            )
-
-        return PermissionResultAllow()
-
-    return _guard
-
+# ── Helpers ──────────────────────────────────────────────────────────
 
 def _format_results(results: list[SearchResult]) -> str:
     parts = []
@@ -154,12 +233,15 @@ def _format_results(results: list[SearchResult]) -> str:
     return "\n\n---\n\n".join(parts) if parts else "No matching memories found."
 
 
+# Sonnet 4 pricing (per 1M tokens)
+_INPUT_COST_PER_M = 3.0
+_OUTPUT_COST_PER_M = 15.0
+
+
 class MemclawAgent:
     """Unified agent for both interactive CLI and Telegram bot.
 
-    Every message goes through ``handle()``, which builds memory context,
-    runs the Claude Agent SDK loop, and returns the response text together
-    with any found images (relevant for Telegram image retrieval).
+    Uses the raw Anthropic Messages API with a hand-rolled agentic loop.
     """
 
     def __init__(self, config: MemclawConfig):
@@ -169,35 +251,159 @@ class MemclawAgent:
         self.search = HybridSearch(config, self.index)
         self._found_images: list[dict] = []
         self._history: list[dict] = []
+        self._client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key)
 
-        tools = self._create_tools()
-        self.server = create_sdk_mcp_server(name="memclaw", version="0.1.0", tools=tools)
-        self.tool_names = [
-            "mcp__memclaw__memory_save",
-            "mcp__memclaw__memory_search",
-            "mcp__memclaw__image_save",
-            "mcp__memclaw__telegram_image_save",
-            "mcp__memclaw__image_search",
-            "mcp__memclaw__update_instructions",
-            "mcp__memclaw__file_write",
-            "mcp__memclaw__file_read",
-        ]
+    # ── Tool dispatch ────────────────────────────────────────────────
 
-    # ------------------------------------------------------------------
-    # Startup sync and background sync (spec #9)
-    # ------------------------------------------------------------------
+    async def _execute_tool(self, name: str, tool_input: dict[str, Any]) -> str:
+        dispatch = {
+            "memory_save": self._tool_memory_save,
+            "memory_search": self._tool_memory_search,
+            "image_save": self._tool_image_save,
+            "telegram_image_save": self._tool_telegram_image_save,
+            "image_search": self._tool_image_search,
+            "update_instructions": self._tool_update_instructions,
+            "file_write": self._tool_file_write,
+            "file_read": self._tool_file_read,
+        }
+        func = dispatch.get(name)
+        if func is None:
+            return f"Error: Unknown tool '{name}'"
+        try:
+            return await func(tool_input)
+        except Exception as e:
+            return f"Error executing {name}: {e}"
+
+    async def _tool_memory_save(self, args: dict) -> str:
+        content: str = args["content"]
+        permanent: bool = args.get("permanent", False)
+        entry_type: str = args.get("entry_type", "note")
+        tags = args.get("tags")
+        file_path = self.store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
+        await self.index.index_file(file_path)
+        logger.info("  → memory_save result: saved to {file}", file=file_path.name)
+        return f"Memory saved to {file_path.name}"
+
+    async def _tool_memory_search(self, args: dict) -> str:
+        results = await self.search.search(args["query"], limit=args.get("limit", 10))
+        formatted = _format_results(results)
+        logger.info("  → memory_search result: {n} hits", n=len(results))
+        for i, r in enumerate(results, 1):
+            source = Path(r.file_path).stem
+            snippet = r.content.strip().replace("\n", " ")
+            if len(snippet) > 120:
+                snippet = snippet[:120] + "..."
+            logger.info("    [{i}] ({score:.2f}, {src}) {snippet}", i=i, score=r.score, src=source, snippet=snippet)
+        return formatted
+
+    async def _tool_image_save(self, args: dict) -> str:
+        image_path = Path(args["image_path"]).expanduser().resolve()
+        caption: str = args.get("caption", "")
+        if not image_path.exists():
+            logger.info("  → image_save result: not found {path}", path=image_path)
+            return f"Image not found: {image_path}"
+        memory_content = f"**Image:** {image_path.name}\n"
+        if caption:
+            memory_content += f"**Caption:** {caption}\n"
+        memory_content += f"**Path:** {image_path}\n"
+        file_path = self.store.save(memory_content, entry_type="image")
+        await self.index.index_file(file_path)
+        logger.info("  → image_save result: saved {name}", name=image_path.name)
+        return f"Image saved from {image_path.name}"
+
+    async def _tool_telegram_image_save(self, args: dict) -> str:
+        description: str = args["description"]
+        file_id: str = args["file_id"]
+        caption: str = args.get("caption", "")
+        combined = f"Image: {description}"
+        if caption:
+            combined += f" Caption: {caption}"
+        file_path = self.store.save(combined, entry_type="image")
+        await self.index.index_file(file_path)
+        await self.index.store_telegram_image(
+            file_id=file_id, description=combined, caption=caption,
+        )
+        logger.info("  → telegram_image_save result: {desc}", desc=description[:100])
+        return f"Image saved: {description[:100]}"
+
+    async def _tool_image_search(self, args: dict) -> str:
+        query_emb = await self.index.get_embedding(args["query"])
+        candidates = self.index.search_telegram_images(query_emb, limit=5)
+        if candidates:
+            best_score = candidates[0]["score"]
+            threshold = best_score * 0.9
+            results = [r for r in candidates if r["score"] >= threshold]
+        else:
+            results = []
+        self._found_images.extend(results)
+        if results:
+            lines = []
+            for r in results:
+                line = f"- {r['description']}"
+                if r.get("caption"):
+                    line += f" (caption: {r['caption']})"
+                lines.append(line)
+            logger.info("  → image_search result: {n} image(s) found", n=len(results))
+            return (
+                f"Found {len(results)} image(s):\n"
+                + "\n".join(lines)
+                + "\nImages will be sent automatically."
+            )
+        logger.info("  → image_search result: no matching images")
+        return "No matching images found."
+
+    async def _tool_update_instructions(self, args: dict) -> str:
+        instruction: str = args["instruction"].strip()
+        agent_file = self.config.agent_file
+        entry = f"\n- {instruction}\n"
+        with open(agent_file, "a") as f:
+            f.write(entry)
+        logger.info("  → update_instructions: appended to AGENTS.md")
+        return f"Instruction saved: {instruction}"
+
+    async def _tool_file_write(self, args: dict) -> str:
+        raw = args["file_path"]
+        memory_dir = self.config.memory_dir
+        safe_root = memory_dir.resolve()
+        p = Path(raw)
+        if not p.is_absolute():
+            p = memory_dir / raw
+        resolved = p.expanduser().resolve()
+        try:
+            resolved.relative_to(safe_root)
+        except ValueError:
+            msg = f"Blocked: {resolved} is outside {safe_root}. Files must be under ~/.memclaw/"
+            logger.warning(msg)
+            return msg
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(args["content"])
+        logger.info("  → file_write: wrote {path}", path=resolved)
+        return f"File written: {resolved}"
+
+    async def _tool_file_read(self, args: dict) -> str:
+        raw = args["file_path"]
+        memory_dir = self.config.memory_dir
+        safe_root = memory_dir.resolve()
+        p = Path(raw)
+        if not p.is_absolute():
+            p = memory_dir / raw
+        resolved = p.expanduser().resolve()
+        try:
+            resolved.relative_to(safe_root)
+        except ValueError:
+            return f"Blocked: {resolved} is outside {safe_root}."
+        if not resolved.exists():
+            return f"File not found: {resolved}"
+        text = resolved.read_text()
+        logger.info("  → file_read: read {path} ({n} chars)", path=resolved, n=len(text))
+        return text
+
+    # ── Startup / sync ───────────────────────────────────────────────
 
     async def start(self):
-        """Run a full index sync once at startup to catch any changes
-        made while the process was not running."""
         await self.index.sync()
 
     async def start_background_sync(self, interval: int = 60):
-        """Start a background task that periodically syncs the index.
-
-        Intended for long-running processes (e.g. Telegram bot) to pick
-        up external file edits without blocking the search path.
-        """
         index = self.index
 
         async def _sync_loop():
@@ -206,13 +412,11 @@ class MemclawAgent:
                 try:
                     await index.sync()
                 except Exception:
-                    pass  # best-effort; will retry next interval
+                    pass
 
         self._sync_task = asyncio.create_task(_sync_loop())
 
-    # ------------------------------------------------------------------
-    # Memory Consolidation (spec #2)
-    # ------------------------------------------------------------------
+    # ── Consolidation (unchanged — already uses raw anthropic) ───────
 
     async def _maybe_consolidate(
         self,
@@ -220,19 +424,8 @@ class MemclawAgent:
         force: bool = False,
         consolidated_through_override: date | None = None,
     ) -> bool:
-        """Consolidate daily files into MEMORY.md if threshold is reached.
-
-        Args:
-            force: If True, consolidate regardless of threshold.
-            consolidated_through_override: If set, use this date instead of
-                the value stored in meta.json.
-
-        Returns:
-            True if consolidation was performed.
-        """
         meta_path = self.config.memory_dir / "meta.json"
 
-        # Load consolidated_through from meta.json
         consolidated_through: date | None = None
         if consolidated_through_override is not None:
             consolidated_through = consolidated_through_override
@@ -246,14 +439,11 @@ class MemclawAgent:
                 pass
 
         unconsolidated = self.store.list_unconsolidated_files(consolidated_through)
-
         if not unconsolidated:
             return False
-
         if len(unconsolidated) < self.config.consolidation_threshold and not force:
             return False
 
-        # Gather content from unconsolidated files (up to 30000 chars)
         daily_content_parts: list[str] = []
         total_chars = 0
         for path in unconsolidated:
@@ -274,24 +464,18 @@ class MemclawAgent:
         if not daily_text.strip():
             return False
 
-        # Read existing MEMORY.md content
         existing_memory = self.store.read_file(self.config.memory_file)
-
-        # Build the user message for the consolidation call
         user_message = "## Daily Memory Files\n\n" + daily_text
         if existing_memory.strip():
             user_message += "\n\n## Current MEMORY.md\n\n" + existing_memory
 
-        # Call Claude via anthropic.AsyncAnthropic directly
-        client = anthropic.AsyncAnthropic(api_key=self.config.anthropic_api_key)
-        response = await client.messages.create(
-            model="claude-sonnet-4-20250514",
+        response = await self._client.messages.create(
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             system=_CONSOLIDATION_PROMPT,
             messages=[{"role": "user", "content": user_message}],
         )
 
-        # Extract text from response
         result_text = ""
         for block in response.content:
             if hasattr(block, "text"):
@@ -300,12 +484,9 @@ class MemclawAgent:
         if not result_text.strip():
             return False
 
-        # Write result to MEMORY.md (overwrite)
         self.config.memory_file.write_text(result_text)
 
-        # Update consolidated_through in meta.json
-        # Use the date from the last unconsolidated file
-        last_date_str = unconsolidated[-1].stem  # e.g. "2025-03-10"
+        last_date_str = unconsolidated[-1].stem
         try:
             new_consolidated_through = date.fromisoformat(last_date_str)
         except ValueError:
@@ -320,9 +501,7 @@ class MemclawAgent:
         meta["consolidated_through"] = new_consolidated_through.isoformat()
         meta_path.write_text(json.dumps(meta, indent=2))
 
-        # Re-index MEMORY.md
         await self.index.index_file(self.config.memory_file)
-
         logger.info(
             "Consolidation complete: {n} files → MEMORY.md (through {d})",
             n=len(unconsolidated),
@@ -330,253 +509,17 @@ class MemclawAgent:
         )
         return True
 
-    # ------------------------------------------------------------------
-    # Tools
-    # ------------------------------------------------------------------
-
-    def _create_tools(self):
-        store = self.store
-        index = self.index
-        search = self.search
-        found_images = self._found_images
-
-        @tool("memory_save", "Save a new memory, thought, or note", {"content": str})
-        async def memory_save_tool(args):
-            content: str = args["content"]
-            permanent: bool = args.get("permanent", False)
-            entry_type: str = args.get("entry_type", "note")
-            tags = args.get("tags")
-
-            file_path = store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
-            await index.index_file(file_path)
-            logger.info("  → memory_save result: saved to {file}", file=file_path.name)
-            return {"content": [{"type": "text", "text": f"Memory saved to {file_path.name}"}]}
-
-        @tool(
-            "memory_search",
-            "Search through stored memories using natural language",
-            {"query": str},
-        )
-        async def memory_search_tool(args):
-            results = await search.search(args["query"], limit=args.get("limit", 10))
-            formatted = _format_results(results)
-            logger.info("  → memory_search result: {n} hits", n=len(results))
-            for i, r in enumerate(results, 1):
-                source = Path(r.file_path).stem
-                snippet = r.content.strip().replace("\n", " ")
-                if len(snippet) > 120:
-                    snippet = snippet[:120] + "..."
-                logger.info("    [{i}] ({score:.2f}, {src}) {snippet}", i=i, score=r.score, src=source, snippet=snippet)
-            return {"content": [{"type": "text", "text": formatted}]}
-
-        @tool(
-            "image_save",
-            "Save a local image by generating an AI description and storing it as a memory. "
-            "You can see the image — describe it yourself and pass your description as content.",
-            {"image_path": str},
-        )
-        async def image_save_tool(args):
-            image_path = Path(args["image_path"]).expanduser().resolve()
-            caption: str = args.get("caption", "")
-
-            if not image_path.exists():
-                logger.info("  → image_save result: not found {path}", path=image_path)
-                return {"content": [{"type": "text", "text": f"Image not found: {image_path}"}]}
-
-            memory_content = f"**Image:** {image_path.name}\n"
-            if caption:
-                memory_content += f"**Caption:** {caption}\n"
-            memory_content += f"**Path:** {image_path}\n"
-
-            file_path = store.save(memory_content, entry_type="image")
-            await index.index_file(file_path)
-
-            logger.info("  → image_save result: saved {name}", name=image_path.name)
-            return {"content": [{"type": "text", "text": f"Image saved from {image_path.name}"}]}
-
-        @tool(
-            "telegram_image_save",
-            "Save a Telegram image with your description for later retrieval. "
-            "You MUST call this when you receive an image with a file_id. Describe the image in "
-            "detail and pass the description along with the file_id from the message.",
-            {"description": str, "file_id": str},
-        )
-        async def telegram_image_save_tool(args):
-            description: str = args["description"]
-            file_id: str = args["file_id"]
-            caption: str = args.get("caption", "")
-
-            combined = f"Image: {description}"
-            if caption:
-                combined += f" Caption: {caption}"
-
-            file_path = store.save(combined, entry_type="image")
-            await index.index_file(file_path)
-
-            await index.store_telegram_image(
-                file_id=file_id,
-                description=combined,
-                caption=caption,
-            )
-
-            logger.info("  → telegram_image_save result: {desc}", desc=description[:100])
-            return {"content": [{"type": "text", "text": f"Image saved: {description[:100]}"}]}
-
-        @tool(
-            "image_search",
-            "Search for previously stored images to send to the user. "
-            "Use when the user asks to retrieve, show, or send an image. "
-            "The image will be sent automatically.",
-            {"query": str},
-        )
-        async def image_search_tool(args):
-            query_emb = await index.get_embedding(args["query"])
-            candidates = index.search_telegram_images(query_emb, limit=5)
-
-            # Return the best match; only include extras if their score
-            # is within 90% of the top result (i.e. genuinely similar).
-            if candidates:
-                best_score = candidates[0]["score"]
-                threshold = best_score * 0.9
-                results = [r for r in candidates if r["score"] >= threshold]
-            else:
-                results = []
-
-            found_images.extend(results)
-
-            if results:
-                lines = []
-                for r in results:
-                    line = f"- {r['description']}"
-                    if r.get("caption"):
-                        line += f" (caption: {r['caption']})"
-                    lines.append(line)
-                logger.info("  → image_search result: {n} image(s) found", n=len(results))
-                for line in lines:
-                    logger.info("    {line}", line=line)
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                f"Found {len(results)} image(s):\n"
-                                + "\n".join(lines)
-                                + "\nImages will be sent automatically."
-                            ),
-                        }
-                    ]
-                }
-            logger.info("  → image_search result: no matching images")
-            return {"content": [{"type": "text", "text": "No matching images found."}]}
-
-        agent_file = self.config.agent_file
-
-        @tool(
-            "update_instructions",
-            "Save a new behavioural instruction to AGENTS.md. Call this whenever the "
-            "user tells you to behave a certain way, respond in a certain style, "
-            "or gives any standing directive (e.g. 'always reply in Serbian', "
-            "'be more concise', 'never use emojis'). Pass a short, clear rule.",
-            {"instruction": str},
-        )
-        async def update_instructions_tool(args):
-            instruction: str = args["instruction"].strip()
-            # Append under the "## User instructions" section
-            current = agent_file.read_text() if agent_file.exists() else ""
-            entry = f"\n- {instruction}\n"
-            with open(agent_file, "a") as f:
-                f.write(entry)
-            logger.info("  → update_instructions: appended to AGENTS.md")
-            return {"content": [{"type": "text", "text": f"Instruction saved: {instruction}"}]}
-
-        # ── Sandboxed file tools ──────────────────────────────────────
-        memory_dir = self.config.memory_dir
-        safe_root = memory_dir.resolve()
-
-        def _resolve_safe(raw_path: str) -> Path | None:
-            """Resolve *raw_path* and return it only if under memory_dir."""
-            resolved = Path(raw_path).expanduser().resolve()
-            try:
-                resolved.relative_to(safe_root)
-            except ValueError:
-                return None
-            return resolved
-
-        @tool(
-            "file_write",
-            "Create or overwrite a file inside the memory directory (~/.memclaw/). "
-            "Use this when the user asks you to create a file such as todos.md, "
-            "notes.md, etc. The path must be relative to ~/.memclaw/ or an "
-            "absolute path under it.",
-            {"file_path": str, "content": str},
-        )
-        async def file_write_tool(args):
-            raw = args["file_path"]
-            # If user gives a bare filename like "todos.md", put it under memory_dir
-            p = Path(raw)
-            if not p.is_absolute():
-                p = memory_dir / raw
-            resolved = p.expanduser().resolve()
-            safe = _resolve_safe(str(resolved))
-            if safe is None:
-                msg = f"Blocked: {resolved} is outside {safe_root}. Files must be under ~/.memclaw/"
-                logger.warning(msg)
-                return {"content": [{"type": "text", "text": msg}]}
-            safe.parent.mkdir(parents=True, exist_ok=True)
-            safe.write_text(args["content"])
-            logger.info("  → file_write: wrote {path}", path=safe)
-            return {"content": [{"type": "text", "text": f"File written: {safe}"}]}
-
-        @tool(
-            "file_read",
-            "Read a file from the memory directory (~/.memclaw/). "
-            "The path must be under ~/.memclaw/.",
-            {"file_path": str},
-        )
-        async def file_read_tool(args):
-            raw = args["file_path"]
-            p = Path(raw)
-            if not p.is_absolute():
-                p = memory_dir / raw
-            resolved = p.expanduser().resolve()
-            safe = _resolve_safe(str(resolved))
-            if safe is None:
-                msg = f"Blocked: {resolved} is outside {safe_root}."
-                return {"content": [{"type": "text", "text": msg}]}
-            if not safe.exists():
-                return {"content": [{"type": "text", "text": f"File not found: {safe}"}]}
-            text = safe.read_text()
-            logger.info("  → file_read: read {path} ({n} chars)", path=safe, n=len(text))
-            return {"content": [{"type": "text", "text": text}]}
-
-        return [
-            memory_save_tool,
-            memory_search_tool,
-            image_save_tool,
-            telegram_image_save_tool,
-            image_search_tool,
-            update_instructions_tool,
-            file_write_tool,
-            file_read_tool,
-        ]
-
-    # ------------------------------------------------------------------
-    # Context builder
-    # ------------------------------------------------------------------
+    # ── Context builder ──────────────────────────────────────────────
 
     async def build_context(self, message: str) -> str:
-        """Build memory context to inject into the system prompt."""
         parts: list[str] = []
 
-        # Always include permanent memory (spec #3: smart strategy)
         memory_content = self.store.read_file(self.config.memory_file)
         if memory_content.strip():
             parts.append("### Permanent Memory")
             if len(memory_content) <= 4000:
-                # Small enough to include in full
                 parts.append(memory_content)
             else:
-                # Include first 2000 chars + semantic search within MEMORY.md
                 parts.append(memory_content[:2000])
                 memory_results = await self.search.search(
                     message, limit=3, file_filter="MEMORY.md"
@@ -586,7 +529,6 @@ class MemclawAgent:
                     for r in memory_results:
                         parts.append(r.content.strip())
 
-        # Semantic search for message-relevant memories
         results = await self.search.search(message, limit=10)
         if results:
             parts.append("\n### Relevant Memories")
@@ -596,9 +538,7 @@ class MemclawAgent:
 
         return "\n\n".join(parts) if parts else "No memories found yet."
 
-    # ------------------------------------------------------------------
-    # Main entry point
-    # ------------------------------------------------------------------
+    # ── Main entry point (raw API agentic loop) ──────────────────────
 
     async def handle(
         self,
@@ -607,28 +547,13 @@ class MemclawAgent:
         image_b64: str | None = None,
         image_media_type: str = "image/jpeg",
     ) -> tuple[str, list[dict]]:
-        """Process any message through the agent.
-
-        Works identically for console and Telegram modes.
-
-        Args:
-            message: Text message or prompt to send.
-            image_b64: Optional base64-encoded image data.
-            image_media_type: MIME type of the image (default: image/jpeg).
-
-        Returns:
-            (response_text, found_images) — found_images is a list of dicts
-            with Telegram file_ids; empty in console mode.
-        """
         self._found_images.clear()
 
-        # Run consolidation check (spec #2) — errors must not break normal flow
         try:
             await self._maybe_consolidate()
         except Exception as exc:
             logger.warning("Consolidation check failed: {exc}", exc=exc)
 
-        # Append user message to history (use placeholder for images)
         history_content = "[User sent a photo]" if image_b64 else message
         self._history.append({
             "role": "user",
@@ -638,8 +563,7 @@ class MemclawAgent:
 
         context = await self.build_context(message)
 
-        # Format conversation history for the system prompt
-        history_snapshot = self._history[:-1]  # exclude the just-appended entry
+        history_snapshot = self._history[:-1]
         if history_snapshot:
             history_lines = []
             for entry in history_snapshot:
@@ -650,68 +574,98 @@ class MemclawAgent:
             history_text = "(no prior messages)"
 
         agent_instructions = _load_agent_instructions(self.config)
-
-        options = ClaudeAgentOptions(
-            system_prompt=_SYSTEM_PROMPT_TEMPLATE.format(
-                today=date.today().isoformat(),
-                agent_instructions=agent_instructions,
-                context=context,
-                history=history_text,
-            ),
-            mcp_servers={"memclaw": self.server},
-            allowed_tools=self.tool_names,
-            permission_mode="bypassPermissions",
-            max_turns=10,
-            can_use_tool=_make_fs_guardrail(self.config.memory_dir),
+        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
+            today=date.today().isoformat(),
+            agent_instructions=agent_instructions,
+            context=context,
+            history=history_text,
         )
 
-        last_text = ""
-        async with ClaudeSDKClient(options=options) as client:
-            # For image messages, use an async iterator with content blocks
-            if image_b64:
-                content_blocks: list[dict[str, Any]] = [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": image_media_type,
-                            "data": image_b64,
-                        },
+        # Build initial user message
+        if image_b64:
+            user_content: Any = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image_media_type,
+                        "data": image_b64,
                     },
-                    {"type": "text", "text": message},
-                ]
+                },
+                {"type": "text", "text": message},
+            ]
+        else:
+            user_content = message
 
-                async def _image_msg() -> AsyncIterator[dict[str, Any]]:
-                    yield {
-                        "type": "user",
-                        "message": {"role": "user", "content": content_blocks},
-                    }
+        messages: list[dict[str, Any]] = [{"role": "user", "content": user_content}]
 
-                await client.query(_image_msg())
-            else:
-                await client.query(message)
+        # ── Agentic loop ─────────────────────────────────────────────
+        max_turns = 10
+        turn = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
+        last_text = ""
+        t0 = time.perf_counter()
 
-            async for msg in client.receive_response():
-                if isinstance(msg, AssistantMessage):
-                    for block in msg.content:
-                        if hasattr(block, "name") and hasattr(block, "input"):
-                            # ToolUseBlock
-                            args_str = json.dumps(block.input, ensure_ascii=False)
-                            if len(args_str) > 300:
-                                args_str = args_str[:300] + "..."
-                            logger.info("Tool call: {name}({args})", name=block.name, args=args_str)
-                        elif hasattr(block, "text"):
-                            last_text = block.text
-                elif isinstance(msg, ResultMessage):
-                    if hasattr(msg, "result") and msg.result:
-                        last_text = msg.result
-                    cost = f"${msg.total_cost_usd:.4f}" if msg.total_cost_usd else "n/a"
-                    logger.info(
-                        "Agent done: {turns} turns, {ms}ms, cost {cost}",
-                        turns=msg.num_turns,
-                        ms=msg.duration_ms,
-                        cost=cost,
-                    )
+        while turn < max_turns:
+            response = await self._client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                system=system_prompt,
+                tools=TOOL_DEFINITIONS,
+                messages=messages,
+                extra_headers={"anthropic-beta": "token-efficient-tools-2025-02-19"},
+            )
+
+            total_input_tokens += response.usage.input_tokens
+            total_output_tokens += response.usage.output_tokens
+
+            # Append full assistant response to conversation
+            messages.append({"role": "assistant", "content": response.content})
+
+            # If done (no tool calls), extract text and exit
+            if response.stop_reason != "tool_use":
+                last_text = "".join(
+                    block.text for block in response.content if block.type == "text"
+                )
+                break
+
+            # Execute requested tool calls
+            tool_results: list[dict[str, Any]] = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    args_str = json.dumps(block.input, ensure_ascii=False)
+                    if len(args_str) > 300:
+                        args_str = args_str[:300] + "..."
+                    logger.info("Tool call: {name}({args})", name=block.name, args=args_str)
+
+                    result_text = await self._execute_tool(block.name, block.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result_text,
+                    })
+
+            messages.append({"role": "user", "content": tool_results})
+            turn += 1
+
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+
+        # Calculate cost (Sonnet 4 pricing)
+        cost = (
+            total_input_tokens * _INPUT_COST_PER_M / 1_000_000
+            + total_output_tokens * _OUTPUT_COST_PER_M / 1_000_000
+        )
+
+        logger.info(
+            "Agent done: {turns} turns, {ms}ms, cost ${cost:.4f} "
+            "(in={input_t}, out={output_t})",
+            turns=turn + 1,
+            ms=elapsed_ms,
+            cost=cost,
+            input_t=total_input_tokens,
+            output_t=total_output_tokens,
+        )
 
         # Append assistant response to history
         response_text = last_text or "I couldn't generate a response."
@@ -721,18 +675,13 @@ class MemclawAgent:
             "timestamp": datetime.now().isoformat(),
         })
 
-        # Trim history to keep last N pairs (2N entries)
         max_entries = self.config.conversation_history_limit * 2
         if len(self._history) > max_entries:
             self._history = self._history[-max_entries:]
 
-        return (
-            response_text,
-            list(self._found_images),
-        )
+        return (response_text, list(self._found_images))
 
     def close(self):
-        # Cancel background sync task if running
         task = getattr(self, "_sync_task", None)
         if task is not None and not task.done():
             task.cancel()

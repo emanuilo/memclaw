@@ -8,7 +8,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Claude Agent SDK](https://img.shields.io/badge/Claude-Agent_SDK-blueviolet.svg)](https://platform.claude.com/docs/en/agent-sdk/overview)
+[![Anthropic API](https://img.shields.io/badge/Anthropic-API-blueviolet.svg)](https://docs.anthropic.com/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp-coming_soon-lightgrey.svg)]()
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -106,7 +106,7 @@ flowchart LR
     Agent -->|response + images| You
 ```
 
-Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and is built with the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview).
+Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and uses the [Anthropic API](https://docs.anthropic.com/) directly with a lightweight agentic loop.
 
 ### Storage Layer
 
@@ -130,7 +130,7 @@ Every memory is chunked, embedded, and indexed in SQLite. Retrieval combines two
 
 ### Agent Layer
 
-Powered by Claude via the [Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview). The agent maintains a rolling 10-message-pair conversation history and decides when to **store** vs **search** based on your intent.
+Powered by Claude via the [Anthropic API](https://docs.anthropic.com/) with a hand-rolled agentic loop. The agent maintains a rolling 10-message-pair conversation history and decides when to **store** vs **search** based on your intent.
 
 | Tool | What it does |
 |------|-------------|
@@ -287,5 +287,5 @@ MIT — see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - [OpenClaw](https://github.com/openclaw/openclaw) for the memory architecture inspiration
-- [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) for the agent framework
+- [Anthropic API](https://docs.anthropic.com/) for the agent framework
 - [SQLite FTS5](https://www.sqlite.org/fts5.html) for full-text search
