@@ -14,7 +14,7 @@ from memclaw.search import SearchResult
 
 
 # ────────────────────────────────────────────────────────────────────
-# Helpers — we patch heavy deps so MemclawAgent can be instantiated
+# Helpers
 # ────────────────────────────────────────────────────────────────────
 
 def _make_config(tmp_path: Path) -> MemclawConfig:
@@ -30,11 +30,16 @@ def cfg(tmp_path: Path) -> MemclawConfig:
     return _make_config(tmp_path)
 
 
-def _patch_sdk():
-    """Patch the Claude Agent SDK imports that aren't installed in test env."""
-    return patch.dict("sys.modules", {
-        "claude_agent_sdk": MagicMock(),
-    })
+def _mock_api_response(text: str, stop_reason: str = "end_turn"):
+    """Create a mock Anthropic API response with a text block."""
+    block = MagicMock()
+    block.type = "text"
+    block.text = text
+    resp = MagicMock()
+    resp.content = [block]
+    resp.stop_reason = stop_reason
+    resp.usage = MagicMock(input_tokens=100, output_tokens=50)
+    return resp
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -54,40 +59,19 @@ class TestConversationHistory:
         from memclaw.agent import MemclawAgent
         agent = MemclawAgent(cfg)
 
-        # Mock the SDK call and build_context
         agent.build_context = AsyncMock(return_value="No memories found yet.")
         agent._maybe_consolidate = AsyncMock(return_value=False)
+        agent._client.messages.create = AsyncMock(
+            return_value=_mock_api_response("Hello! I'm Memclaw.")
+        )
 
-        # Mock ClaudeSDKClient
-        with patch("memclaw.agent.ClaudeSDKClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.query = AsyncMock()
-
-            # Simulate receiving a ResultMessage
-            mock_result = MagicMock()
-            mock_result.result = "Hello! I'm Memclaw."
-            mock_result.total_cost_usd = 0.001
-            mock_result.num_turns = 1
-            mock_result.duration_ms = 100
-
-            # Make it look like a ResultMessage
-            from memclaw.agent import ResultMessage
-            mock_result.__class__ = ResultMessage
-
-            async def fake_receive():
-                yield mock_result
-
-            mock_client.receive_response = fake_receive
-            mock_client_cls.return_value = mock_client
-
-            await agent.handle("Hello")
+        await agent.handle("Hello")
 
         assert len(agent._history) == 2
         assert agent._history[0]["role"] == "user"
         assert agent._history[0]["content"] == "Hello"
         assert agent._history[1]["role"] == "assistant"
+        assert agent._history[1]["content"] == "Hello! I'm Memclaw."
         assert "timestamp" in agent._history[0]
         agent.close()
 
@@ -170,32 +154,23 @@ class TestConsolidation:
             path = cfg.memory_subdir / f"{d.isoformat()}.md"
             path.write_text(f"# Day {i}\nImportant fact {i}")
 
-        # Mock the Anthropic API call
         mock_response = MagicMock()
         mock_block = MagicMock()
         mock_block.text = "## Key Facts\n\n- Fact 0\n- Fact 1\n"
         mock_response.content = [mock_block]
 
-        with patch("memclaw.agent.anthropic.AsyncAnthropic") as mock_anthropic:
-            mock_client = AsyncMock()
-            mock_client.messages.create = AsyncMock(return_value=mock_response)
-            mock_anthropic.return_value = mock_client
+        agent._client.messages.create = AsyncMock(return_value=mock_response)
+        agent.index.index_file = AsyncMock()
 
-            # Also mock index_file to avoid needing real embeddings
-            agent.index.index_file = AsyncMock()
-
-            result = await agent._maybe_consolidate()
+        result = await agent._maybe_consolidate()
 
         assert result is True
-        # MEMORY.md should exist with the consolidated content
         assert cfg.memory_file.exists()
         assert "Key Facts" in cfg.memory_file.read_text()
 
-        # meta.json should be updated
         meta_path = cfg.memory_dir / "meta.json"
         assert meta_path.exists()
         meta = json.loads(meta_path.read_text())
-        assert "consolidated_through" in meta
         assert meta["consolidated_through"] == "2025-03-05"
 
         agent.close()
@@ -204,7 +179,7 @@ class TestConsolidation:
     async def test_force_ignores_threshold(self, cfg: MemclawConfig):
         """force=True should run consolidation even with 1 file."""
         from memclaw.agent import MemclawAgent
-        cfg.consolidation_threshold = 100  # Very high threshold
+        cfg.consolidation_threshold = 100
         agent = MemclawAgent(cfg)
 
         path = cfg.memory_subdir / "2025-03-01.md"
@@ -215,13 +190,10 @@ class TestConsolidation:
         mock_block.text = "## Notes\n- One note"
         mock_response.content = [mock_block]
 
-        with patch("memclaw.agent.anthropic.AsyncAnthropic") as mock_anthropic:
-            mock_client = AsyncMock()
-            mock_client.messages.create = AsyncMock(return_value=mock_response)
-            mock_anthropic.return_value = mock_client
-            agent.index.index_file = AsyncMock()
+        agent._client.messages.create = AsyncMock(return_value=mock_response)
+        agent.index.index_file = AsyncMock()
 
-            result = await agent._maybe_consolidate(force=True)
+        result = await agent._maybe_consolidate(force=True)
 
         assert result is True
         agent.close()
@@ -232,13 +204,11 @@ class TestConsolidation:
         from memclaw.agent import MemclawAgent
         agent = MemclawAgent(cfg)
 
-        # Create files spanning a range
         for i in range(1, 11):
             d = date(2025, 3, i)
             path = cfg.memory_subdir / f"{d.isoformat()}.md"
             path.write_text(f"Content for day {i}")
 
-        # Write meta.json with early date
         meta_path = cfg.memory_dir / "meta.json"
         meta_path.write_text(json.dumps({"consolidated_through": "2025-03-01"}))
 
@@ -247,25 +217,19 @@ class TestConsolidation:
         mock_block.text = "## Consolidated"
         mock_response.content = [mock_block]
 
-        with patch("memclaw.agent.anthropic.AsyncAnthropic") as mock_anthropic:
-            mock_client = AsyncMock()
-            mock_client.messages.create = AsyncMock(return_value=mock_response)
-            mock_anthropic.return_value = mock_client
-            agent.index.index_file = AsyncMock()
+        agent._client.messages.create = AsyncMock(return_value=mock_response)
+        agent.index.index_file = AsyncMock()
 
-            # Override to only consolidate files after March 8
-            result = await agent._maybe_consolidate(
-                force=True,
-                consolidated_through_override=date(2025, 3, 8),
-            )
+        result = await agent._maybe_consolidate(
+            force=True,
+            consolidated_through_override=date(2025, 3, 8),
+        )
 
         assert result is True
-        # Check that the API was called with content from only the 2 remaining files (Mar 9, 10)
-        call_args = mock_client.messages.create.call_args
+        call_args = agent._client.messages.create.call_args
         user_msg = call_args.kwargs["messages"][0]["content"]
         assert "2025-03-09" in user_msg
         assert "2025-03-10" in user_msg
-        # Files before override should NOT be included
         assert "2025-03-05" not in user_msg
 
         agent.close()
@@ -285,7 +249,6 @@ class TestConsolidation:
         from memclaw.agent import MemclawAgent
         agent = MemclawAgent(cfg)
 
-        # Create files with large content
         for i in range(1, 6):
             d = date(2025, 3, i)
             path = cfg.memory_subdir / f"{d.isoformat()}.md"
@@ -296,19 +259,13 @@ class TestConsolidation:
         mock_block.text = "## Consolidated"
         mock_response.content = [mock_block]
 
-        with patch("memclaw.agent.anthropic.AsyncAnthropic") as mock_anthropic:
-            mock_client = AsyncMock()
-            mock_client.messages.create = AsyncMock(return_value=mock_response)
-            mock_anthropic.return_value = mock_client
-            agent.index.index_file = AsyncMock()
+        agent._client.messages.create = AsyncMock(return_value=mock_response)
+        agent.index.index_file = AsyncMock()
 
-            await agent._maybe_consolidate(force=True)
+        await agent._maybe_consolidate(force=True)
 
-        # Check the user message length doesn't exceed ~30000 + headers
-        call_args = mock_client.messages.create.call_args
+        call_args = agent._client.messages.create.call_args
         user_msg = call_args.kwargs["messages"][0]["content"]
-        # The daily content portion should be <= 30000 chars
-        # (total msg includes "## Daily Memory Files\n\n" header)
         assert len(user_msg) < 35000
 
         agent.close()
@@ -328,7 +285,6 @@ class TestContextStrategy:
         small_content = "## Key Facts\n\n- I like Python\n- My name is Test"
         cfg.memory_file.write_text(small_content)
 
-        # Mock search to avoid needing real embeddings
         agent.search.search = AsyncMock(return_value=[])
 
         context = await agent.build_context("hello")
@@ -341,11 +297,9 @@ class TestContextStrategy:
         from memclaw.agent import MemclawAgent
         agent = MemclawAgent(cfg)
 
-        # Create a large MEMORY.md (>4000 chars)
-        large_content = "## Key Facts\n\n" + "Important fact. " * 400  # ~6400 chars
+        large_content = "## Key Facts\n\n" + "Important fact. " * 400
         cfg.memory_file.write_text(large_content)
 
-        # Mock search: first call is for MEMORY.md chunks, second for all memories
         memory_chunk = SearchResult(
             file_path=str(cfg.memory_file),
             line_start=100,
@@ -361,14 +315,10 @@ class TestContextStrategy:
 
         context = await agent.build_context("tell me about Python")
 
-        # Should contain the first 2000 chars
         assert large_content[:100] in context
-        # Should contain the semantic search result
         assert "Relevant chunk from MEMORY.md about Python" in context
-        # Should NOT contain the full content
         assert len(context) < len(large_content)
 
-        # Verify search was called with file_filter
         calls = agent.search.search.call_args_list
         assert calls[0].kwargs.get("file_filter") == "MEMORY.md"
 
@@ -403,7 +353,6 @@ class TestSyncOptimization:
         assert hasattr(agent, "_sync_task")
         assert isinstance(agent._sync_task, asyncio.Task)
 
-        # Clean up
         agent._sync_task.cancel()
         try:
             await agent._sync_task
@@ -413,152 +362,123 @@ class TestSyncOptimization:
 
 
 # ────────────────────────────────────────────────────────────────────
-# Filesystem Guardrail
+# Filesystem Guardrail (now in ToolExecutor)
 # ────────────────────────────────────────────────────────────────────
 
 class TestFilesystemGuardrail:
     @pytest.mark.asyncio
     async def test_allows_write_inside_memory_dir(self, cfg: MemclawConfig):
-        """Write to a path under memory_dir should be allowed."""
-        from claude_agent_sdk import ToolPermissionContext
-        from memclaw.agent import _make_fs_guardrail
+        """file_write to a path under memory_dir should succeed."""
+        from memclaw.agent import MemclawAgent
+        agent = MemclawAgent(cfg)
 
-        guard = _make_fs_guardrail(cfg.memory_dir)
-        result = await guard(
-            "Write",
-            {"file_path": str(cfg.memory_dir / "todos.md")},
-            ToolPermissionContext(),
+        result = await agent._tools.execute(
+            "file_write",
+            {"file_path": "todos.md", "content": "- Buy milk"},
         )
-        assert result.behavior == "allow"
+        assert "File written" in result
+        assert (cfg.memory_dir / "todos.md").exists()
+        agent.close()
 
     @pytest.mark.asyncio
     async def test_blocks_write_outside_memory_dir(self, cfg: MemclawConfig):
-        """Write to a path outside memory_dir should be denied."""
-        from claude_agent_sdk import ToolPermissionContext
-        from memclaw.agent import _make_fs_guardrail
+        """file_write to a path outside memory_dir should be blocked."""
+        from memclaw.agent import MemclawAgent
+        agent = MemclawAgent(cfg)
 
-        guard = _make_fs_guardrail(cfg.memory_dir)
-        result = await guard(
-            "Write",
-            {"file_path": "/tmp/evil.md"},
-            ToolPermissionContext(),
+        result = await agent._tools.execute(
+            "file_write",
+            {"file_path": "/tmp/evil.md", "content": "bad"},
         )
-        assert result.behavior == "deny"
-        assert "outside" in result.message.lower()
+        assert "Blocked" in result
+        agent.close()
 
     @pytest.mark.asyncio
     async def test_blocks_write_to_home_dir(self, cfg: MemclawConfig):
-        """Write to ~/something.md should be denied."""
-        from claude_agent_sdk import ToolPermissionContext
-        from memclaw.agent import _make_fs_guardrail
+        """file_write to ~/something.md should be blocked."""
+        from memclaw.agent import MemclawAgent
+        agent = MemclawAgent(cfg)
 
-        guard = _make_fs_guardrail(cfg.memory_dir)
-        result = await guard(
-            "Write",
-            {"file_path": str(Path.home() / "todos.md")},
-            ToolPermissionContext(),
+        result = await agent._tools.execute(
+            "file_write",
+            {"file_path": str(Path.home() / "todos.md"), "content": "bad"},
         )
-        assert result.behavior == "deny"
-
-    @pytest.mark.asyncio
-    async def test_blocks_bash_entirely(self, cfg: MemclawConfig):
-        """Bash commands should always be denied."""
-        from claude_agent_sdk import ToolPermissionContext
-        from memclaw.agent import _make_fs_guardrail
-
-        guard = _make_fs_guardrail(cfg.memory_dir)
-        result = await guard(
-            "Bash",
-            {"command": "echo hello"},
-            ToolPermissionContext(),
-        )
-        assert result.behavior == "deny"
-
-    @pytest.mark.asyncio
-    async def test_allows_non_fs_tools(self, cfg: MemclawConfig):
-        """Non-filesystem tools (like MCP tools) should pass through."""
-        from claude_agent_sdk import ToolPermissionContext
-        from memclaw.agent import _make_fs_guardrail
-
-        guard = _make_fs_guardrail(cfg.memory_dir)
-        result = await guard(
-            "mcp__memclaw__memory_save",
-            {"content": "hello"},
-            ToolPermissionContext(),
-        )
-        assert result.behavior == "allow"
+        assert "Blocked" in result
+        agent.close()
 
     @pytest.mark.asyncio
     async def test_blocks_path_traversal(self, cfg: MemclawConfig):
-        """Path traversal attempts (../../etc) should be denied."""
-        from claude_agent_sdk import ToolPermissionContext
-        from memclaw.agent import _make_fs_guardrail
+        """Path traversal attempts (../../etc) should be blocked."""
+        from memclaw.agent import MemclawAgent
+        agent = MemclawAgent(cfg)
 
-        guard = _make_fs_guardrail(cfg.memory_dir)
-        result = await guard(
-            "Write",
-            {"file_path": str(cfg.memory_dir / ".." / ".." / "etc" / "passwd")},
-            ToolPermissionContext(),
+        result = await agent._tools.execute(
+            "file_write",
+            {"file_path": str(cfg.memory_dir / ".." / ".." / "etc" / "passwd"), "content": "bad"},
         )
-        assert result.behavior == "deny"
+        assert "Blocked" in result
+        agent.close()
 
     @pytest.mark.asyncio
     async def test_allows_nested_path_inside_memory_dir(self, cfg: MemclawConfig):
-        """Writing to a subdirectory of memory_dir should be allowed."""
-        from claude_agent_sdk import ToolPermissionContext
-        from memclaw.agent import _make_fs_guardrail
+        """Writing to a subdirectory of memory_dir should work."""
+        from memclaw.agent import MemclawAgent
+        agent = MemclawAgent(cfg)
 
-        guard = _make_fs_guardrail(cfg.memory_dir)
-        result = await guard(
-            "Write",
-            {"file_path": str(cfg.memory_dir / "subdir" / "file.md")},
-            ToolPermissionContext(),
+        result = await agent._tools.execute(
+            "file_write",
+            {"file_path": "subdir/file.md", "content": "nested"},
         )
-        assert result.behavior == "allow"
+        assert "File written" in result
+        assert (cfg.memory_dir / "subdir" / "file.md").exists()
+        agent.close()
 
     @pytest.mark.asyncio
-    async def test_blocks_edit_outside(self, cfg: MemclawConfig):
-        """Edit tool should also be blocked outside memory_dir."""
-        from claude_agent_sdk import ToolPermissionContext
-        from memclaw.agent import _make_fs_guardrail
+    async def test_blocks_read_outside(self, cfg: MemclawConfig):
+        """file_read outside memory_dir should be blocked."""
+        from memclaw.agent import MemclawAgent
+        agent = MemclawAgent(cfg)
 
-        guard = _make_fs_guardrail(cfg.memory_dir)
-        result = await guard(
-            "Edit",
+        result = await agent._tools.execute(
+            "file_read",
             {"file_path": "/etc/hosts"},
-            ToolPermissionContext(),
         )
-        assert result.behavior == "deny"
+        assert "Blocked" in result
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_file_read_returns_content(self, cfg: MemclawConfig):
+        """file_read should return content for files inside memory_dir."""
+        from memclaw.agent import MemclawAgent
+        agent = MemclawAgent(cfg)
+
+        (cfg.memory_dir / "test.md").write_text("hello world")
+        result = await agent._tools.execute(
+            "file_read",
+            {"file_path": "test.md"},
+        )
+        assert result == "hello world"
+        agent.close()
 
 
 class TestSandboxedFileTools:
-    @pytest.mark.asyncio
-    async def test_file_write_creates_file(self, cfg: MemclawConfig):
-        """file_write tool should create a file under memory_dir."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+    def test_tool_definitions_contain_file_tools(self):
+        """TOOL_DEFINITIONS should include file_write and file_read."""
+        from memclaw.tools import TOOL_DEFINITIONS
 
-        # Find the file_write tool
-        tools = agent._create_tools()
-        file_write = None
-        for t in tools:
-            if hasattr(t, "name") and t.name == "file_write":
-                file_write = t
-                break
+        names = [t["name"] for t in TOOL_DEFINITIONS]
+        assert "file_write" in names
+        assert "file_read" in names
 
-        # Call it via the tool function directly
-        # The tools are decorated functions; we need to call the underlying fn
-        # Since we can't easily call the SDK tool directly, test the path logic
-        # by checking the file_write tool exists in the tool list
-        tool_names = [t.name for t in tools if hasattr(t, "name")]
-        assert "file_write" in tool_names
-        assert "file_read" in tool_names
-        agent.close()
+    def test_tool_definitions_contain_all_tools(self):
+        """TOOL_DEFINITIONS should have all 8 tools."""
+        from memclaw.tools import TOOL_DEFINITIONS
 
-    def test_file_write_in_allowed_tools(self, cfg: MemclawConfig):
-        """file_write and file_read should be in allowed_tools."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
-        assert "mcp__memclaw__file_write" in agent.tool_names
-        assert "mcp__memclaw__file_read" in agent.tool_names
-        agent.close()
+        names = [t["name"] for t in TOOL_DEFINITIONS]
+        assert len(names) == 8
+        expected = {
+            "memory_save", "memory_search", "image_save",
+            "telegram_image_save", "image_search",
+            "update_instructions", "file_write", "file_read",
+        }
+        assert set(names) == expected
