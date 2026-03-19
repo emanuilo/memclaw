@@ -311,6 +311,8 @@ class MemclawAgent:
         turn = 0
         total_input_tokens = 0
         total_output_tokens = 0
+        total_cache_read_tokens = 0
+        total_cache_creation_tokens = 0
         last_text = ""
         t0 = time.perf_counter()
 
@@ -322,10 +324,13 @@ class MemclawAgent:
                 tools=TOOL_DEFINITIONS,
                 messages=messages,
                 extra_headers={"anthropic-beta": "token-efficient-tools-2025-02-19"},
+                cache_control={"type": "ephemeral"},
             )
 
             total_input_tokens += response.usage.input_tokens
             total_output_tokens += response.usage.output_tokens
+            total_cache_read_tokens += getattr(response.usage, "cache_read_input_tokens", 0) or 0
+            total_cache_creation_tokens += getattr(response.usage, "cache_creation_input_tokens", 0) or 0
 
             messages.append({"role": "assistant", "content": response.content})
 
@@ -355,19 +360,24 @@ class MemclawAgent:
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
+        # Cache reads are 90% cheaper than regular input tokens
+        cache_read_cost = total_cache_read_tokens * _INPUT_COST_PER_M * 0.1 / 1_000_000
         cost = (
             total_input_tokens * _INPUT_COST_PER_M / 1_000_000
             + total_output_tokens * _OUTPUT_COST_PER_M / 1_000_000
+            + cache_read_cost
         )
 
         logger.info(
             "Agent done: {turns} turns, {ms}ms, cost ${cost:.4f} "
-            "(in={input_t}, out={output_t})",
+            "(in={input_t}, out={output_t}, cache_read={cache_r}, cache_create={cache_c})",
             turns=turn + 1,
             ms=elapsed_ms,
             cost=cost,
             input_t=total_input_tokens,
             output_t=total_output_tokens,
+            cache_r=total_cache_read_tokens,
+            cache_c=total_cache_creation_tokens,
         )
 
         response_text = last_text or "I couldn't generate a response."

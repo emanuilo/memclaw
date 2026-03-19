@@ -38,7 +38,12 @@ def _mock_api_response(text: str, stop_reason: str = "end_turn"):
     resp = MagicMock()
     resp.content = [block]
     resp.stop_reason = stop_reason
-    resp.usage = MagicMock(input_tokens=100, output_tokens=50)
+    resp.usage = MagicMock(
+        input_tokens=100,
+        output_tokens=50,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
     return resp
 
 
