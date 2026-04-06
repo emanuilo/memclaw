@@ -106,7 +106,38 @@ class MemoryIndex:
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
+
+        # Platform-agnostic image registry (Telegram, WhatsApp, etc.)
+        self.db.execute("""
+            CREATE TABLE IF NOT EXISTS platform_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                media_ref TEXT NOT NULL,
+                description TEXT NOT NULL,
+                caption TEXT,
+                embedding BLOB,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+        self._migrate_telegram_images()
         self.db.commit()
+
+    def _migrate_telegram_images(self):
+        """One-time migration: copy telegram_images rows into platform_images."""
+        existing = self.db.execute(
+            "SELECT COUNT(*) FROM platform_images WHERE platform = 'telegram'"
+        ).fetchone()[0]
+        if existing > 0:
+            return
+        telegram_count = self.db.execute("SELECT COUNT(*) FROM telegram_images").fetchone()[0]
+        if telegram_count == 0:
+            return
+        self.db.execute("""
+            INSERT INTO platform_images (platform, media_ref, description, caption, embedding, created_at)
+            SELECT 'telegram', file_id, description, caption, embedding, created_at
+            FROM telegram_images
+        """)
 
     @property
     def openai(self) -> AsyncOpenAI:
@@ -308,7 +339,7 @@ class MemoryIndex:
         return changed
 
     # ------------------------------------------------------------------
-    # Telegram image registry
+    # Telegram image registry (backward-compatible wrappers)
     # ------------------------------------------------------------------
 
     async def store_telegram_image(
@@ -324,33 +355,74 @@ class MemoryIndex:
             "VALUES (?, ?, ?, ?)",
             (file_id, description, caption, self.serialize_embedding(embedding)),
         )
-        self.db.commit()
+        await self.store_platform_image("telegram", file_id, description, caption, _skip_embed=True, _embedding=embedding)
 
     def search_telegram_images(
         self, query_embedding: np.ndarray, limit: int = 5
     ) -> list[dict]:
         """Vector search over stored Telegram images. Returns dicts with file_id."""
-        rows = self.db.execute(
-            "SELECT id, file_id, description, caption, embedding, created_at "
-            "FROM telegram_images WHERE embedding IS NOT NULL"
-        ).fetchall()
+        return self.search_platform_images(query_embedding, limit=limit, platform="telegram")
+
+    # ------------------------------------------------------------------
+    # Platform-agnostic image registry
+    # ------------------------------------------------------------------
+
+    async def store_platform_image(
+        self,
+        platform: str,
+        media_ref: str,
+        description: str,
+        caption: str | None = None,
+        *,
+        _skip_embed: bool = False,
+        _embedding: np.ndarray | None = None,
+    ):
+        """Store an image reference for any platform (telegram, whatsapp, etc.)."""
+        embedding = _embedding if _skip_embed else await self.get_embedding(description)
+        self.db.execute(
+            "INSERT INTO platform_images (platform, media_ref, description, caption, embedding) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (platform, media_ref, description, caption, self.serialize_embedding(embedding)),
+        )
+        self.db.commit()
+
+    def search_platform_images(
+        self,
+        query_embedding: np.ndarray,
+        limit: int = 5,
+        platform: str | None = None,
+    ) -> list[dict]:
+        """Vector search over stored images. Optionally filter by platform."""
+        if platform:
+            rows = self.db.execute(
+                "SELECT id, platform, media_ref, description, caption, embedding, created_at "
+                "FROM platform_images WHERE embedding IS NOT NULL AND platform = ?",
+                (platform,),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                "SELECT id, platform, media_ref, description, caption, embedding, created_at "
+                "FROM platform_images WHERE embedding IS NOT NULL"
+            ).fetchall()
 
         if not rows:
             return []
 
         results = []
         for row in rows:
-            stored_emb = self.deserialize_embedding(row[4])
+            stored_emb = self.deserialize_embedding(row[5])
             similarity = float(
                 np.dot(query_embedding, stored_emb)
                 / (np.linalg.norm(query_embedding) * np.linalg.norm(stored_emb) + 1e-8)
             )
             results.append({
                 "id": row[0],
-                "file_id": row[1],
-                "description": row[2],
-                "caption": row[3],
-                "created_at": row[5],
+                "platform": row[1],
+                "media_ref": row[2],
+                "file_id": row[2],  # backward compat alias
+                "description": row[3],
+                "caption": row[4],
+                "created_at": row[6],
                 "score": similarity,
             })
 

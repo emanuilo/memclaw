@@ -10,7 +10,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Anthropic API](https://img.shields.io/badge/Anthropic-API-blueviolet.svg)](https://docs.anthropic.com/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
-[![WhatsApp](https://img.shields.io/badge/WhatsApp-coming_soon-lightgrey.svg)]()
+[![WhatsApp](https://img.shields.io/badge/WhatsApp-Bot-25D366.svg)](https://developers.facebook.com/docs/whatsapp/cloud-api)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 </div>
@@ -46,15 +46,17 @@ memclaw
 
 On first run, Memclaw will prompt you for your API keys and save them to `~/.memclaw/.env`. You can update them anytime with `memclaw configure`.
 
-## Telegram Bot
+## Messaging Platforms
 
 The main way to use Memclaw. Just talk to it naturally — no commands needed. Send text, photos, voice messages, or links. The agent figures out what to do: store it, search your memories, retrieve images, or just chat.
 
-> **WhatsApp support is coming soon.** Telegram is the only supported messaging platform for now.
+Both platforms share the same agent, memories, and search index — your data is unified regardless of how you interact.
 
-The bot shows a **typing indicator** while processing so you know it's working on your request.
+### Telegram Bot
 
-### Setup
+The Telegram bot shows a **typing indicator** while processing so you know it's working on your request.
+
+#### Setup
 
 1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
 2. Get your Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot)).
@@ -64,6 +66,29 @@ The bot shows a **typing indicator** while processing so you know it's working o
 memclaw bot
 ```
 
+### WhatsApp Bot
+
+The WhatsApp bot runs as an HTTP webhook server that receives messages from the WhatsApp Cloud API.
+
+#### Setup
+
+1. Create a [Meta Business App](https://developers.facebook.com/apps/) and enable the WhatsApp product.
+2. In the WhatsApp section, set up a phone number and note the **Phone Number ID**.
+3. Generate a permanent **access token** (or use the temporary one for testing).
+4. Choose a **verify token** (any secret string you pick).
+5. Start the webhook server:
+
+```bash
+memclaw whatsapp --port 8080
+```
+
+6. Configure the webhook URL in your Meta app dashboard:
+   - URL: `https://your-server:8080/webhook`
+   - Verify token: the value you set as `WHATSAPP_VERIFY_TOKEN`
+   - Subscribe to: `messages`
+
+> You'll need a publicly accessible HTTPS URL. Use a reverse proxy (nginx, Caddy) or a tunnel (ngrok, Cloudflare Tunnel) during development.
+
 To update keys later: `memclaw configure`.
 
 ### What it handles
@@ -71,7 +96,7 @@ To update keys later: `memclaw configure`.
 | Message type | What happens |
 |-------------|-------------|
 | **Text** | Agent decides: store as memory, search existing memories, or both. Links are extracted, fetched, and summarized automatically. |
-| **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. File ID saved for later retrieval. |
+| **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. Saved for later retrieval. |
 | **Voice** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
 
 ### Examples
@@ -93,7 +118,8 @@ Here's the sprint planning whiteboard you saved last week.
 
 ```mermaid
 flowchart LR
-    You -->|text / images / links| Agent[Memclaw Agent]
+    TG[Telegram] -->|text / images / links| Agent[Memclaw Agent]
+    WA[WhatsApp] -->|text / images / links| Agent
 
     subgraph sandbox ["~/.memclaw/"]
         Agent -->|save| Tools1["memory_save<br>image_save<br>file_write"]
@@ -103,7 +129,8 @@ flowchart LR
         Tools2 -->|results| Agent
     end
 
-    Agent -->|response + images| You
+    Agent -->|response + images| TG
+    Agent -->|response + images| WA
 ```
 
 Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and uses the [Anthropic API](https://docs.anthropic.com/) directly with a lightweight agentic loop.
@@ -212,6 +239,10 @@ memclaw --memory-dir ~/my-vault   # override storage location
 | `ANTHROPIC_API_KEY` | Yes | Powers the Claude agent |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
 | `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
+| `WHATSAPP_PHONE_NUMBER_ID` | For WhatsApp bot | Your WhatsApp Business phone number ID |
+| `WHATSAPP_ACCESS_TOKEN` | For WhatsApp bot | WhatsApp Cloud API access token |
+| `WHATSAPP_VERIFY_TOKEN` | For WhatsApp bot | Secret string for webhook verification |
+| `WHATSAPP_ALLOWED_NUMBERS` | For WhatsApp bot | Comma-separated phone numbers (e.g. +1234567890) |
 
 ### Directory Structure
 

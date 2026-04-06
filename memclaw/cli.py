@@ -349,3 +349,89 @@ def bot(ctx):
         f"(allowed users: {config.allowed_user_ids_list or 'all'})"
     )
     app.run_polling(allowed_updates=["message"])
+
+
+# ------------------------------------------------------------------
+# WhatsApp bot
+# ------------------------------------------------------------------
+
+@cli.command()
+@click.option("--host", default="0.0.0.0", help="Host to bind the webhook server to")
+@click.option("--port", default=8080, type=int, help="Port for the webhook server")
+@click.pass_context
+def whatsapp(ctx, host, port):
+    """Start the Memclaw WhatsApp webhook server."""
+    import sys
+
+    import uvicorn
+    from loguru import logger
+    from openai import AsyncOpenAI
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from .bot.whatsapp_handlers import WhatsAppHandlers
+
+    _ensure_setup(ctx)
+    config: MemclawConfig = ctx.obj["config"]
+
+    if not config.whatsapp_phone_number_id:
+        console.print("[red]Error:[/red] WHATSAPP_PHONE_NUMBER_ID is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    if not config.whatsapp_access_token:
+        console.print("[red]Error:[/red] WHATSAPP_ACCESS_TOKEN is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    if not config.whatsapp_verify_token:
+        console.print("[red]Error:[/red] WHATSAPP_VERIFY_TOKEN is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    if not config.openai_api_key:
+        console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    # Logging
+    logger.remove()
+    logger.add(sys.stderr, level="INFO",
+               format="<green>{time:HH:mm:ss}</green> | <level>{level:<8}</level> | <level>{message}</level>")
+    logger.add(
+        str(config.memory_dir / "whatsapp.log"),
+        rotation="10 MB",
+        retention="7 days",
+        level="DEBUG",
+    )
+
+    openai_client = AsyncOpenAI(api_key=config.openai_api_key)
+    handlers = WhatsAppHandlers(config, openai_client)
+
+    async def on_startup():
+        await handlers.agent.start()
+        await handlers.agent.start_background_sync(interval=60)
+        logger.info("Memclaw WhatsApp bot initialized")
+
+    async def on_shutdown():
+        await handlers.aclose()
+        logger.info("Memclaw WhatsApp bot shut down cleanly")
+
+    app = Starlette(
+        routes=[
+            Route("/webhook", handlers.verify, methods=["GET"]),
+            Route("/webhook", handlers.webhook, methods=["POST"]),
+        ],
+        on_startup=[on_startup],
+        on_shutdown=[on_shutdown],
+    )
+
+    console.print(
+        f"[green]Starting Memclaw WhatsApp webhook server on {host}:{port}...[/green]  "
+        f"(allowed numbers: {config.allowed_whatsapp_numbers_list or 'all'})"
+    )
+    console.print(
+        f"[dim]Configure your Meta app webhook URL to point to "
+        f"http://your-server:{port}/webhook[/dim]"
+    )
+    uvicorn.run(app, host=host, port=port, log_level="warning")

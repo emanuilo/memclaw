@@ -40,6 +40,12 @@ class MemclawConfig:
     telegram_bot_token: str = ""
     allowed_user_ids: str = ""
 
+    # WhatsApp bot settings
+    whatsapp_phone_number_id: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_verify_token: str = ""
+    whatsapp_allowed_numbers: str = ""
+
     def __post_init__(self):
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -49,6 +55,14 @@ class MemclawConfig:
             self.telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not self.allowed_user_ids:
             self.allowed_user_ids = os.environ.get("ALLOWED_USER_IDS", "")
+        if not self.whatsapp_phone_number_id:
+            self.whatsapp_phone_number_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
+        if not self.whatsapp_access_token:
+            self.whatsapp_access_token = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
+        if not self.whatsapp_verify_token:
+            self.whatsapp_verify_token = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+        if not self.whatsapp_allowed_numbers:
+            self.whatsapp_allowed_numbers = os.environ.get("WHATSAPP_ALLOWED_NUMBERS", "")
         self.memory_dir = Path(self.memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_subdir.mkdir(exist_ok=True)
@@ -86,6 +100,12 @@ class MemclawConfig:
         return self.memory_subdir / f"{dt.isoformat()}.md"
 
     @property
+    def images_dir(self) -> Path:
+        d = self.memory_dir / "images"
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
     def allowed_user_ids_list(self) -> list[int]:
         if not self.allowed_user_ids:
             return []
@@ -94,3 +114,9 @@ class MemclawConfig:
             for uid in self.allowed_user_ids.split(",")
             if uid.strip()
         ]
+
+    @property
+    def allowed_whatsapp_numbers_list(self) -> list[str]:
+        if not self.whatsapp_allowed_numbers:
+            return []
+        return [n.strip() for n in self.whatsapp_allowed_numbers.split(",") if n.strip()]

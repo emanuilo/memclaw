@@ -88,6 +88,23 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "whatsapp_image_save",
+        "description": (
+            "Save a WhatsApp image with your description for later retrieval. "
+            "You MUST call this when you receive an image from WhatsApp. Describe "
+            "the image in detail and pass the description along with the local file path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "Detailed image description"},
+                "file_path": {"type": "string", "description": "Local file path of the saved WhatsApp image"},
+                "caption": {"type": "string", "description": "Optional caption"},
+            },
+            "required": ["description", "file_path"],
+        },
+    },
+    {
         "name": "image_search",
         "description": (
             "Search for previously stored images to send to the user. "
@@ -207,6 +224,7 @@ class ToolExecutor:
             "memory_search": self._memory_search,
             "image_save": self._image_save,
             "telegram_image_save": self._telegram_image_save,
+            "whatsapp_image_save": self._whatsapp_image_save,
             "image_search": self._image_search,
             "update_instructions": self._update_instructions,
             "file_write": self._file_write,
@@ -276,9 +294,27 @@ class ToolExecutor:
         logger.info("  → telegram_image_save result: {desc}", desc=description[:100])
         return f"Image saved: {description[:100]}"
 
+    async def _whatsapp_image_save(self, args: dict) -> str:
+        description: str = args["description"]
+        file_path: str = args["file_path"]
+        caption: str = args.get("caption", "")
+        combined = f"Image: {description}"
+        if caption:
+            combined += f" Caption: {caption}"
+        store_path = self.store.save(combined, entry_type="image")
+        await self.index.index_file(store_path)
+        await self.index.store_platform_image(
+            platform="whatsapp",
+            media_ref=file_path,
+            description=combined,
+            caption=caption,
+        )
+        logger.info("  → whatsapp_image_save result: {desc}", desc=description[:100])
+        return f"Image saved: {description[:100]}"
+
     async def _image_search(self, args: dict) -> str:
         query_emb = await self.index.get_embedding(args["query"])
-        candidates = self.index.search_telegram_images(query_emb, limit=5)
+        candidates = self.index.search_platform_images(query_emb, limit=5)
         if candidates:
             best_score = candidates[0]["score"]
             threshold = best_score * 0.9
