@@ -416,3 +416,72 @@ def whatsapp(ctx):
         pass
     finally:
         bot_.close()
+
+
+# ------------------------------------------------------------------
+# Slack bot (Socket Mode via slack-bolt)
+# ------------------------------------------------------------------
+
+@cli.command()
+@click.pass_context
+def slack(ctx):
+    """Start the Memclaw Slack bot (Socket Mode)."""
+    import sys
+
+    from loguru import logger
+    from openai import AsyncOpenAI
+
+    from .bot.slack_handlers import SlackHandlers
+
+    _ensure_setup(ctx, channel="slack")
+    config: MemclawConfig = ctx.obj["config"]
+
+    if not config.slack_bot_token:
+        console.print("[red]Error:[/red] SLACK_BOT_TOKEN is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    if not config.slack_app_token:
+        console.print("[red]Error:[/red] SLACK_APP_TOKEN is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    if not config.openai_api_key:
+        console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    if not config.anthropic_api_key:
+        console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    # Logging
+    logger.remove()
+    logger.add(sys.stderr, level="INFO",
+               format="<green>{time:HH:mm:ss}</green> | <level>{level:<8}</level> | <level>{message}</level>")
+    logger.add(
+        str(config.memory_dir / "slack.log"),
+        rotation="10 MB",
+        retention="7 days",
+        level="DEBUG",
+    )
+
+    openai_client = AsyncOpenAI(api_key=config.openai_api_key)
+    handlers = SlackHandlers(config, openai_client)
+
+    console.print(
+        f"[green]Starting Memclaw Slack bot (Socket Mode)...[/green]  "
+        f"(allowed channels: {config.slack_allowed_channels_list or 'all'})"
+    )
+
+    async def _run():
+        try:
+            await handlers.start()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            handlers.close()
+            console.print("\nMemclaw Slack bot shut down.")
+
+    asyncio.run(_run())

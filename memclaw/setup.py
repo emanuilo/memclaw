@@ -20,6 +20,9 @@ KEYS: list[tuple[str, str, bool, str | None]] = [
     ("ANTHROPIC_API_KEY", "Anthropic API key", True, None),
     ("TELEGRAM_BOT_TOKEN", "Telegram bot token", False, "telegram"),
     ("ALLOWED_USER_IDS", "Allowed Telegram user IDs (comma-separated)", False, "telegram"),
+    ("SLACK_BOT_TOKEN", "Slack bot token (xoxb-...)", False, "slack"),
+    ("SLACK_APP_TOKEN", "Slack app-level token for Socket Mode (xapp-...)", False, "slack"),
+    ("SLACK_ALLOWED_CHANNELS", "Allowed Slack channel IDs (comma-separated, optional)", False, "slack"),
 ]
 
 

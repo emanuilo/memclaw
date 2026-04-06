@@ -40,6 +40,11 @@ class MemclawConfig:
     telegram_bot_token: str = ""
     allowed_user_ids: str = ""
 
+    # Slack bot settings
+    slack_bot_token: str = ""
+    slack_app_token: str = ""
+    slack_allowed_channels: str = ""
+
     def __post_init__(self):
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -49,6 +54,12 @@ class MemclawConfig:
             self.telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not self.allowed_user_ids:
             self.allowed_user_ids = os.environ.get("ALLOWED_USER_IDS", "")
+        if not self.slack_bot_token:
+            self.slack_bot_token = os.environ.get("SLACK_BOT_TOKEN", "")
+        if not self.slack_app_token:
+            self.slack_app_token = os.environ.get("SLACK_APP_TOKEN", "")
+        if not self.slack_allowed_channels:
+            self.slack_allowed_channels = os.environ.get("SLACK_ALLOWED_CHANNELS", "")
         self.memory_dir = Path(self.memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_subdir.mkdir(exist_ok=True)
@@ -108,6 +119,18 @@ class MemclawConfig:
         return d
 
     @property
+    def slack_dir(self) -> Path:
+        d = self.memory_dir / "slack"
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
+    def slack_media_dir(self) -> Path:
+        d = self.slack_dir / "media"
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
     def allowed_user_ids_list(self) -> list[int]:
         if not self.allowed_user_ids:
             return []
@@ -117,3 +140,8 @@ class MemclawConfig:
             if uid.strip()
         ]
 
+    @property
+    def slack_allowed_channels_list(self) -> list[str]:
+        if not self.slack_allowed_channels:
+            return []
+        return [c.strip() for c in self.slack_allowed_channels.split(",") if c.strip()]
