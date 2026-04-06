@@ -11,6 +11,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 [![Anthropic API](https://img.shields.io/badge/Anthropic-API-blueviolet.svg)](https://docs.anthropic.com/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp-coming_soon-lightgrey.svg)]()
+[![Obsidian](https://img.shields.io/badge/Obsidian-Integration-7C3AED.svg)](https://obsidian.md/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 </div>
@@ -87,6 +88,80 @@ She's moving to Berlin for a new role at Stripe.
 > Show me the whiteboard photo from last week
 [sends the matching photo]
 Here's the sprint planning whiteboard you saved last week.
+```
+
+## Obsidian Integration
+
+Memclaw can write directly to an [Obsidian](https://obsidian.md/) vault, turning your memories into first-class Obsidian notes with frontmatter, `#tags`, callout blocks, and `[[wikilinks]]`. This lets you browse, search, and graph your memories inside Obsidian — and sync them across all your devices.
+
+### Setup
+
+```bash
+memclaw obsidian-init ~/ObsidianVault
+```
+
+This creates a `memclaw/` subfolder in your vault and enables Obsidian mode. All memories will now be written with Obsidian-flavored Markdown.
+
+You can also set it up manually via `memclaw configure` or environment variables:
+
+```bash
+export OBSIDIAN_VAULT_PATH=~/ObsidianVault/memclaw
+```
+
+### What changes in Obsidian mode
+
+| Feature | Default mode | Obsidian mode |
+|---------|-------------|---------------|
+| **Frontmatter** | None | YAML properties (`type`, `date`, `tags`, `source`) |
+| **Tags** | `Tags: tag1, tag2` | `#tag1 #tag2` (native Obsidian tags) |
+| **Entry format** | `## HH:MM - Type` | `> [!note] HH:MM - Type` (callout blocks) |
+| **Consolidation** | Plain Markdown | Includes `[[wikilinks]]` to source daily notes |
+| **Dataview** | Not compatible | Fully queryable via Dataview plugin |
+
+### Example output
+
+Daily note (`memory/2026-04-06.md`):
+
+```markdown
+---
+type: daily-note
+date: 2026-04-06
+tags:
+  - memclaw
+  - daily
+source: memclaw
+---
+# Sunday, April 06, 2026
+
+> [!note] 14:30 - Note
+> Just had coffee with Alex. She's moving to Berlin for a role at Stripe.
+> #people #alex
+```
+
+### Syncing across devices
+
+Memclaw doesn't implement sync — it writes files to your vault, and your sync method handles the rest. All major Obsidian sync options work:
+
+| Method | Cost | Setup |
+|--------|------|-------|
+| **iCloud / Google Drive / Dropbox** | Free | Place vault folder in cloud drive |
+| **Obsidian Sync** | $4/mo | Official, end-to-end encrypted. Supports headless sync via `obsidian-headless` |
+| **Obsidian Git** | Free | Community plugin, auto-commits to a private repo |
+| **Remotely Save** | Free/varies | Community plugin supporting S3, WebDAV, Dropbox, OneDrive, and more |
+| **Self-hosted LiveSync** | Free | CouchDB-based real-time sync (Docker) |
+
+### Vault structure
+
+```
+~/ObsidianVault/
+  .obsidian/              # Managed by Obsidian (memclaw never touches this)
+  memclaw/
+    MEMORY.md             # Permanent memory (with YAML frontmatter)
+    AGENTS.md             # Agent instructions
+    memclaw.db            # SQLite index (ignored by Obsidian)
+    memory/
+      2026-04-06.md       # Daily note (with frontmatter)
+      2026-04-05.md
 ```
 
 ## How It Works
@@ -212,6 +287,8 @@ memclaw --memory-dir ~/my-vault   # override storage location
 | `ANTHROPIC_API_KEY` | Yes | Powers the Claude agent |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
 | `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
+| `OBSIDIAN_VAULT_PATH` | For Obsidian | Path to memclaw subfolder in your vault |
+| `OBSIDIAN_MODE` | For Obsidian | Set to `true` to enable Obsidian-flavored Markdown |
 
 ### Directory Structure
 

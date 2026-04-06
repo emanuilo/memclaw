@@ -349,3 +349,87 @@ def bot(ctx):
         f"(allowed users: {config.allowed_user_ids_list or 'all'})"
     )
     app.run_polling(allowed_updates=["message"])
+
+
+# ------------------------------------------------------------------
+# Obsidian integration
+# ------------------------------------------------------------------
+
+@cli.command(name="obsidian-init")
+@click.argument("vault_path", type=click.Path())
+@click.option(
+    "--subfolder",
+    default="memclaw",
+    help="Subfolder name within the vault (default: memclaw)",
+)
+def obsidian_init(vault_path, subfolder):
+    """Set up Memclaw inside an Obsidian vault for cross-device sync.
+
+    VAULT_PATH is the root of your Obsidian vault (the folder containing .obsidian/).
+
+    This command creates a memclaw subfolder in the vault and configures
+    Memclaw to write Obsidian-flavored Markdown with frontmatter, #tags,
+    wikilinks, and callouts.
+
+    Sync is handled by your Obsidian sync method (iCloud, Obsidian Sync,
+    Obsidian Git, Remotely Save, etc.).
+    """
+    from .setup import ENV_FILE, _load_existing
+
+    vault = Path(vault_path).expanduser().resolve()
+
+    if not vault.is_dir():
+        console.print(f"[red]Error:[/red] {vault} is not a directory.")
+        raise SystemExit(1)
+
+    obsidian_dir = vault / ".obsidian"
+    if not obsidian_dir.exists():
+        console.print(
+            f"[yellow]Warning:[/yellow] No .obsidian/ found in {vault}.\n"
+            "  This folder may not be an Obsidian vault yet.\n"
+            "  You can still proceed — Obsidian will create .obsidian/ when you open it."
+        )
+
+    memclaw_dir = vault / subfolder
+    memclaw_dir.mkdir(parents=True, exist_ok=True)
+    (memclaw_dir / "memory").mkdir(exist_ok=True)
+
+    # Update .env with Obsidian settings
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_existing()
+    existing["OBSIDIAN_VAULT_PATH"] = str(memclaw_dir)
+    existing["OBSIDIAN_MODE"] = "true"
+    lines = [f"{k}={v}" for k, v in existing.items() if v]
+    ENV_FILE.write_text("\n".join(lines) + "\n")
+
+    # Create initial files with Obsidian frontmatter
+    config = MemclawConfig(
+        memory_dir=memclaw_dir,
+        obsidian_mode=True,
+        openai_api_key=existing.get("OPENAI_API_KEY", "placeholder"),
+        anthropic_api_key=existing.get("ANTHROPIC_API_KEY", "placeholder"),
+    )
+    store = MemoryStore(config)
+
+    # Create MEMORY.md with frontmatter if it doesn't exist
+    if not config.memory_file.exists():
+        config.memory_file.write_text(store._create_permanent_header())
+
+    console.print(
+        Panel(
+            f"[bold green]Obsidian integration configured![/bold green]\n\n"
+            f"Vault path    : {vault}\n"
+            f"Memclaw folder: {memclaw_dir}\n"
+            f"Obsidian mode : enabled\n\n"
+            "Your memories will now be written with Obsidian-flavored Markdown:\n"
+            "  - YAML frontmatter for properties\n"
+            "  - #tags for categorization\n"
+            "  - Callout blocks for visual structure\n"
+            "  - [[wikilinks]] in consolidation\n\n"
+            "[dim]Sync is handled by your Obsidian sync method.\n"
+            "Supported: iCloud, Obsidian Sync, Obsidian Git,\n"
+            "Remotely Save (S3/Dropbox/WebDAV), LiveSync (CouchDB).[/dim]",
+            title="memclaw obsidian-init",
+            border_style="bright_cyan",
+        )
+    )

@@ -78,6 +78,56 @@ appropriate.
 explanation or preamble.
 """
 
+_CONSOLIDATION_PROMPT_OBSIDIAN = """\
+You are a memory consolidation assistant. Your job is to distill daily memory \
+logs into a curated, permanent knowledge base formatted for Obsidian.
+
+You will receive:
+1. The content of several daily memory files (chronological notes, thoughts, \
+saved links, voice transcriptions, etc.)
+2. The current content of MEMORY.md (the permanent memory file), which may be \
+empty if this is the first consolidation.
+3. A list of source daily file names for wikilink references.
+
+Your task:
+- Extract durable facts, preferences, decisions, and important events from the \
+daily files.
+- Ignore transient entries: one-off reminders that have passed, trivial \
+greetings, temporary notes, etc.
+- Merge the extracted information with the existing MEMORY.md content. Update \
+existing entries if new information supersedes them. Remove outdated entries.
+- Output the complete updated MEMORY.md content. The output MUST begin with \
+YAML frontmatter:
+  ---
+  type: permanent-memory
+  tags:
+    - memclaw
+    - memory
+  source: memclaw
+  last-consolidated: {today}
+  ---
+- Use Obsidian-flavored markdown:
+  - Use #tags (not "Tags: ...") for categorization
+  - Use [[wikilinks]] to reference daily notes (e.g. [[2026-04-01]])
+  - Use callouts (> [!note], > [!tip], > [!important]) for emphasis
+- Structure with sections such as:
+  ## Preferences
+  ## Projects
+  ## People
+  ## Key Facts
+  ## Decisions
+  ## Important Events
+- Only include sections that have content. You may add other sections if \
+appropriate.
+- Place the most important and frequently referenced information at the top.
+- At the end, add a consolidation source section:
+  > [!info] Consolidation Source
+  > Consolidated from [[date1]], [[date2]], ...
+- Keep the output concise — target under 5,000 characters.
+- Output ONLY the markdown content for MEMORY.md. Do not include any \
+explanation or preamble.
+"""
+
 # Sonnet 4 pricing (per 1M tokens)
 _INPUT_COST_PER_M = 3.0
 _OUTPUT_COST_PER_M = 15.0
@@ -176,10 +226,19 @@ class MemclawAgent:
         if existing_memory.strip():
             user_message += "\n\n## Current MEMORY.md\n\n" + existing_memory
 
+        if self.config.obsidian_mode:
+            source_names = [p.stem for p in unconsolidated]
+            user_message += "\n\n## Source file names for wikilinks\n" + ", ".join(source_names)
+            consolidation_prompt = _CONSOLIDATION_PROMPT_OBSIDIAN.format(
+                today=date.today().isoformat(),
+            )
+        else:
+            consolidation_prompt = _CONSOLIDATION_PROMPT
+
         response = await self._client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=4096,
-            system=_CONSOLIDATION_PROMPT,
+            system=consolidation_prompt,
             messages=[{"role": "user", "content": user_message}],
         )
 

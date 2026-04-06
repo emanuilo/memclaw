@@ -40,6 +40,10 @@ class MemclawConfig:
     telegram_bot_token: str = ""
     allowed_user_ids: str = ""
 
+    # Obsidian integration
+    obsidian_mode: bool = False
+    obsidian_vault_path: str = ""
+
     def __post_init__(self):
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -49,6 +53,17 @@ class MemclawConfig:
             self.telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not self.allowed_user_ids:
             self.allowed_user_ids = os.environ.get("ALLOWED_USER_IDS", "")
+
+        # Obsidian mode: env var overrides
+        if not self.obsidian_mode:
+            self.obsidian_mode = os.environ.get("OBSIDIAN_MODE", "").lower() in ("1", "true", "yes")
+        if not self.obsidian_vault_path:
+            self.obsidian_vault_path = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+
+        # If obsidian vault path is set, use it as memory_dir
+        if self.obsidian_vault_path:
+            self.memory_dir = Path(self.obsidian_vault_path).expanduser()
+            self.obsidian_mode = True
         self.memory_dir = Path(self.memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_subdir.mkdir(exist_ok=True)
@@ -63,7 +78,19 @@ class MemclawConfig:
                 dest.write_text(src.read_text(encoding="utf-8"))
 
         if not self.memory_file.exists():
-            self.memory_file.write_text("# Personal Memory\n")
+            header = ""
+            if self.obsidian_mode:
+                header += (
+                    "---\n"
+                    "type: permanent-memory\n"
+                    "tags:\n"
+                    "  - memclaw\n"
+                    "  - memory\n"
+                    "source: memclaw\n"
+                    "---\n\n"
+                )
+            header += "# Personal Memory\n"
+            self.memory_file.write_text(header)
 
     @property
     def db_path(self) -> Path:
