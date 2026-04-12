@@ -70,6 +70,14 @@ memclaw bot
 
 Uses your **personal WhatsApp account** via WhatsApp Web pairing — no Meta Business account, no webhooks, no public server. Powered by [`neonize`](https://github.com/krypton-byte/neonize) (whatsmeow under the hood).
 
+#### Prerequisite: libmagic
+
+neonize depends on `python-magic`, which needs the `libmagic` system library:
+
+- macOS: `brew install libmagic`
+- Debian/Ubuntu: `sudo apt install libmagic1`
+- Fedora/RHEL: `sudo dnf install file-libs`
+
 #### Setup
 
 ```bash
