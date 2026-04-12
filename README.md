@@ -98,9 +98,9 @@ The Slack bot connects via **Socket Mode** (WebSocket) — no public URL or webh
 1. Create a [Slack App](https://api.slack.com/apps) and enable **Socket Mode**.
 2. Under **OAuth & Permissions**, add these bot token scopes: `app_mentions:read`, `chat:write`, `files:read`, `files:write`, `im:history`, `im:read`, `im:write`, `channels:history`.
 3. Under **Event Subscriptions**, subscribe to: `message.im`, `app_mention`.
-4. Install the app to your workspace and copy the **Bot Token** (`xoxb-...`).
-5. Generate an **App-Level Token** (`xapp-...`) with `connections:write` scope.
-6. Install in your workspace and enable the **App Home → Messages Tab**, otherwise DMs get rejected with "Sending messages to this app has been turned off".
+4. Under **App Home** → **Messages Tab**, enable the tab and check **"Allow users to send Slash commands and messages from the messages tab"** (otherwise DMs show "Sending messages to this app has been turned off").
+5. Install the app to your workspace and copy the **Bot Token** (`xoxb-...`).
+6. Generate an **App-Level Token** (`xapp-...`) with `connections:write` scope.
 7. Start the bot:
 
 ```bash
