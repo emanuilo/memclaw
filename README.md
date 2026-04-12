@@ -115,16 +115,8 @@ Here's the sprint planning whiteboard you saved last week.
 
 ```mermaid
 flowchart LR
-    subgraph Channels [" "]
-        direction TB
-        TG[Telegram]
-        WA[WhatsApp]
-    end
-
-    TG -->|text / images / links| Agent[Memclaw Agent]
-    WA -->|text / images / links| Agent
-    Agent -->|response + images| TG
-    Agent -->|response + images| WA
+    TG[Telegram] <-->|text / images / links<br>response + images| Agent[Memclaw Agent]
+    WA[WhatsApp] <-->|text / images / links<br>response + images| Agent
 
     subgraph sandbox ["~/.memclaw/"]
         Agent -->|save| Tools1["memory_save<br>image_save<br>file_write"]
@@ -133,8 +125,6 @@ flowchart LR
         DB --> Tools2["memory_search<br>image_search"]
         Tools2 -->|results| Agent
     end
-
-    style Channels fill:none,stroke:none
 ```
 
 Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and uses the [Anthropic API](https://docs.anthropic.com/) directly with a lightweight agentic loop.
