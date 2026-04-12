@@ -40,10 +40,7 @@ class MemclawConfig:
     telegram_bot_token: str = ""
     allowed_user_ids: str = ""
 
-    # WhatsApp bot settings
-    whatsapp_phone_number_id: str = ""
-    whatsapp_access_token: str = ""
-    whatsapp_verify_token: str = ""
+    # WhatsApp bot settings (personal account via WhatsApp Web — neonize)
     whatsapp_allowed_numbers: str = ""
 
     def __post_init__(self):
@@ -55,12 +52,6 @@ class MemclawConfig:
             self.telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not self.allowed_user_ids:
             self.allowed_user_ids = os.environ.get("ALLOWED_USER_IDS", "")
-        if not self.whatsapp_phone_number_id:
-            self.whatsapp_phone_number_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
-        if not self.whatsapp_access_token:
-            self.whatsapp_access_token = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
-        if not self.whatsapp_verify_token:
-            self.whatsapp_verify_token = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
         if not self.whatsapp_allowed_numbers:
             self.whatsapp_allowed_numbers = os.environ.get("WHATSAPP_ALLOWED_NUMBERS", "")
         self.memory_dir = Path(self.memory_dir)
@@ -102,6 +93,22 @@ class MemclawConfig:
     @property
     def images_dir(self) -> Path:
         d = self.memory_dir / "images"
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
+    def whatsapp_dir(self) -> Path:
+        d = self.memory_dir / "whatsapp"
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
+    def whatsapp_session_db(self) -> Path:
+        return self.whatsapp_dir / "session.db"
+
+    @property
+    def whatsapp_media_dir(self) -> Path:
+        d = self.whatsapp_dir / "media"
         d.mkdir(exist_ok=True)
         return d
 

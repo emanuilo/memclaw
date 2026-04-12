@@ -10,7 +10,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Anthropic API](https://img.shields.io/badge/Anthropic-API-blueviolet.svg)](https://docs.anthropic.com/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
-[![WhatsApp](https://img.shields.io/badge/WhatsApp-Bot-25D366.svg)](https://developers.facebook.com/docs/whatsapp/cloud-api)
+[![WhatsApp](https://img.shields.io/badge/WhatsApp-Bot-25D366.svg)](https://github.com/krypton-byte/neonize)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 </div>
@@ -68,28 +68,17 @@ memclaw bot
 
 ### WhatsApp Bot
 
-The WhatsApp bot runs as an HTTP webhook server that receives messages from the WhatsApp Cloud API.
+Uses your **personal WhatsApp account** via WhatsApp Web pairing — no Meta Business account, no webhooks, no public server. Powered by [`neonize`](https://github.com/krypton-byte/neonize) (whatsmeow under the hood).
 
 #### Setup
 
-1. Create a [Meta Business App](https://developers.facebook.com/apps/) and enable the WhatsApp product.
-2. In the WhatsApp section, set up a phone number and note the **Phone Number ID**.
-3. Generate a permanent **access token** (or use the temporary one for testing).
-4. Choose a **verify token** (any secret string you pick).
-5. Start the webhook server:
-
 ```bash
-memclaw whatsapp --port 8080
+memclaw whatsapp
 ```
 
-6. Configure the webhook URL in your Meta app dashboard:
-   - URL: `https://your-server:8080/webhook`
-   - Verify token: the value you set as `WHATSAPP_VERIFY_TOKEN`
-   - Subscribe to: `messages`
+On first run a QR code is printed to your terminal. On your phone: **Settings → Linked Devices → Link a Device**, and scan it. The session persists under `~/.memclaw/whatsapp/` so you only pair once.
 
-> You'll need a publicly accessible HTTPS URL. Use a reverse proxy (nginx, Caddy) or a tunnel (ngrok, Cloudflare Tunnel) during development.
-
-To update keys later: `memclaw configure`.
+By default, only messages from your own paired account (self-notes via WhatsApp's "Message Yourself") are processed. To let other numbers DM the bot, set `WHATSAPP_ALLOWED_NUMBERS` (comma-separated, E.164 format).
 
 ### What it handles
 
@@ -239,10 +228,7 @@ memclaw --memory-dir ~/my-vault   # override storage location
 | `ANTHROPIC_API_KEY` | Yes | Powers the Claude agent |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
 | `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
-| `WHATSAPP_PHONE_NUMBER_ID` | For WhatsApp bot | Your WhatsApp Business phone number ID |
-| `WHATSAPP_ACCESS_TOKEN` | For WhatsApp bot | WhatsApp Cloud API access token |
-| `WHATSAPP_VERIFY_TOKEN` | For WhatsApp bot | Secret string for webhook verification |
-| `WHATSAPP_ALLOWED_NUMBERS` | For WhatsApp bot | Comma-separated phone numbers (e.g. +1234567890) |
+| `WHATSAPP_ALLOWED_NUMBERS` | Optional | Extra numbers allowed to DM the bot (E.164). Blank = self-notes only. |
 
 ### Directory Structure
 

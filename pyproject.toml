@@ -35,8 +35,7 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "loguru>=0.7.0",
     "python-dotenv>=1.0.0",
-    "starlette>=0.37.0",
-    "uvicorn>=0.29.0",
+    "neonize>=0.4.0",
 ]
 
 [project.scripts]
