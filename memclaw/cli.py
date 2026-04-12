@@ -17,10 +17,13 @@ from .store import MemoryStore
 console = Console()
 
 
-def _ensure_setup(ctx):
-    """Run first-time setup if ~/.memclaw/.env doesn't exist, then reload config."""
+def _ensure_setup(ctx, channel: str | None = None):
+    """Run first-time setup if ~/.memclaw/.env doesn't exist, then reload config.
+
+    `channel` scopes which optional keys are prompted for (e.g. "telegram").
+    """
     if needs_setup():
-        run_setup()
+        run_setup(channel=channel)
         # Reload .env so newly saved keys are picked up
         from dotenv import load_dotenv
         load_dotenv(Path.home() / ".memclaw" / ".env", override=True)
@@ -267,7 +270,7 @@ def configure(ctx):
 
 @cli.command()
 @click.pass_context
-def bot(ctx):
+def telegram(ctx):
     """Start the Memclaw Telegram bot."""
     import sys
 
@@ -277,7 +280,7 @@ def bot(ctx):
 
     from .bot.handlers import MessageHandlers
 
-    _ensure_setup(ctx)
+    _ensure_setup(ctx, channel="telegram")
     config: MemclawConfig = ctx.obj["config"]
 
     if not config.telegram_bot_token:
@@ -371,7 +374,7 @@ def whatsapp(ctx):
 
     from .bot.whatsapp_handlers import WhatsAppBot
 
-    _ensure_setup(ctx)
+    _ensure_setup(ctx, channel="whatsapp")
     config: MemclawConfig = ctx.obj["config"]
 
     if not config.openai_api_key:

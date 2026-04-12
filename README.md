@@ -63,7 +63,7 @@ The Telegram bot shows a **typing indicator** while processing so you know it's 
 3. Start the bot — on first run you'll be prompted for all keys:
 
 ```bash
-memclaw bot
+memclaw telegram
 ```
 
 ### WhatsApp Bot
@@ -220,7 +220,7 @@ The image is described by an AI vision model and the description is stored and i
 
 ## Configuration
 
-On first run, `memclaw` or `memclaw bot` will launch an interactive setup wizard that saves your keys to `~/.memclaw/.env`. Run `memclaw configure` anytime to update them.
+On first run, `memclaw`, `memclaw telegram`, or `memclaw whatsapp` will launch an interactive setup wizard that saves your keys to `~/.memclaw/.env`. The wizard only prompts for keys relevant to the command you ran — run `memclaw configure` anytime to update all keys.
 
 You can also set keys via environment variables or a `.env` in the current directory — these take the usual precedence over the saved config.
 
