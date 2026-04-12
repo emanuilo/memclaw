@@ -57,51 +57,22 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "image_save",
         "description": (
-            "Save a local image by generating an AI description and storing it as "
-            "a memory. You can see the image — describe it yourself and pass your "
-            "description as content."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "image_path": {"type": "string", "description": "Path to the image file"},
-                "caption": {"type": "string", "description": "Optional caption"},
-            },
-            "required": ["image_path"],
-        },
-    },
-    {
-        "name": "telegram_image_save",
-        "description": (
-            "Save a Telegram image with your description for later retrieval. "
-            "You MUST call this when you receive an image with a file_id. Describe "
-            "the image in detail and pass the description along with the file_id."
+            "Save an image with your description so it can be retrieved later. "
+            "You MUST call this when you receive an image with a media_ref in "
+            "the prompt, or when the user shares a local image path. Describe "
+            "the image in detail and pass the media_ref verbatim."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "description": {"type": "string", "description": "Detailed image description"},
-                "file_id": {"type": "string", "description": "Telegram file_id"},
+                "media_ref": {
+                    "type": "string",
+                    "description": "Opaque reference (file_id, local path, etc.) from the prompt",
+                },
                 "caption": {"type": "string", "description": "Optional caption"},
             },
-            "required": ["description", "file_id"],
-        },
-    },
-    {
-        "name": "whatsapp_image_save",
-        "description": (
-            "Save a WhatsApp image with your description for later retrieval. "
-            "You MUST call this when you receive an image from WhatsApp. Describe "
-            "the image in detail and pass the description along with the local file path."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "description": {"type": "string", "description": "Detailed image description"},
-                "file_path": {"type": "string", "description": "Local file path of the saved WhatsApp image"},
-                "caption": {"type": "string", "description": "Optional caption"},
-            },
-            "required": ["description", "file_path"],
+            "required": ["description", "media_ref"],
         },
     },
     {
@@ -212,19 +183,19 @@ class ToolExecutor:
         index: MemoryIndex,
         search: HybridSearch,
         found_images: list[dict],
+        platform: str | None = None,
     ):
         self.config = config
         self.store = store
         self.index = index
         self.search = search
         self.found_images = found_images
+        self.platform = platform
 
         self._dispatch: dict[str, Any] = {
             "memory_save": self._memory_save,
             "memory_search": self._memory_search,
             "image_save": self._image_save,
-            "telegram_image_save": self._telegram_image_save,
-            "whatsapp_image_save": self._whatsapp_image_save,
             "image_search": self._image_search,
             "update_instructions": self._update_instructions,
             "file_write": self._file_write,
@@ -265,51 +236,26 @@ class ToolExecutor:
         return formatted
 
     async def _image_save(self, args: dict) -> str:
-        image_path = Path(args["image_path"]).expanduser().resolve()
-        caption: str = args.get("caption", "")
-        if not image_path.exists():
-            logger.info("  → image_save result: not found {path}", path=image_path)
-            return f"Image not found: {image_path}"
-        memory_content = f"**Image:** {image_path.name}\n"
-        if caption:
-            memory_content += f"**Caption:** {caption}\n"
-        memory_content += f"**Path:** {image_path}\n"
-        file_path = self.store.save(memory_content, entry_type="image")
-        await self.index.index_file(file_path)
-        logger.info("  → image_save result: saved {name}", name=image_path.name)
-        return f"Image saved from {image_path.name}"
-
-    async def _telegram_image_save(self, args: dict) -> str:
         description: str = args["description"]
-        file_id: str = args["file_id"]
+        media_ref: str = args["media_ref"]
         caption: str = args.get("caption", "")
-        combined = f"Image: {description}"
-        if caption:
-            combined += f" Caption: {caption}"
-        file_path = self.store.save(combined, entry_type="image")
-        await self.index.index_file(file_path)
-        await self.index.store_telegram_image(
-            file_id=file_id, description=combined, caption=caption,
-        )
-        logger.info("  → telegram_image_save result: {desc}", desc=description[:100])
-        return f"Image saved: {description[:100]}"
+        platform = self.platform or "local"
 
-    async def _whatsapp_image_save(self, args: dict) -> str:
-        description: str = args["description"]
-        file_path: str = args["file_path"]
-        caption: str = args.get("caption", "")
         combined = f"Image: {description}"
         if caption:
             combined += f" Caption: {caption}"
         store_path = self.store.save(combined, entry_type="image")
         await self.index.index_file(store_path)
         await self.index.store_platform_image(
-            platform="whatsapp",
-            media_ref=file_path,
+            platform=platform,
+            media_ref=media_ref,
             description=combined,
             caption=caption,
         )
-        logger.info("  → whatsapp_image_save result: {desc}", desc=description[:100])
+        logger.info(
+            "  → image_save({platform}) result: {desc}",
+            platform=platform, desc=description[:100],
+        )
         return f"Image saved: {description[:100]}"
 
     async def _image_search(self, args: dict) -> str:

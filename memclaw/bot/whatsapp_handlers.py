@@ -31,7 +31,7 @@ class WhatsAppBot:
     def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
         self.config = config
         self.openai_client = openai_client
-        self.agent = MemclawAgent(config)
+        self.agent = MemclawAgent(config, platform="whatsapp")
         self.link_processor = LinkProcessor(openai_client)
 
         self.client = NewAClient(str(config.whatsapp_session_db))
@@ -146,7 +146,7 @@ class WhatsAppBot:
                         "\nThis summary has NOT been saved yet. Save it if the content is worth remembering."
                     )
 
-        prompt_text = f"User sent a photo. file_path={local_path}"
+        prompt_text = f"User sent a photo. media_ref={local_path}"
         if caption:
             prompt_text += f"\nCaption: {caption}"
         if link_info:

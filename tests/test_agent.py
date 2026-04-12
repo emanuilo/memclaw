@@ -476,14 +476,14 @@ class TestSandboxedFileTools:
         assert "file_read" in names
 
     def test_tool_definitions_contain_all_tools(self):
-        """TOOL_DEFINITIONS should have all 9 tools."""
+        """TOOL_DEFINITIONS should expose the full catalog."""
         from memclaw.tools import TOOL_DEFINITIONS
 
         names = [t["name"] for t in TOOL_DEFINITIONS]
-        assert len(names) == 9
         expected = {
-            "memory_save", "memory_search", "image_save",
-            "telegram_image_save", "whatsapp_image_save", "image_search",
+            "memory_save", "memory_search",
+            "image_save", "image_search",
             "update_instructions", "file_write", "file_read",
         }
         assert set(names) == expected
+        assert len(names) == len(expected)
