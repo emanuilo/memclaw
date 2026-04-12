@@ -62,23 +62,11 @@ class WhatsAppBot:
     # ------------------------------------------------------------------
 
     def _check_sender(self, ev: MessageEv) -> bool:
+        """Only process self-notes (your own messages to yourself)."""
         source = ev.Info.MessageSource
-
-        # Ignore group messages by default — this is a personal notes bot
         if source.IsGroup:
             return False
-
-        # Messages from the paired account (self-notes) are always allowed
-        if source.IsFromMe:
-            return True
-
-        allowed = self.config.allowed_whatsapp_numbers_list
-        if not allowed:
-            # No allowlist: only self-notes are allowed
-            return False
-
-        sender_phone = source.Sender.User
-        return any(a.lstrip("+") == sender_phone for a in allowed)
+        return source.IsFromMe
 
     # ------------------------------------------------------------------
     # Message routing

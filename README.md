@@ -86,7 +86,7 @@ memclaw whatsapp
 
 On first run a QR code is printed to your terminal. On your phone: **Settings → Linked Devices → Link a Device**, and scan it. The session persists under `~/.memclaw/whatsapp/` so you only pair once.
 
-By default, only messages from your own paired account (self-notes via WhatsApp's "Message Yourself") are processed. To let other numbers DM the bot, set `WHATSAPP_ALLOWED_NUMBERS` (comma-separated, E.164 format).
+Only messages you send to yourself (via WhatsApp's "Message Yourself" chat) are processed. DMs from other people and group messages are ignored.
 
 ### What it handles
 
@@ -236,7 +236,6 @@ memclaw --memory-dir ~/my-vault   # override storage location
 | `ANTHROPIC_API_KEY` | Yes | Powers the Claude agent |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
 | `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
-| `WHATSAPP_ALLOWED_NUMBERS` | Optional | Extra numbers allowed to DM the bot (E.164). Blank = self-notes only. |
 
 ### Directory Structure
 

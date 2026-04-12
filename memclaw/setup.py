@@ -18,7 +18,6 @@ KEYS = [
     ("ANTHROPIC_API_KEY", "Anthropic API key", True),
     ("TELEGRAM_BOT_TOKEN", "Telegram bot token", False),
     ("ALLOWED_USER_IDS", "Allowed Telegram user IDs (comma-separated)", False),
-    ("WHATSAPP_ALLOWED_NUMBERS", "Extra WhatsApp numbers allowed to message the bot (comma-separated, e.g. +1234567890). Leave blank for self-notes only.", False),
 ]
 
 

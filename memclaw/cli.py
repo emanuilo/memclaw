@@ -398,10 +398,8 @@ def whatsapp(ctx):
     openai_client = AsyncOpenAI(api_key=config.openai_api_key)
     bot_ = WhatsAppBot(config, openai_client)
 
-    allowed = config.allowed_whatsapp_numbers_list
-    allow_desc = ", ".join(allowed) if allowed else "self-notes only"
     console.print(
-        f"[green]Starting Memclaw WhatsApp bot[/green]  (allowed: {allow_desc})"
+        "[green]Starting Memclaw WhatsApp bot[/green]  (self-notes only)"
     )
     if not config.whatsapp_session_db.exists():
         console.print(
