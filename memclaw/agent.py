@@ -89,8 +89,9 @@ class MemclawAgent:
     Uses the raw Anthropic Messages API with a hand-rolled agentic loop.
     """
 
-    def __init__(self, config: MemclawConfig):
+    def __init__(self, config: MemclawConfig, platform: str | None = None):
         self.config = config
+        self.platform = platform
         self.store = MemoryStore(config)
         self.index = MemoryIndex(config)
         self.search = HybridSearch(config, self.index)
@@ -103,6 +104,7 @@ class MemclawAgent:
             index=self.index,
             search=self.search,
             found_images=self._found_images,
+            platform=platform,
         )
 
     # ── Startup / sync ───────────────────────────────────────────────

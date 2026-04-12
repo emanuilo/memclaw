@@ -86,6 +86,28 @@ class MemclawConfig:
         return self.memory_subdir / f"{dt.isoformat()}.md"
 
     @property
+    def images_dir(self) -> Path:
+        d = self.memory_dir / "images"
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
+    def whatsapp_dir(self) -> Path:
+        d = self.memory_dir / "whatsapp"
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
+    def whatsapp_session_db(self) -> Path:
+        return self.whatsapp_dir / "session.db"
+
+    @property
+    def whatsapp_media_dir(self) -> Path:
+        d = self.whatsapp_dir / "media"
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
     def allowed_user_ids_list(self) -> list[int]:
         if not self.allowed_user_ids:
             return []
@@ -94,3 +116,4 @@ class MemclawConfig:
             for uid in self.allowed_user_ids.split(",")
             if uid.strip()
         ]
+

@@ -10,7 +10,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Anthropic API](https://img.shields.io/badge/Anthropic-API-blueviolet.svg)](https://docs.anthropic.com/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
-[![WhatsApp](https://img.shields.io/badge/WhatsApp-coming_soon-lightgrey.svg)]()
+[![WhatsApp](https://img.shields.io/badge/WhatsApp-Bot-25D366.svg)](https://github.com/krypton-byte/neonize)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 </div>
@@ -46,32 +46,54 @@ memclaw
 
 On first run, Memclaw will prompt you for your API keys and save them to `~/.memclaw/.env`. You can update them anytime with `memclaw configure`.
 
-## Telegram Bot
+## Messaging Platforms
 
 The main way to use Memclaw. Just talk to it naturally — no commands needed. Send text, photos, voice messages, or links. The agent figures out what to do: store it, search your memories, retrieve images, or just chat.
 
-> **WhatsApp support is coming soon.** Telegram is the only supported messaging platform for now.
+Both platforms share the same agent, memories, and search index — your data is unified regardless of how you interact.
 
-The bot shows a **typing indicator** while processing so you know it's working on your request.
+### Telegram Bot
 
-### Setup
+The Telegram bot shows a **typing indicator** while processing so you know it's working on your request.
+
+#### Setup
 
 1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
 2. Get your Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot)).
 3. Start the bot — on first run you'll be prompted for all keys:
 
 ```bash
-memclaw bot
+memclaw telegram
 ```
 
-To update keys later: `memclaw configure`.
+### WhatsApp Bot
+
+Uses your **personal WhatsApp account** via WhatsApp Web pairing — no Meta Business account, no webhooks, no public server. Powered by [`neonize`](https://github.com/krypton-byte/neonize) (whatsmeow under the hood).
+
+#### Prerequisite: libmagic
+
+neonize depends on `python-magic`, which needs the `libmagic` system library:
+
+- macOS: `brew install libmagic`
+- Debian/Ubuntu: `sudo apt install libmagic1`
+- Fedora/RHEL: `sudo dnf install file-libs`
+
+#### Setup
+
+```bash
+memclaw whatsapp
+```
+
+On first run a QR code is printed to your terminal. On your phone: **Settings → Linked Devices → Link a Device**, and scan it. The session persists under `~/.memclaw/whatsapp/` so you only pair once.
+
+Only messages you send to yourself (via WhatsApp's "Message Yourself" chat) are processed. DMs from other people and group messages are ignored.
 
 ### What it handles
 
 | Message type | What happens |
 |-------------|-------------|
 | **Text** | Agent decides: store as memory, search existing memories, or both. Links are extracted, fetched, and summarized automatically. |
-| **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. File ID saved for later retrieval. |
+| **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. Saved for later retrieval. |
 | **Voice** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
 
 ### Examples
@@ -93,7 +115,8 @@ Here's the sprint planning whiteboard you saved last week.
 
 ```mermaid
 flowchart LR
-    You -->|text / images / links| Agent[Memclaw Agent]
+    TG[Telegram] <-->|text / images / links<br>response + images| Agent[Memclaw Agent]
+    WA[WhatsApp] <-->|text / images / links<br>response + images| Agent
 
     subgraph sandbox ["~/.memclaw/"]
         Agent -->|save| Tools1["memory_save<br>image_save<br>file_write"]
@@ -102,8 +125,6 @@ flowchart LR
         DB --> Tools2["memory_search<br>image_search"]
         Tools2 -->|results| Agent
     end
-
-    Agent -->|response + images| You
 ```
 
 Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and uses the [Anthropic API](https://docs.anthropic.com/) directly with a lightweight agentic loop.
@@ -196,7 +217,7 @@ The image is described by an AI vision model and the description is stored and i
 
 ## Configuration
 
-On first run, `memclaw` or `memclaw bot` will launch an interactive setup wizard that saves your keys to `~/.memclaw/.env`. Run `memclaw configure` anytime to update them.
+On first run, `memclaw`, `memclaw telegram`, or `memclaw whatsapp` will launch an interactive setup wizard that saves your keys to `~/.memclaw/.env`. The wizard only prompts for keys relevant to the command you ran — run `memclaw configure` anytime to update all keys.
 
 You can also set keys via environment variables or a `.env` in the current directory — these take the usual precedence over the saved config.
 

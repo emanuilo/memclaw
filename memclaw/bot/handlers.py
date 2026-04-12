@@ -39,7 +39,7 @@ class MessageHandlers:
     def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
         self.config = config
         self.openai_client = openai_client
-        self.agent = MemclawAgent(config)
+        self.agent = MemclawAgent(config, platform="telegram")
         self.link_processor = LinkProcessor(openai_client)
 
     def _check_user(self, user_id: int) -> bool:
@@ -151,7 +151,7 @@ class MessageHandlers:
                         "\nThis summary has NOT been saved yet. Save it if the content is worth remembering."
                     )
 
-        prompt_text = f"User sent a photo. file_id={photo.file_id}"
+        prompt_text = f"User sent a photo. media_ref={photo.file_id}"
         if caption:
             prompt_text += f"\nCaption: {caption}"
         if link_info:

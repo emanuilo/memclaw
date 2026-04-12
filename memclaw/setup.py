@@ -12,12 +12,14 @@ console = Console()
 
 ENV_FILE = Path.home() / ".memclaw" / ".env"
 
-# Keys in the order they are prompted
-KEYS = [
-    ("OPENAI_API_KEY", "OpenAI API key", True),
-    ("ANTHROPIC_API_KEY", "Anthropic API key", True),
-    ("TELEGRAM_BOT_TOKEN", "Telegram bot token", False),
-    ("ALLOWED_USER_IDS", "Allowed Telegram user IDs (comma-separated)", False),
+# Keys in the order they are prompted.
+# `channel` is None for always-asked keys, or a channel name (e.g. "telegram")
+# for keys that are only relevant to that bot command.
+KEYS: list[tuple[str, str, bool, str | None]] = [
+    ("OPENAI_API_KEY", "OpenAI API key", True, None),
+    ("ANTHROPIC_API_KEY", "Anthropic API key", True, None),
+    ("TELEGRAM_BOT_TOKEN", "Telegram bot token", False, "telegram"),
+    ("ALLOWED_USER_IDS", "Allowed Telegram user IDs (comma-separated)", False, "telegram"),
 ]
 
 
@@ -48,11 +50,13 @@ def needs_setup() -> bool:
     return not ENV_FILE.exists()
 
 
-def run_setup(*, reconfigure: bool = False) -> None:
+def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
     """Run the interactive setup wizard.
 
     Args:
-        reconfigure: If True, show existing values and allow updating.
+        reconfigure: If True, show existing values and allow updating all keys.
+        channel: If set (e.g. "telegram"), only prompt for always-asked keys
+                 plus keys scoped to that channel. Ignored when reconfiguring.
     """
     existing = _load_existing()
 
@@ -77,15 +81,21 @@ def run_setup(*, reconfigure: bool = False) -> None:
             )
         )
 
-    values: dict[str, str] = {}
+    # Start from any previously-saved values so channel-scoped keys that we
+    # skip this round are preserved.
+    values: dict[str, str] = dict(existing)
 
-    for env_key, label, required in KEYS:
+    for env_key, label, required, key_channel in KEYS:
+        # Skip channel-scoped keys that don't match this invocation (unless
+        # the user is explicitly reconfiguring, in which case show all).
+        if not reconfigure and key_channel is not None and key_channel != channel:
+            continue
+
         current = existing.get(env_key, "")
         masked = _mask(current)
 
         if reconfigure and current:
-            default_display = masked
-            prompt_text = f"{label} [{default_display}]"
+            prompt_text = f"{label} [{masked}]"
         elif required:
             prompt_text = f"{label} (required)"
         else:

@@ -17,10 +17,13 @@ from .store import MemoryStore
 console = Console()
 
 
-def _ensure_setup(ctx):
-    """Run first-time setup if ~/.memclaw/.env doesn't exist, then reload config."""
+def _ensure_setup(ctx, channel: str | None = None):
+    """Run first-time setup if ~/.memclaw/.env doesn't exist, then reload config.
+
+    `channel` scopes which optional keys are prompted for (e.g. "telegram").
+    """
     if needs_setup():
-        run_setup()
+        run_setup(channel=channel)
         # Reload .env so newly saved keys are picked up
         from dotenv import load_dotenv
         load_dotenv(Path.home() / ".memclaw" / ".env", override=True)
@@ -267,7 +270,7 @@ def configure(ctx):
 
 @cli.command()
 @click.pass_context
-def bot(ctx):
+def telegram(ctx):
     """Start the Memclaw Telegram bot."""
     import sys
 
@@ -277,7 +280,7 @@ def bot(ctx):
 
     from .bot.handlers import MessageHandlers
 
-    _ensure_setup(ctx)
+    _ensure_setup(ctx, channel="telegram")
     config: MemclawConfig = ctx.obj["config"]
 
     if not config.telegram_bot_token:
@@ -349,3 +352,67 @@ def bot(ctx):
         f"(allowed users: {config.allowed_user_ids_list or 'all'})"
     )
     app.run_polling(allowed_updates=["message"])
+
+
+# ------------------------------------------------------------------
+# WhatsApp bot (personal account via WhatsApp Web — neonize)
+# ------------------------------------------------------------------
+
+@cli.command()
+@click.pass_context
+def whatsapp(ctx):
+    """Start the Memclaw WhatsApp bot using your personal account.
+
+    On first run, a QR code is printed to the terminal — open WhatsApp on
+    your phone → Settings → Linked Devices → Link a Device, and scan it.
+    Session credentials are stored under ~/.memclaw/whatsapp/.
+    """
+    import sys
+
+    from loguru import logger
+    from openai import AsyncOpenAI
+
+    from .bot.whatsapp_handlers import WhatsAppBot
+
+    _ensure_setup(ctx, channel="whatsapp")
+    config: MemclawConfig = ctx.obj["config"]
+
+    if not config.openai_api_key:
+        console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    if not config.anthropic_api_key:
+        console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
+        console.print("Run [bold]memclaw configure[/bold] to set it.")
+        raise SystemExit(1)
+
+    # Logging
+    logger.remove()
+    logger.add(sys.stderr, level="INFO",
+               format="<green>{time:HH:mm:ss}</green> | <level>{level:<8}</level> | <level>{message}</level>")
+    logger.add(
+        str(config.memory_dir / "whatsapp.log"),
+        rotation="10 MB",
+        retention="7 days",
+        level="DEBUG",
+    )
+
+    openai_client = AsyncOpenAI(api_key=config.openai_api_key)
+    bot_ = WhatsAppBot(config, openai_client)
+
+    console.print(
+        "[green]Starting Memclaw WhatsApp bot[/green]  (self-notes only)"
+    )
+    if not config.whatsapp_session_db.exists():
+        console.print(
+            "[cyan]First run:[/cyan] a QR code will appear below. "
+            "Open WhatsApp → Settings → Linked Devices → Link a Device, and scan it."
+        )
+
+    try:
+        asyncio.run(bot_.start())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        bot_.close()
