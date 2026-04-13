@@ -114,7 +114,7 @@ class TestTypingIndicator:
 
         await handlers._send_with_typing(update, context, "Hi")
 
-        update.message.reply_text.assert_called_once_with("Hello!")
+        update.message.reply_text.assert_called_once_with("Hello!", parse_mode="Markdown")
 
 
 class TestAgentsFile:
