@@ -139,22 +139,6 @@ The Slack bot connects via **Socket Mode** (WebSocket) — no public URL or webh
 memclaw slack
 ```
 
-#### Setup (from scratch)
-
-If you'd rather click through the UI instead of using the manifest:
-
-1. Create a [Slack App](https://api.slack.com/apps) and enable **Socket Mode**.
-2. Under **OAuth & Permissions**, add these bot token scopes: `app_mentions:read`, `chat:write`, `files:read`, `files:write`, `im:history`, `im:read`, `im:write`, `channels:history`.
-3. Under **Event Subscriptions**, subscribe to: `message.im`, `app_mention`.
-4. Under **App Home** → **Messages Tab**, enable the tab and check **"Allow users to send Slash commands and messages from the messages tab"** (otherwise DMs show "Sending messages to this app has been turned off").
-5. Install the app to your workspace and copy the **Bot Token** (`xoxb-...`).
-6. Generate an **App-Level Token** (`xapp-...`) with `connections:write` scope.
-7. Start the bot:
-
-```bash
-memclaw slack
-```
-
 You can DM the bot directly or mention it in channels (`@Memclaw save this...`). Optionally restrict it to specific channels with `SLACK_ALLOWED_CHANNELS`.
 
 To update keys later: `memclaw configure`.
