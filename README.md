@@ -93,7 +93,55 @@ Only messages you send to yourself (via WhatsApp's "Message Yourself" chat) are 
 
 The Slack bot connects via **Socket Mode** (WebSocket) — no public URL or webhook server needed.
 
-#### Setup
+#### Setup (from manifest — recommended)
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest**, pick your workspace, and paste:
+
+    ```yaml
+    display_information:
+      name: Memclaw
+      description: Your personal memory vault, powered by AI.
+      background_color: "#1a1a1a"
+    features:
+      bot_user:
+        display_name: Memclaw
+        always_online: true
+      app_home:
+        home_tab_enabled: false
+        messages_tab_enabled: true
+        messages_tab_read_only_enabled: false
+    oauth_config:
+      scopes:
+        bot:
+          - app_mentions:read
+          - channels:history
+          - chat:write
+          - files:read
+          - files:write
+          - im:history
+          - im:read
+          - im:write
+    settings:
+      event_subscriptions:
+        bot_events:
+          - app_mention
+          - message.im
+      interactivity:
+        is_enabled: false
+      socket_mode_enabled: true
+    ```
+
+2. **Install to Workspace** and copy the **Bot Token** (`xoxb-...`).
+3. Under **Basic Information → App-Level Tokens**, generate a token with `connections:write` scope and copy it (`xapp-...`).
+4. Start the bot:
+
+```bash
+memclaw slack
+```
+
+#### Setup (from scratch)
+
+If you'd rather click through the UI instead of using the manifest:
 
 1. Create a [Slack App](https://api.slack.com/apps) and enable **Socket Mode**.
 2. Under **OAuth & Permissions**, add these bot token scopes: `app_mentions:read`, `chat:write`, `files:read`, `files:write`, `im:history`, `im:read`, `im:write`, `channels:history`.
