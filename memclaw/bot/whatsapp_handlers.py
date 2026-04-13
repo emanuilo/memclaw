@@ -19,9 +19,11 @@ from openai import AsyncOpenAI
 
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
+from neonize.utils.jid import build_jid
 
 from ..agent import MemclawAgent
 from ..config import MemclawConfig
+from ..reminders import ReminderScheduler
 from .link_processor import LinkProcessor
 
 
@@ -31,11 +33,22 @@ class WhatsAppBot:
     def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
         self.config = config
         self.openai_client = openai_client
-        self.agent = MemclawAgent(config, platform="whatsapp")
+        self.scheduler = ReminderScheduler(config)
+        self.agent = MemclawAgent(config, platform="whatsapp", scheduler=self.scheduler)
         self.link_processor = LinkProcessor(openai_client)
 
         self.client = NewAClient(str(config.whatsapp_session_db))
         self._register_handlers()
+        self.scheduler.register_delivery("whatsapp", self._deliver_reminder)
+
+    async def _deliver_reminder(self, chat_id: str, text: str):
+        """chat_id is stored as 'user@server' (e.g. '12345@s.whatsapp.net')."""
+        if "@" in chat_id:
+            user, server = chat_id.split("@", 1)
+        else:
+            user, server = chat_id, "s.whatsapp.net"
+        jid = build_jid(user, server=server)
+        await self.client.send_message(jid, text)
 
     # ------------------------------------------------------------------
     # Event registration
@@ -79,6 +92,11 @@ class WhatsAppBot:
     # Message routing
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _chat_id(ev: MessageEv) -> str:
+        chat = ev.Info.MessageSource.Chat
+        return f"{chat.User}@{chat.Server}"
+
     async def _route_message(self, cli: NewAClient, ev: MessageEv):
         if not self._check_sender(ev):
             return
@@ -116,7 +134,7 @@ class WhatsAppBot:
                 )
 
         prompt = "\n".join(prompt_parts)
-        response_text, found_images = await self.agent.handle(prompt)
+        response_text, found_images = await self.agent.handle(prompt, chat_id=self._chat_id(ev))
         await self._send_response(cli, ev, response_text, found_images)
 
     # ------------------------------------------------------------------
@@ -161,7 +179,10 @@ class WhatsAppBot:
 
         media_type = mime_type if mime_type.startswith("image/") else "image/jpeg"
         response_text, found_images = await self.agent.handle(
-            prompt_text, image_b64=base64_image, image_media_type=media_type,
+            prompt_text,
+            image_b64=base64_image,
+            image_media_type=media_type,
+            chat_id=self._chat_id(ev),
         )
         await self._send_response(cli, ev, response_text, found_images)
 
@@ -205,7 +226,7 @@ class WhatsAppBot:
             "\nThis transcription has NOT been saved yet. Save it if the content is worth remembering."
             f"{link_info}"
         )
-        response_text, found_images = await self.agent.handle(prompt)
+        response_text, found_images = await self.agent.handle(prompt, chat_id=self._chat_id(ev))
         await self._send_response(cli, ev, response_text, found_images)
 
     # ------------------------------------------------------------------
@@ -251,10 +272,12 @@ class WhatsAppBot:
         """Connect to WhatsApp. On first run, a QR code is printed to stdout."""
         await self.agent.start()
         await self.agent.start_background_sync(interval=60)
+        self.scheduler.start()
         await self.client.connect()
         await self.client.idle()
 
     def close(self):
+        self.scheduler.close()
         self.agent.close()
 
 
