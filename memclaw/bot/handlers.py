@@ -64,7 +64,13 @@ class MessageHandlers:
                 logger.error(f"Failed to send image {img.get('file_id')}: {e}")
 
         if response_text:
-            await update.message.reply_text(response_text[:4096])
+            try:
+                await update.message.reply_text(response_text[:4096], parse_mode="Markdown")
+            except Exception as e:
+                # Fall back to plain text if the agent emitted something Telegram's
+                # legacy Markdown parser rejects (unbalanced * or _, etc.).
+                logger.warning(f"Markdown parse failed, sending plain: {e}")
+                await update.message.reply_text(response_text[:4096])
 
     async def _send_with_typing(
         self,

@@ -25,6 +25,18 @@ Today's date: {today}
 
 {agent_instructions}
 
+=== REPLY FORMATTING ===
+Replies are delivered to messaging apps with limited markdown support. Use \
+ONLY this minimal syntax — anything else leaks as literal characters:
+- Bold: `*bold*` (single asterisk). NEVER use `**double asterisks**`.
+- Italic: `_italic_`.
+- Bullet lists: plain `- item` on its own line.
+- Paragraphs: separate with a blank line.
+- Headings (`#`, `##`, ...) are NOT supported — use a bold line on its own \
+(e.g. `*Section name*`) followed by a blank line instead.
+- No backticks or fenced code blocks.
+- No `[label](url)` links — write the bare URL.
+
 === MEMORY CONTEXT ===
 {context}
 
