@@ -22,6 +22,10 @@ Memclaw is a lightweight, local-first personal memory assistant. It stores your 
 
 Think of it as your second brain — one that actually remembers.
 
+<p align="center">
+  <img src="docs/assets/memclaw-demo.gif" alt="Memclaw demo" width="320">
+</p>
+
 ## Why Memclaw?
 
 [OpenClaw](https://github.com/openclaw/openclaw) is great — but it connects to dozens of tools, reads your filesystem, runs shell commands, and does a hundred things you didn't ask for. That makes it slow, expensive, and a security surface you have to think about every time you use it.
