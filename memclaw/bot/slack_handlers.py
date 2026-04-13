@@ -20,6 +20,7 @@ from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from ..agent import MemclawAgent
 from ..config import MemclawConfig
+from ..reminders import ReminderScheduler
 from .link_processor import LinkProcessor
 
 # Image MIME types we handle
@@ -32,11 +33,16 @@ class SlackHandlers:
     def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
         self.config = config
         self.openai_client = openai_client
-        self.agent = MemclawAgent(config, platform="slack")
+        self.scheduler = ReminderScheduler(config)
+        self.agent = MemclawAgent(config, platform="slack", scheduler=self.scheduler)
         self.link_processor = LinkProcessor(openai_client)
 
         self.app = AsyncApp(token=config.slack_bot_token)
         self._register_handlers()
+        self.scheduler.register_delivery("slack", self._deliver_reminder)
+
+    async def _deliver_reminder(self, chat_id: str, text: str):
+        await self.app.client.chat_postMessage(channel=chat_id, text=text)
 
     def _register_handlers(self):
         """Register Slack event handlers on the bolt app."""
@@ -116,7 +122,7 @@ class SlackHandlers:
                 )
 
         prompt = "\n".join(prompt_parts)
-        response_text, found_images = await self.agent.handle(prompt)
+        response_text, found_images = await self.agent.handle(prompt, chat_id=channel)
         await self._send_response(channel, thread_ts, response_text, found_images, say)
 
     # ------------------------------------------------------------------
@@ -164,7 +170,10 @@ class SlackHandlers:
 
         media_type = mime if mime.startswith("image/") else "image/jpeg"
         response_text, found_images = await self.agent.handle(
-            prompt_text, image_b64=base64_image, image_media_type=media_type,
+            prompt_text,
+            image_b64=base64_image,
+            image_media_type=media_type,
+            chat_id=channel,
         )
         await self._send_response(channel, thread_ts, response_text, found_images, say)
 
@@ -208,7 +217,7 @@ class SlackHandlers:
             "\nThis transcription has NOT been saved yet. Save it if the content is worth remembering."
             f"{link_info}"
         )
-        response_text, found_images = await self.agent.handle(prompt)
+        response_text, found_images = await self.agent.handle(prompt, chat_id=channel)
         await self._send_response(channel, thread_ts, response_text, found_images, say)
 
     # ------------------------------------------------------------------
@@ -289,10 +298,12 @@ class SlackHandlers:
         """Start the Slack bot via Socket Mode."""
         await self.agent.start()
         await self.agent.start_background_sync(interval=60)
+        self.scheduler.start()
         handler = AsyncSocketModeHandler(self.app, self.config.slack_app_token)
         await handler.start_async()
 
     def close(self):
+        self.scheduler.close()
         self.agent.close()
 
 

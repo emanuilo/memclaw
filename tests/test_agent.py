@@ -484,6 +484,7 @@ class TestSandboxedFileTools:
             "memory_save", "memory_search",
             "image_save", "image_search",
             "update_instructions", "file_write", "file_read",
+            "reminder_create", "reminder_list", "reminder_cancel",
         }
         assert set(names) == expected
         assert len(names) == len(expected)

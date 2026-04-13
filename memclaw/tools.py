@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from loguru import logger
 
 from .config import MemclawConfig
 from .index import MemoryIndex
+from .reminders import ReminderScheduler
 from .search import HybridSearch, SearchResult
 from .store import MemoryStore
 
@@ -137,6 +139,66 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["file_path"],
         },
     },
+    {
+        "name": "reminder_create",
+        "description": (
+            "Schedule a reminder to be sent back to the user at a specific "
+            "local time, or on a recurring interval. Use when the user says "
+            "things like 'remind me tomorrow at 9am to call Alex' (one-shot) "
+            "or 'remind me every 5 hours to drink water' (recurring). "
+            "For recurring-only reminders without a user-specified start, "
+            "you may omit fire_at and the first fire will be interval_seconds "
+            "from now. Always convert the user's natural-language time to a "
+            "local ISO 8601 datetime using the current local time in the system "
+            "prompt as reference. Do NOT use this tool to store notes — use "
+            "memory_save for that."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "What to remind the user about (short, in their own words)",
+                },
+                "fire_at": {
+                    "type": "string",
+                    "description": (
+                        "Local ISO 8601 datetime for the first (or only) fire, "
+                        "e.g. '2026-04-13T21:30:00'. Omit to start a recurring "
+                        "reminder interval_seconds from now."
+                    ),
+                },
+                "interval_seconds": {
+                    "type": "integer",
+                    "description": (
+                        "If set, the reminder recurs every N seconds after "
+                        "fire_at. Convert the user's unit to seconds (e.g. "
+                        "'every 5 hours' -> 18000)."
+                    ),
+                },
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "reminder_list",
+        "description": "List the user's pending reminders.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "reminder_cancel",
+        "description": (
+            "Cancel a pending reminder by its id. Call reminder_list first if "
+            "the user refers to a reminder by description."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Reminder id"},
+            },
+            "required": ["id"],
+        },
+    },
 ]
 
 
@@ -184,6 +246,7 @@ class ToolExecutor:
         search: HybridSearch,
         found_images: list[dict],
         platform: str | None = None,
+        scheduler: ReminderScheduler | None = None,
     ):
         self.config = config
         self.store = store
@@ -191,6 +254,8 @@ class ToolExecutor:
         self.search = search
         self.found_images = found_images
         self.platform = platform
+        self.scheduler = scheduler
+        self.chat_id: str | None = None
 
         self._dispatch: dict[str, Any] = {
             "memory_save": self._memory_save,
@@ -200,6 +265,9 @@ class ToolExecutor:
             "update_instructions": self._update_instructions,
             "file_write": self._file_write,
             "file_read": self._file_read,
+            "reminder_create": self._reminder_create,
+            "reminder_list": self._reminder_list,
+            "reminder_cancel": self._reminder_cancel,
         }
 
     async def execute(self, name: str, tool_input: dict[str, Any]) -> str:
@@ -315,3 +383,80 @@ class ToolExecutor:
         text = resolved.read_text()
         logger.info("  → file_read: read {path} ({n} chars)", path=resolved, n=len(text))
         return text
+
+    # ── Reminders ────────────────────────────────────────────────────
+
+    def _require_reminder_ctx(self) -> str | None:
+        if self.scheduler is None:
+            return "Reminders are only available when running in a messaging bot (telegram/whatsapp/slack)."
+        if not self.platform or not self.chat_id:
+            return "Reminders require a messaging context (missing platform/chat_id)."
+        return None
+
+    async def _reminder_create(self, args: dict) -> str:
+        err = self._require_reminder_ctx()
+        if err:
+            return err
+
+        text: str = args["text"].strip()
+        interval: int | None = args.get("interval_seconds")
+        fire_at_str: str | None = args.get("fire_at")
+
+        if fire_at_str:
+            try:
+                fire_at = datetime.fromisoformat(fire_at_str)
+            except ValueError:
+                return f"Invalid fire_at: {fire_at_str!r}. Use local ISO 8601."
+            if fire_at.tzinfo is not None:
+                fire_at = fire_at.astimezone().replace(tzinfo=None)
+        elif interval:
+            from datetime import timedelta
+            fire_at = datetime.now() + timedelta(seconds=interval)
+        else:
+            return "Provide either fire_at or interval_seconds (or both)."
+
+        if interval is not None and interval < 60:
+            return "interval_seconds must be at least 60."
+
+        rid = self.scheduler.create(  # type: ignore[union-attr]
+            platform=self.platform,  # type: ignore[arg-type]
+            chat_id=self.chat_id,  # type: ignore[arg-type]
+            text=text,
+            fire_at=fire_at,
+            interval_seconds=interval,
+        )
+        logger.info(
+            "  → reminder_create: id={id} fire_at={f} every={i}s",
+            id=rid, f=fire_at.isoformat(), i=interval,
+        )
+        if interval:
+            return (
+                f"Reminder #{rid} scheduled for {fire_at.isoformat(timespec='minutes')} "
+                f"and every {interval} seconds after."
+            )
+        return f"Reminder #{rid} scheduled for {fire_at.isoformat(timespec='minutes')}."
+
+    async def _reminder_list(self, args: dict) -> str:
+        err = self._require_reminder_ctx()
+        if err:
+            return err
+        items = self.scheduler.list_for(self.platform, self.chat_id)  # type: ignore[union-attr,arg-type]
+        if not items:
+            return "No pending reminders."
+        lines = []
+        for it in items:
+            line = f"#{it['id']} at {it['fire_at']}: {it['text']}"
+            if it["interval_seconds"]:
+                line += f" (every {it['interval_seconds']}s)"
+            lines.append(line)
+        return "\n".join(lines)
+
+    async def _reminder_cancel(self, args: dict) -> str:
+        err = self._require_reminder_ctx()
+        if err:
+            return err
+        rid = int(args["id"])
+        ok = self.scheduler.cancel(  # type: ignore[union-attr]
+            rid, platform=self.platform, chat_id=self.chat_id,  # type: ignore[arg-type]
+        )
+        return f"Reminder #{rid} cancelled." if ok else f"No pending reminder #{rid}."

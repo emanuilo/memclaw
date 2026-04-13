@@ -313,6 +313,9 @@ def telegram(ctx):
         await handlers.agent.start()
         await handlers.agent.start_background_sync(interval=60)
 
+        handlers.attach_bot(application.bot)
+        handlers.scheduler.start()
+
         logger.info("Memclaw bot initialized")
 
     async def post_shutdown(application: Application) -> None:
