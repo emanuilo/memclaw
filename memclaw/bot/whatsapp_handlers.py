@@ -62,11 +62,18 @@ class WhatsAppBot:
     # ------------------------------------------------------------------
 
     def _check_sender(self, ev: MessageEv) -> bool:
-        """Only process self-notes (your own messages to yourself)."""
+        """Only process self-notes (your own messages to yourself).
+
+        IsFromMe alone is not enough — it also matches outgoing DMs to other
+        people. The chat JID must equal the sender JID, which is only true in
+        the self-chat.
+        """
         source = ev.Info.MessageSource
         if source.IsGroup:
             return False
-        return source.IsFromMe
+        if not source.IsFromMe:
+            return False
+        return source.Chat.User == source.Sender.User
 
     # ------------------------------------------------------------------
     # Message routing
