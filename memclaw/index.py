@@ -107,7 +107,7 @@ class MemoryIndex:
             )
         """)
 
-        # Platform-agnostic image registry (Telegram, WhatsApp, etc.)
+        # Platform-agnostic image registry (Telegram, WhatsApp, Slack, etc.)
         self.db.execute("""
             CREATE TABLE IF NOT EXISTS platform_images (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -377,7 +377,7 @@ class MemoryIndex:
         _skip_embed: bool = False,
         _embedding: np.ndarray | None = None,
     ):
-        """Store an image reference for any platform (telegram, whatsapp, etc.)."""
+        """Store an image reference for any platform (telegram, whatsapp, slack, etc.)."""
         embedding = _embedding if _skip_embed else await self.get_embedding(description)
         self.db.execute(
             "INSERT INTO platform_images (platform, media_ref, description, caption, embedding) "

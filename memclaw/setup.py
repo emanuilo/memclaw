@@ -15,11 +15,17 @@ ENV_FILE = Path.home() / ".memclaw" / ".env"
 # Keys in the order they are prompted.
 # `channel` is None for always-asked keys, or a channel name (e.g. "telegram")
 # for keys that are only relevant to that bot command.
+# `required` for a channel-scoped key means "required when invoked via that
+# channel" (e.g. SLACK_BOT_TOKEN is required during `memclaw slack`, but not
+# enforced during `memclaw configure` which shows everything).
 KEYS: list[tuple[str, str, bool, str | None]] = [
     ("OPENAI_API_KEY", "OpenAI API key", True, None),
     ("ANTHROPIC_API_KEY", "Anthropic API key", True, None),
-    ("TELEGRAM_BOT_TOKEN", "Telegram bot token", False, "telegram"),
+    ("TELEGRAM_BOT_TOKEN", "Telegram bot token", True, "telegram"),
     ("ALLOWED_USER_IDS", "Allowed Telegram user IDs (comma-separated)", False, "telegram"),
+    ("SLACK_BOT_TOKEN", "Slack bot token (xoxb-...)", True, "slack"),
+    ("SLACK_APP_TOKEN", "Slack app-level token for Socket Mode (xapp-...)", True, "slack"),
+    ("SLACK_ALLOWED_CHANNELS", "Allowed Slack channel IDs (comma-separated)", False, "slack"),
 ]
 
 
@@ -85,6 +91,13 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
     # skip this round are preserved.
     values: dict[str, str] = dict(existing)
 
+    # A channel-scoped required key is only enforced when invoked via that
+    # channel; in reconfigure mode nothing is enforced (user is just editing).
+    def _is_required(required: bool, key_channel: str | None) -> bool:
+        if reconfigure or not required:
+            return False
+        return key_channel is None or key_channel == channel
+
     for env_key, label, required, key_channel in KEYS:
         # Skip channel-scoped keys that don't match this invocation (unless
         # the user is explicitly reconfiguring, in which case show all).
@@ -93,10 +106,11 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
 
         current = existing.get(env_key, "")
         masked = _mask(current)
+        is_required = _is_required(required, key_channel)
 
         if reconfigure and current:
             prompt_text = f"{label} [{masked}]"
-        elif required:
+        elif is_required:
             prompt_text = f"{label} (required)"
         else:
             prompt_text = f"{label} (optional)"
@@ -108,13 +122,11 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
         elif current:
             values[env_key] = current
 
-    # Validate required keys
-    if not values.get("OPENAI_API_KEY"):
-        console.print("[red]Error:[/red] OpenAI API key is required.")
-        raise SystemExit(1)
-    if not values.get("ANTHROPIC_API_KEY"):
-        console.print("[red]Error:[/red] Anthropic API key is required.")
-        raise SystemExit(1)
+    # Validate required keys (always-required + channel-scoped required).
+    for env_key, label, required, key_channel in KEYS:
+        if _is_required(required, key_channel) and not values.get(env_key):
+            console.print(f"[red]Error:[/red] {label} is required.")
+            raise SystemExit(1)
 
     # Write to ~/.memclaw/.env
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)

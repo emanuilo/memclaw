@@ -11,6 +11,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 [![Anthropic API](https://img.shields.io/badge/Anthropic-API-blueviolet.svg)](https://docs.anthropic.com/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp-Bot-25D366.svg)](https://github.com/krypton-byte/neonize)
+[![Slack Bot](https://img.shields.io/badge/Slack-Bot-4A154B.svg)](https://api.slack.com/bolt)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 </div>
@@ -50,7 +51,7 @@ On first run, Memclaw will prompt you for your API keys and save them to `~/.mem
 
 The main way to use Memclaw. Just talk to it naturally — no commands needed. Send text, photos, voice messages, or links. The agent figures out what to do: store it, search your memories, retrieve images, or just chat.
 
-Both platforms share the same agent, memories, and search index — your data is unified regardless of how you interact.
+All platforms share the same agent, memories, and search index — your data is unified regardless of how you interact.
 
 ### Telegram Bot
 
@@ -88,13 +89,83 @@ On first run a QR code is printed to your terminal. On your phone: **Settings �
 
 Only messages you send to yourself (via WhatsApp's "Message Yourself" chat) are processed. DMs from other people and group messages are ignored.
 
+### Slack Bot
+
+The Slack bot connects via **Socket Mode** (WebSocket) — no public URL or webhook server needed.
+
+#### Setup (from manifest — recommended)
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest**, pick your workspace, and paste:
+
+    ```yaml
+    display_information:
+      name: Memclaw
+      description: Your personal memory vault, powered by AI.
+      background_color: "#1a1a1a"
+    features:
+      bot_user:
+        display_name: Memclaw
+        always_online: true
+      app_home:
+        home_tab_enabled: false
+        messages_tab_enabled: true
+        messages_tab_read_only_enabled: false
+    oauth_config:
+      scopes:
+        bot:
+          - app_mentions:read
+          - channels:history
+          - chat:write
+          - files:read
+          - files:write
+          - im:history
+          - im:read
+          - im:write
+    settings:
+      event_subscriptions:
+        bot_events:
+          - app_mention
+          - message.im
+      interactivity:
+        is_enabled: false
+      socket_mode_enabled: true
+    ```
+
+2. **Install to Workspace** and copy the **Bot Token** (`xoxb-...`).
+3. Under **Basic Information → App-Level Tokens**, generate a token with `connections:write` scope and copy it (`xapp-...`).
+4. Start the bot:
+
+```bash
+memclaw slack
+```
+
+#### Setup (from scratch)
+
+If you'd rather click through the UI instead of using the manifest:
+
+1. Create a [Slack App](https://api.slack.com/apps) and enable **Socket Mode**.
+2. Under **OAuth & Permissions**, add these bot token scopes: `app_mentions:read`, `chat:write`, `files:read`, `files:write`, `im:history`, `im:read`, `im:write`, `channels:history`.
+3. Under **Event Subscriptions**, subscribe to: `message.im`, `app_mention`.
+4. Under **App Home** → **Messages Tab**, enable the tab and check **"Allow users to send Slash commands and messages from the messages tab"** (otherwise DMs show "Sending messages to this app has been turned off").
+5. Install the app to your workspace and copy the **Bot Token** (`xoxb-...`).
+6. Generate an **App-Level Token** (`xapp-...`) with `connections:write` scope.
+7. Start the bot:
+
+```bash
+memclaw slack
+```
+
+You can DM the bot directly or mention it in channels (`@Memclaw save this...`). Optionally restrict it to specific channels with `SLACK_ALLOWED_CHANNELS`.
+
+To update keys later: `memclaw configure`.
+
 ### What it handles
 
 | Message type | What happens |
 |-------------|-------------|
 | **Text** | Agent decides: store as memory, search existing memories, or both. Links are extracted, fetched, and summarized automatically. |
 | **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. Saved for later retrieval. |
-| **Voice** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
+| **Voice / Audio** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
 
 ### Examples
 
@@ -117,6 +188,7 @@ Here's the sprint planning whiteboard you saved last week.
 flowchart LR
     TG[Telegram] <-->|text / images / links<br>response + images| Agent[Memclaw Agent]
     WA[WhatsApp] <-->|text / images / links<br>response + images| Agent
+    SL[Slack] <-->|text / images / links<br>response + images| Agent
 
     subgraph sandbox ["~/.memclaw/"]
         Agent -->|save| Tools1["memory_save<br>image_save<br>file_write"]
@@ -233,6 +305,9 @@ memclaw --memory-dir ~/my-vault   # override storage location
 | `ANTHROPIC_API_KEY` | Yes | Powers the Claude agent |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
 | `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
+| `SLACK_BOT_TOKEN` | For Slack bot | Slack bot token (`xoxb-...`) |
+| `SLACK_APP_TOKEN` | For Slack bot | Slack app-level token for Socket Mode (`xapp-...`) |
+| `SLACK_ALLOWED_CHANNELS` | For Slack bot | Comma-separated Slack channel IDs (optional) |
 
 ### Directory Structure
 
