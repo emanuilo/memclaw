@@ -44,6 +44,7 @@ class MemclawConfig:
     slack_bot_token: str = ""
     slack_app_token: str = ""
     slack_allowed_channels: str = ""
+    slack_allowed_users: str = ""
 
     def __post_init__(self):
         if not self.openai_api_key:
@@ -60,6 +61,8 @@ class MemclawConfig:
             self.slack_app_token = os.environ.get("SLACK_APP_TOKEN", "")
         if not self.slack_allowed_channels:
             self.slack_allowed_channels = os.environ.get("SLACK_ALLOWED_CHANNELS", "")
+        if not self.slack_allowed_users:
+            self.slack_allowed_users = os.environ.get("SLACK_ALLOWED_USERS", "")
         self.memory_dir = Path(self.memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_subdir.mkdir(exist_ok=True)
@@ -145,3 +148,9 @@ class MemclawConfig:
         if not self.slack_allowed_channels:
             return []
         return [c.strip() for c in self.slack_allowed_channels.split(",") if c.strip()]
+
+    @property
+    def slack_allowed_users_list(self) -> list[str]:
+        if not self.slack_allowed_users:
+            return []
+        return [u.strip() for u in self.slack_allowed_users.split(",") if u.strip()]

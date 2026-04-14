@@ -26,6 +26,7 @@ KEYS: list[tuple[str, str, bool, str | None]] = [
     ("SLACK_BOT_TOKEN", "Slack bot token (xoxb-...)", True, "slack"),
     ("SLACK_APP_TOKEN", "Slack app-level token for Socket Mode (xapp-...)", True, "slack"),
     ("SLACK_ALLOWED_CHANNELS", "Allowed Slack channel IDs (comma-separated)", False, "slack"),
+    ("SLACK_ALLOWED_USERS", "Allowed Slack user IDs (comma-separated)", False, "slack"),
 ]
 
 
