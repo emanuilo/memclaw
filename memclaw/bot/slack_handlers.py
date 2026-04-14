@@ -59,6 +59,12 @@ class SlackHandlers:
             return True  # no allowlist = allow all
         return channel in allowed
 
+    def _check_user(self, user: str) -> bool:
+        allowed = self.config.slack_allowed_users_list
+        if not allowed:
+            return True  # no allowlist = allow all
+        return user in allowed
+
     # ------------------------------------------------------------------
     # Event routing
     # ------------------------------------------------------------------
@@ -73,6 +79,9 @@ class SlackHandlers:
             return
 
         user = event.get("user", "unknown")
+        if not self._check_user(user):
+            logger.debug("Ignoring Slack event from unauthorized user {u}", u=user)
+            return
         thread_ts = event.get("thread_ts") or event.get("ts", "")
         text = event.get("text", "")
         files = event.get("files", [])

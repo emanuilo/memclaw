@@ -143,7 +143,7 @@ The Slack bot connects via **Socket Mode** (WebSocket) — no public URL or webh
 memclaw slack
 ```
 
-You can DM the bot directly or mention it in channels (`@Memclaw save this...`). Optionally restrict it to specific channels with `SLACK_ALLOWED_CHANNELS`.
+You can DM the bot directly or mention it in channels (`@Memclaw save this...`). Optionally restrict it to specific channels with `SLACK_ALLOWED_CHANNELS`, or to specific users with `SLACK_ALLOWED_USERS` (find your Slack ID via **Profile → ••• → Copy member ID**).
 
 To update keys later: `memclaw configure`.
 
@@ -296,6 +296,7 @@ memclaw --memory-dir ~/my-vault   # override storage location
 | `SLACK_BOT_TOKEN` | For Slack bot | Slack bot token (`xoxb-...`) |
 | `SLACK_APP_TOKEN` | For Slack bot | Slack app-level token for Socket Mode (`xapp-...`) |
 | `SLACK_ALLOWED_CHANNELS` | For Slack bot | Comma-separated Slack channel IDs (optional) |
+| `SLACK_ALLOWED_USERS` | For Slack bot | Comma-separated Slack user IDs (optional — restricts who can DM/mention the bot) |
 
 ### Directory Structure
 
