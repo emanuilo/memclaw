@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from claude_agent_sdk import create_sdk_mcp_server, tool
 from loguru import logger
 
 from .config import MemclawConfig
@@ -460,3 +461,34 @@ class ToolExecutor:
             rid, platform=self.platform, chat_id=self.chat_id,  # type: ignore[arg-type]
         )
         return f"Reminder #{rid} cancelled." if ok else f"No pending reminder #{rid}."
+
+
+# ── SDK MCP server wrapping ──────────────────────────────────────────
+
+MCP_SERVER_NAME = "memclaw"
+
+
+def build_mcp_server(executor: ToolExecutor):
+    """Wrap every tool in TOOL_DEFINITIONS as an @tool-decorated async function
+    bound to *executor*, and bundle them into an in-process SDK MCP server.
+
+    Claude sees these as `mcp__memclaw__<name>`.
+    """
+
+    def _make_wrapper(tool_name: str):
+        async def wrapper(args: dict[str, Any]) -> dict[str, Any]:
+            result_text = await executor.execute(tool_name, args)
+            return {"content": [{"type": "text", "text": result_text}]}
+        wrapper.__name__ = f"tool_{tool_name}"
+        return wrapper
+
+    sdk_tools = []
+    for defn in TOOL_DEFINITIONS:
+        wrapped = tool(
+            name=defn["name"],
+            description=defn["description"],
+            input_schema=defn["input_schema"],
+        )(_make_wrapper(defn["name"]))
+        sdk_tools.append(wrapped)
+
+    return create_sdk_mcp_server(name=MCP_SERVER_NAME, version="1.0.0", tools=sdk_tools)

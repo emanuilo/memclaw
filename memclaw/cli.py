@@ -50,8 +50,9 @@ def cli(ctx, memory_dir):
     if ctx.invoked_subcommand is None:
         _ensure_setup(ctx)
         config = ctx.obj["config"]
-        if not config.anthropic_api_key:
-            console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
+        if not config.claude_code_oauth_token:
+            console.print("[red]Error:[/red] CLAUDE_CODE_OAUTH_TOKEN is not set.")
+            console.print("Generate one by running [bold]claude setup-token[/bold].")
             console.print("Run [bold]memclaw configure[/bold] to set it.")
             raise SystemExit(1)
         if not config.openai_api_key:
@@ -184,8 +185,9 @@ def consolidate(ctx, since_date):
 
     config: MemclawConfig = ctx.obj["config"]
 
-    if not config.anthropic_api_key:
-        console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
+    if not config.claude_code_oauth_token:
+        console.print("[red]Error:[/red] CLAUDE_CODE_OAUTH_TOKEN is not set.")
+        console.print("Generate one by running [bold]claude setup-token[/bold].")
         raise SystemExit(1)
     if not config.openai_api_key:
         console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
@@ -385,8 +387,9 @@ def whatsapp(ctx):
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
-    if not config.anthropic_api_key:
-        console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
+    if not config.claude_code_oauth_token:
+        console.print("[red]Error:[/red] CLAUDE_CODE_OAUTH_TOKEN is not set.")
+        console.print("Generate one by running [bold]claude setup-token[/bold].")
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
@@ -454,8 +457,9 @@ def slack(ctx):
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
-    if not config.anthropic_api_key:
-        console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set.")
+    if not config.claude_code_oauth_token:
+        console.print("[red]Error:[/red] CLAUDE_CODE_OAUTH_TOKEN is not set.")
+        console.print("Generate one by running [bold]claude setup-token[/bold].")
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
