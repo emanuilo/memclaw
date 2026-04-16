@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import click
@@ -15,6 +16,89 @@ from .setup import needs_setup, run_setup
 from .store import MemoryStore
 
 console = Console()
+
+
+# Env vars that influence which Anthropic account/billing path the
+# claude CLI subprocess (and thus claude-agent-sdk) ultimately hits.
+# Order roughly matches the auth-precedence list in
+# https://code.claude.com/docs/en/authentication.
+_AUTH_ENV_VARS = (
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CONFIG_DIR",
+)
+
+
+def _mask(value: str) -> str:
+    """Show length + last 4 chars so we can compare tokens without leaking them."""
+    if not value:
+        return "<unset>"
+    if len(value) <= 8:
+        return f"<set, len={len(value)}>"
+    return f"<set, len={len(value)}, suffix=…{value[-4:]}>"
+
+
+def _log_auth_environment(config: MemclawConfig) -> None:
+    """Dump every credential source the claude CLI could pick up.
+
+    The point: when claude-agent-sdk spawns `claude`, the subprocess inherits
+    parent env + reads ~/.claude/.credentials.json (or macOS Keychain) +
+    obeys apiKeyHelper in settings.json. If any of those carries a Console
+    API key, that key wins over the Max OAuth login and Console gets billed.
+    This logger surfaces the full picture at startup.
+    """
+    from loguru import logger
+
+    # 1) Process env vars that affect auth precedence.
+    for name in _AUTH_ENV_VARS:
+        logger.info("env {name} = {val}", name=name, val=_mask(os.environ.get(name, "")))
+
+    # 2) Same fields as resolved by MemclawConfig (after .env loading).
+    logger.info("config.anthropic_api_key = {v}", v=_mask(config.anthropic_api_key))
+    logger.info("config.claude_code_oauth_token = {v}", v=_mask(config.claude_code_oauth_token))
+
+    # 3) Cached CLI credentials. On macOS the real store is the Keychain; this
+    # file may not exist. On Linux/Windows it does. Either way, surface what
+    # we can detect so we don't get fooled.
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+    creds_path = config_dir / ".credentials.json"
+    settings_path = config_dir / "settings.json"
+    logger.info("claude config dir = {p} (exists={e})", p=config_dir, e=config_dir.exists())
+    logger.info("claude credentials.json = {p} (exists={e})", p=creds_path, e=creds_path.exists())
+    logger.info("claude settings.json = {p} (exists={e})", p=settings_path, e=settings_path.exists())
+
+    # 4) macOS keychain hint — we can't read the secret, but we can check
+    # whether an Anthropic entry exists, which is the actual credential source
+    # on Mac when ~/.claude/.credentials.json is absent.
+    if Path("/usr/bin/security").exists():
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["/usr/bin/security", "find-generic-password", "-s", "Claude Code-credentials"],
+                capture_output=True, text=True, timeout=2,
+            )
+            logger.info(
+                "macOS keychain 'Claude Code-credentials' entry: {found}",
+                found="present" if r.returncode == 0 else "absent",
+            )
+        except Exception as exc:
+            logger.info("macOS keychain check skipped: {e}", e=exc)
+
+    # 5) apiKeyHelper from settings.json (if any) — this is a script that can
+    # inject a key on every request and bypass everything else.
+    if settings_path.exists():
+        try:
+            import json
+            settings = json.loads(settings_path.read_text())
+            helper = settings.get("apiKeyHelper")
+            logger.info("settings.json apiKeyHelper = {h}", h=helper or "<unset>")
+        except Exception as exc:
+            logger.info("settings.json read failed: {e}", e=exc)
 
 
 def _ensure_setup(ctx, channel: str | None = None):
@@ -305,6 +389,8 @@ def telegram(ctx):
         retention="7 days",
         level="DEBUG",
     )
+
+    _log_auth_environment(config)
 
     async def post_init(application: Application) -> None:
         openai_client = AsyncOpenAI(api_key=config.openai_api_key)
