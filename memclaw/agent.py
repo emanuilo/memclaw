@@ -1,15 +1,29 @@
-"""Memclaw agent — raw Anthropic API with a hand-rolled agentic loop."""
+"""Memclaw agent — backed by claude-agent-sdk (claude CLI subprocess).
+
+Auth precedence is managed via ClaudeAgentOptions.env: we strip ANTHROPIC_API_KEY
+and ANTHROPIC_AUTH_TOKEN and set CLAUDE_CODE_OAUTH_TOKEN so requests bill against
+the user's Claude subscription (Max plan + Extra usage) rather than the API
+console credit balance.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
-import anthropic
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+)
 from loguru import logger
 
 from .config import MemclawConfig
@@ -17,7 +31,7 @@ from .index import MemoryIndex
 from .reminders import ReminderScheduler
 from .search import HybridSearch
 from .store import MemoryStore
-from .tools import TOOL_DEFINITIONS, ToolExecutor
+from .tools import MCP_SERVER_NAME, TOOL_DEFINITIONS, ToolExecutor, build_mcp_server
 
 # ── Prompts ──────────────────────────────────────────────────────────
 
@@ -92,15 +106,57 @@ appropriate.
 explanation or preamble.
 """
 
-# Sonnet 4 pricing (per 1M tokens)
+# Sonnet 4 pricing (per 1M tokens) — used as fallback when the SDK doesn't
+# return a total_cost_usd, and for the "(in=..., out=..., cache_read=...)"
+# log line so it mirrors the old raw-API log format.
 _INPUT_COST_PER_M = 3.0
 _OUTPUT_COST_PER_M = 15.0
 
+_MODEL = "claude-sonnet-4-6"
+
+# All Claude Code built-in tools — disabled so the agent only uses our MCP tools.
+_BUILTIN_TOOLS_DISALLOW = [
+    "Bash", "BashOutput", "KillBash",
+    "Read", "Write", "Edit", "NotebookEdit",
+    "Grep", "Glob",
+    "Task",
+    "WebFetch", "WebSearch",
+    "TodoWrite",
+    "SlashCommand", "ExitPlanMode",
+]
+
+# Pre-approved MCP tool names as Claude sees them.
+_ALLOWED_TOOLS = [
+    f"mcp__{MCP_SERVER_NAME}__{t['name']}" for t in TOOL_DEFINITIONS
+]
+
+
+def _build_env(oauth_token: str) -> dict[str, str]:
+    """Build the env dict for the Claude CLI subprocess.
+
+    Scrub ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN so the OAuth token wins
+    precedence and requests bill against the Max subscription, not API credits.
+    """
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in (
+            "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+        )
+    }
+    if oauth_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    return env
+
 
 class MemclawAgent:
-    """Unified agent for both interactive CLI and Telegram bot.
+    """Unified agent for both interactive CLI and messaging bots.
 
-    Uses the raw Anthropic Messages API with a hand-rolled agentic loop.
+    Delegates every turn to the `claude` CLI via claude-agent-sdk, which:
+    - Authenticates against the user's Claude subscription (Max / Extra usage).
+    - Runs an in-process MCP server exposing the memclaw tool suite.
+    - Handles prompt caching, tool loops, and session persistence itself.
     """
 
     def __init__(
@@ -118,7 +174,6 @@ class MemclawAgent:
         self.scheduler = scheduler
         self._found_images: list[dict] = []
         self._history: list[dict] = []
-        self._client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key)
         self._tools = ToolExecutor(
             config=config,
             store=self.store,
@@ -128,6 +183,11 @@ class MemclawAgent:
             platform=platform,
             scheduler=scheduler,
         )
+        self._mcp_server = build_mcp_server(self._tools)
+        self._env = _build_env(config.claude_code_oauth_token)
+        # Keep a stable session id so the CLI's prompt cache stays warm across
+        # turns for this agent instance.
+        self._session_id = f"memclaw-{platform or 'cli'}"
 
     # ── Startup / sync ───────────────────────────────────────────────
 
@@ -200,17 +260,26 @@ class MemclawAgent:
         if existing_memory.strip():
             user_message += "\n\n## Current MEMORY.md\n\n" + existing_memory
 
-        response = await self._client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            system=_CONSOLIDATION_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
+        options = ClaudeAgentOptions(
+            env=self._env,
+            model=_MODEL,
+            system_prompt=_CONSOLIDATION_PROMPT,
+            setting_sources=None,
+            disallowed_tools=_BUILTIN_TOOLS_DISALLOW,
+            max_turns=1,
         )
 
         result_text = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                result_text += block.text
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(user_message)
+            async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    for block in msg.content:
+                        if isinstance(block, TextBlock):
+                            result_text += block.text
+                elif isinstance(msg, ResultMessage):
+                    if msg.result and not result_text:
+                        result_text = msg.result
 
         if not result_text.strip():
             return False
@@ -269,7 +338,7 @@ class MemclawAgent:
 
         return "\n\n".join(parts) if parts else "No memories found yet."
 
-    # ── Main entry point (raw API agentic loop) ──────────────────────
+    # ── Main entry point ─────────────────────────────────────────────
 
     async def handle(
         self,
@@ -315,90 +384,84 @@ class MemclawAgent:
             history=history_text,
         )
 
-        # Build initial user message
-        if image_b64:
-            user_content: Any = [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": image_media_type,
-                        "data": image_b64,
-                    },
-                },
-                {"type": "text", "text": message},
-            ]
-        else:
-            user_content = message
+        options = ClaudeAgentOptions(
+            env=self._env,
+            model=_MODEL,
+            system_prompt=system_prompt,
+            setting_sources=None,
+            mcp_servers={MCP_SERVER_NAME: self._mcp_server},
+            allowed_tools=_ALLOWED_TOOLS,
+            disallowed_tools=_BUILTIN_TOOLS_DISALLOW,
+            permission_mode="bypassPermissions",
+            max_turns=10,
+            # Every handle() call is a fresh conversation — the system prompt
+            # carries the relevant history snapshot. Giving the client a fresh
+            # session id each turn also isolates the CLI's own transcript from
+            # our in-process history accounting.
+        )
 
-        messages: list[dict[str, Any]] = [{"role": "user", "content": user_content}]
-
-        # ── Agentic loop ─────────────────────────────────────────────
-        max_turns = 10
-        turn = 0
+        t0 = time.perf_counter()
+        last_text = ""
+        num_turns = 0
         total_input_tokens = 0
         total_output_tokens = 0
         total_cache_read_tokens = 0
         total_cache_creation_tokens = 0
-        last_text = ""
-        t0 = time.perf_counter()
+        total_cost_usd: float | None = None
 
-        while turn < max_turns:
-            response = await self._client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4096,
-                system=system_prompt,
-                tools=TOOL_DEFINITIONS,
-                messages=messages,
-                extra_headers={"anthropic-beta": "token-efficient-tools-2025-02-19"},
-                cache_control={"type": "ephemeral"},
-            )
+        async with ClaudeSDKClient(options=options) as client:
+            if image_b64:
+                await client.query(_image_prompt_stream(
+                    message, image_b64, image_media_type,
+                ))
+            else:
+                await client.query(message)
 
-            total_input_tokens += response.usage.input_tokens
-            total_output_tokens += response.usage.output_tokens
-            total_cache_read_tokens += getattr(response.usage, "cache_read_input_tokens", 0) or 0
-            total_cache_creation_tokens += getattr(response.usage, "cache_creation_input_tokens", 0) or 0
-
-            messages.append({"role": "assistant", "content": response.content})
-
-            if response.stop_reason != "tool_use":
-                last_text = "".join(
-                    block.text for block in response.content if block.type == "text"
-                )
-                break
-
-            tool_results: list[dict[str, Any]] = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    args_str = json.dumps(block.input, ensure_ascii=False)
-                    if len(args_str) > 300:
-                        args_str = args_str[:300] + "..."
-                    logger.info("Tool call: {name}({args})", name=block.name, args=args_str)
-
-                    result_text = await self._tools.execute(block.name, block.input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result_text,
-                    })
-
-            messages.append({"role": "user", "content": tool_results})
-            turn += 1
+            async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    turn_text = ""
+                    for block in msg.content:
+                        if isinstance(block, TextBlock):
+                            turn_text += block.text
+                        elif isinstance(block, ToolUseBlock):
+                            args_str = json.dumps(block.input, ensure_ascii=False)
+                            if len(args_str) > 300:
+                                args_str = args_str[:300] + "..."
+                            tool_name = block.name
+                            if tool_name.startswith(f"mcp__{MCP_SERVER_NAME}__"):
+                                tool_name = tool_name[len(f"mcp__{MCP_SERVER_NAME}__"):]
+                            logger.info("Tool call: {name}({args})", name=tool_name, args=args_str)
+                    if turn_text:
+                        last_text = turn_text
+                elif isinstance(msg, ResultMessage):
+                    num_turns = msg.num_turns
+                    total_cost_usd = msg.total_cost_usd
+                    if msg.usage:
+                        total_input_tokens = msg.usage.get("input_tokens", 0) or 0
+                        total_output_tokens = msg.usage.get("output_tokens", 0) or 0
+                        total_cache_read_tokens = msg.usage.get("cache_read_input_tokens", 0) or 0
+                        total_cache_creation_tokens = msg.usage.get("cache_creation_input_tokens", 0) or 0
+                    if msg.result and not last_text:
+                        last_text = msg.result
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
-        # Cache reads are 90% cheaper than regular input tokens
-        cache_read_cost = total_cache_read_tokens * _INPUT_COST_PER_M * 0.1 / 1_000_000
-        cost = (
-            total_input_tokens * _INPUT_COST_PER_M / 1_000_000
-            + total_output_tokens * _OUTPUT_COST_PER_M / 1_000_000
-            + cache_read_cost
-        )
+        # Prefer the SDK's client-side cost estimate when available; else
+        # compute from tokens the way the raw-API loop used to.
+        if total_cost_usd is None:
+            cache_read_cost = total_cache_read_tokens * _INPUT_COST_PER_M * 0.1 / 1_000_000
+            cost = (
+                total_input_tokens * _INPUT_COST_PER_M / 1_000_000
+                + total_output_tokens * _OUTPUT_COST_PER_M / 1_000_000
+                + cache_read_cost
+            )
+        else:
+            cost = total_cost_usd
 
         logger.info(
             "Agent done: {turns} turns, {ms}ms, cost ${cost:.4f} "
             "(in={input_t}, out={output_t}, cache_read={cache_r}, cache_create={cache_c})",
-            turns=turn + 1,
+            turns=num_turns or 1,
             ms=elapsed_ms,
             cost=cost,
             input_t=total_input_tokens,
@@ -425,3 +488,32 @@ class MemclawAgent:
         if task is not None and not task.done():
             task.cancel()
         self.index.close()
+
+
+async def _image_prompt_stream(
+    message: str, image_b64: str, image_media_type: str,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield a single streaming-input user message containing an image + text.
+
+    The Claude CLI's stream-json protocol expects Anthropic-style content
+    blocks here, so we pass an "image" block with a base64 source followed
+    by the user's text.
+    """
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image_media_type,
+                        "data": image_b64,
+                    },
+                },
+                {"type": "text", "text": message},
+            ],
+        },
+        "parent_tool_use_id": None,
+    }

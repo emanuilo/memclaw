@@ -20,7 +20,7 @@ ENV_FILE = Path.home() / ".memclaw" / ".env"
 # enforced during `memclaw configure` which shows everything).
 KEYS: list[tuple[str, str, bool, str | None]] = [
     ("OPENAI_API_KEY", "OpenAI API key", True, None),
-    ("ANTHROPIC_API_KEY", "Anthropic API key", True, None),
+    ("CLAUDE_CODE_OAUTH_TOKEN", "Claude subscription OAuth token (run `claude setup-token`)", True, None),
     ("TELEGRAM_BOT_TOKEN", "Telegram bot token", True, "telegram"),
     ("ALLOWED_USER_IDS", "Allowed Telegram user IDs (comma-separated)", False, "telegram"),
     ("SLACK_BOT_TOKEN", "Slack bot token (xoxb-...)", True, "slack"),

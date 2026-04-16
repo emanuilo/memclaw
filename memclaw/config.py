@@ -29,6 +29,7 @@ class MemclawConfig:
     mmr_lambda: float = 0.7
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    claude_code_oauth_token: str = ""
 
     # Conversation continuity
     conversation_history_limit: int = 10
@@ -50,6 +51,8 @@ class MemclawConfig:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
         if not self.anthropic_api_key:
             self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not self.claude_code_oauth_token:
+            self.claude_code_oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
         if not self.telegram_bot_token:
             self.telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not self.allowed_user_ids:
