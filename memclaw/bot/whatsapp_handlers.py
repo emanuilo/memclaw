@@ -49,6 +49,7 @@ class WhatsAppBot:
             user, server = chat_id, "s.whatsapp.net"
         jid = build_jid(user, server=server)
         await self.client.send_message(jid, text)
+        self.agent.record_reminder_fired(text)
 
     # ------------------------------------------------------------------
     # Event registration

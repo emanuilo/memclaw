@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from memclaw.reminders import ReminderScheduler
+from memclaw.reminders import MAX_DELIVERY_ATTEMPTS, ReminderScheduler
 
 
 @pytest.fixture
@@ -104,6 +104,68 @@ async def test_recurring_reschedules(scheduler):
     assert items[0]["id"] == rid
     new_fire = datetime.fromisoformat(items[0]["fire_at"])
     assert new_fire > datetime.now()
+
+
+@pytest.mark.asyncio
+async def test_delivery_failure_marks_failed_after_max_attempts(scheduler):
+    async def deliver(chat_id: str, text: str):
+        raise RuntimeError("boom")
+
+    scheduler.register_delivery("telegram", deliver)
+    rid = scheduler.create(
+        platform="telegram",
+        chat_id="42",
+        text="x",
+        fire_at=datetime.now() - timedelta(seconds=1),
+    )
+
+    scheduler.start()
+
+    def _failed():
+        row = scheduler._db.execute(
+            "SELECT status, attempts FROM reminders WHERE id = ?", (rid,),
+        ).fetchone()
+        return row[0] == "failed"
+
+    await asyncio.wait_for(_wait_for(_failed), timeout=2.0)
+    scheduler.stop()
+
+    row = scheduler._db.execute(
+        "SELECT status, attempts FROM reminders WHERE id = ?", (rid,),
+    ).fetchone()
+    assert row[0] == "failed"
+    assert row[1] == MAX_DELIVERY_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_delivery_failure_then_recovery(scheduler):
+    fail_count = {"n": 0}
+
+    async def deliver(chat_id: str, text: str):
+        if fail_count["n"] < 2:
+            fail_count["n"] += 1
+            raise RuntimeError("transient")
+
+    scheduler.register_delivery("telegram", deliver)
+    rid = scheduler.create(
+        platform="telegram",
+        chat_id="42",
+        text="x",
+        fire_at=datetime.now() - timedelta(seconds=1),
+    )
+
+    scheduler.start()
+
+    def _done():
+        row = scheduler._db.execute(
+            "SELECT status FROM reminders WHERE id = ?", (rid,),
+        ).fetchone()
+        return row[0] == "done"
+
+    await asyncio.wait_for(_wait_for(_done), timeout=2.0)
+    scheduler.stop()
+
+    assert fail_count["n"] == 2
 
 
 async def _wait_for(predicate, poll=0.02):

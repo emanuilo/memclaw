@@ -131,6 +131,18 @@ class MemclawAgent:
 
     # ── Startup / sync ───────────────────────────────────────────────
 
+    def record_reminder_fired(self, text: str):
+        """Append a delivered reminder to history so the agent has context
+        if the user replies to it."""
+        self._history.append({
+            "role": "assistant",
+            "content": f"[Reminder fired] {text}",
+            "timestamp": datetime.now().isoformat(),
+        })
+        max_entries = self.config.conversation_history_limit * 2
+        if len(self._history) > max_entries:
+            self._history = self._history[-max_entries:]
+
     async def start(self):
         await self.index.sync()
 

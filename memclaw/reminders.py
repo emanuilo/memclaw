@@ -20,6 +20,8 @@ from .config import MemclawConfig
 
 Delivery = Callable[[str, str], Awaitable[None]]
 
+MAX_DELIVERY_ATTEMPTS = 5
+
 
 def _iso(dt: datetime) -> str:
     return dt.replace(microsecond=0).isoformat()
@@ -28,7 +30,7 @@ def _iso(dt: datetime) -> str:
 class ReminderScheduler:
     """Polls a SQLite-backed reminder table and fires due reminders."""
 
-    def __init__(self, config: MemclawConfig, poll_interval: float = 20.0):
+    def __init__(self, config: MemclawConfig, poll_interval: float = 60.0):
         self.config = config
         self.poll_interval = poll_interval
         self._db = sqlite3.connect(str(config.db_path))
@@ -50,6 +52,13 @@ class ReminderScheduler:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )"""
         )
+        # Additive migration for the failure counter.
+        try:
+            self._db.execute(
+                "ALTER TABLE reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists
         self._db.execute(
             "CREATE INDEX IF NOT EXISTS idx_reminders_due "
             "ON reminders (status, fire_at)"
@@ -152,9 +161,7 @@ class ReminderScheduler:
                     id=rid, p=platform, c=chat_id,
                 )
             except Exception as exc:
-                logger.exception(
-                    "Reminder {id} delivery failed: {exc}", id=rid, exc=exc,
-                )
+                self._record_failure(rid, platform, chat_id, exc)
                 continue
 
             if interval:
@@ -162,7 +169,7 @@ class ReminderScheduler:
                 while next_fire <= now:
                     next_fire += timedelta(seconds=interval)
                 self._db.execute(
-                    "UPDATE reminders SET fire_at = ? WHERE id = ?",
+                    "UPDATE reminders SET fire_at = ?, attempts = 0 WHERE id = ?",
                     (_iso(next_fire), rid),
                 )
             else:
@@ -170,6 +177,29 @@ class ReminderScheduler:
                     "UPDATE reminders SET status = 'done' WHERE id = ?", (rid,),
                 )
             self._db.commit()
+
+    def _record_failure(self, rid: int, platform: str, chat_id: str, exc: Exception):
+        self._db.execute(
+            "UPDATE reminders SET attempts = attempts + 1 WHERE id = ?", (rid,),
+        )
+        attempts = self._db.execute(
+            "SELECT attempts FROM reminders WHERE id = ?", (rid,),
+        ).fetchone()[0]
+        if attempts >= MAX_DELIVERY_ATTEMPTS:
+            self._db.execute(
+                "UPDATE reminders SET status = 'failed' WHERE id = ?", (rid,),
+            )
+            logger.error(
+                "Reminder {id} ({p}:{c}) marked failed after {n} attempts: {exc}",
+                id=rid, p=platform, c=chat_id, n=attempts, exc=exc,
+            )
+        else:
+            logger.warning(
+                "Reminder {id} ({p}:{c}) delivery attempt {n}/{m} failed: {exc}",
+                id=rid, p=platform, c=chat_id,
+                n=attempts, m=MAX_DELIVERY_ATTEMPTS, exc=exc,
+            )
+        self._db.commit()
 
     def stop(self):
         if self._task is not None and not self._task.done():

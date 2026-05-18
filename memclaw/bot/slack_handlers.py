@@ -43,6 +43,7 @@ class SlackHandlers:
 
     async def _deliver_reminder(self, chat_id: str, text: str):
         await self.app.client.chat_postMessage(channel=chat_id, text=text)
+        self.agent.record_reminder_fired(text)
 
     def _register_handlers(self):
         """Register Slack event handlers on the bolt app."""

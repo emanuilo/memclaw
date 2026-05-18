@@ -54,6 +54,7 @@ class MessageHandlers:
         if self._bot is None:
             return
         await self._bot.send_message(chat_id=int(chat_id), text=text)
+        self.agent.record_reminder_fired(text)
 
     def _check_user(self, user_id: int) -> bool:
         return user_id in self.config.allowed_user_ids_list
@@ -134,8 +135,15 @@ class MessageHandlers:
         text = update.message.text
         logger.info(f"Text from user {update.effective_user.id}: {text[:100]}")
 
-        # Pre-process links and include summaries in the prompt
-        prompt_parts = [text]
+        prompt_parts: list[str] = []
+        replied = update.message.reply_to_message
+        if replied is not None:
+            quoted = replied.text or replied.caption or ""
+            if quoted:
+                prompt_parts.append(f"[Replying to message] {quoted}")
+
+        prompt_parts.append(text)
+
         links = await self.link_processor.process_links(text)
         for link in links:
             if link.get("summary"):

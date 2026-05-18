@@ -38,6 +38,8 @@ Memclaw takes one slice of what OpenClaw does — **memory** — and does it rea
 
 **Link memory.** Drop a link and Memclaw fetches the page, summarizes it, and indexes the content. Months later, ask *"that article about distributed databases"* and it surfaces the link with context — no bookmarking app needed.
 
+**Reminders, too.** Ask *"remind me tomorrow at 9am to call Alex"* and the bot pings you back in the same chat. One-shot or recurring.
+
 **Sandboxed by design.** Memclaw only touches `~/.memclaw/`. No filesystem access, no shell commands, no path traversal. You don't need to trust it with your whole computer — it can't see it.
 
 **Lightweight and cheap.** No Docker. No Postgres. No sprawling tool graph burning tokens. Just Python, SQLite, and two API keys. Fast responses, minimal cost.
@@ -53,7 +55,7 @@ On first run, Memclaw will prompt you for your API keys and save them to `~/.mem
 
 ## Messaging Platforms
 
-The main way to use Memclaw. Just talk to it naturally — no commands needed. Send text, photos, voice messages, or links. The agent figures out what to do: store it, search your memories, retrieve images, or just chat.
+The main way to use Memclaw. Just talk to it naturally — no commands needed. Send text, photos, voice messages, or links, or ask to be reminded later. The agent figures out what to do: store it, search your memories, retrieve images, schedule a reminder, or just chat.
 
 All platforms share the same agent, memories, and search index — your data is unified regardless of how you interact.
 
@@ -154,6 +156,7 @@ To update keys later: `memclaw configure`.
 | **Text** | Agent decides: store as memory, search existing memories, or both. Links are extracted, fetched, and summarized automatically. |
 | **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. Saved for later retrieval. |
 | **Voice / Audio** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
+| **Reminders** | One-shot (`remind me tomorrow at 9am to call Alex`) or recurring (`remind me every 5 hours to drink water`). Delivered back to the same chat. List with *show my reminders*, cancel by id. |
 
 ### Examples
 
@@ -168,6 +171,9 @@ She's moving to Berlin for a new role at Stripe.
 > Show me the whiteboard photo from last week
 [sends the matching photo]
 Here's the sprint planning whiteboard you saved last week.
+
+> Remind me tomorrow at 9am to call Alex
+Reminder #4 scheduled for 2025-06-16T09:00.
 ```
 
 ## How It Works
@@ -221,6 +227,7 @@ Powered by Claude via the [Anthropic API](https://docs.anthropic.com/) with a ha
 | `image_search` | Retrieves previously stored images by description |
 | `file_write` / `file_read` | Sandboxed file operations within `~/.memclaw/` |
 | `update_instructions` | Appends user preferences to AGENTS.md |
+| `reminder_create` / `reminder_list` / `reminder_cancel` | Schedules one-shot or recurring reminders, delivered back to the originating chat |
 
 ## Usage
 
