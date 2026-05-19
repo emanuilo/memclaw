@@ -17,17 +17,26 @@ from .store import MemoryStore
 console = Console()
 
 
-def _require_claude_auth(config: MemclawConfig) -> None:
-    """Exit with a helpful message unless one Claude credential is configured."""
-    if config.auth_mode:
+def _require_backend_auth(config: MemclawConfig) -> None:
+    """Exit with a helpful message unless the chosen backend is configured."""
+    from .backends import REGISTRY, get_backend_class, resolve_backend_name
+
+    name = resolve_backend_name(config)
+    try:
+        backend_cls = get_backend_class(name)
+    except ValueError:
+        known = ", ".join(REGISTRY) or "(none)"
+        console.print(
+            f"[red]Error:[/red] unknown agent backend [bold]{name}[/bold] "
+            f"(set via AGENT_BACKEND). Available: {known}.\n"
+            "Run [bold]memclaw configure[/bold] to pick a valid backend."
+        )
+        raise SystemExit(1)
+    if backend_cls.is_configured(config):
         return
     console.print(
-        "[red]Error:[/red] no Claude credential is configured.\n"
-        "Choose one:\n"
-        "  • Claude subscription — generate a token with [bold]claude setup-token[/bold] "
-        "and save it as CLAUDE_CODE_OAUTH_TOKEN.\n"
-        "  • Anthropic API key — set ANTHROPIC_API_KEY (billed per token).\n"
-        "Run [bold]memclaw configure[/bold] to set either."
+        f"[red]Error:[/red] {backend_cls.configuration_help()}\n"
+        "Run [bold]memclaw configure[/bold] to set it."
     )
     raise SystemExit(1)
 
@@ -65,7 +74,7 @@ def cli(ctx, memory_dir):
     if ctx.invoked_subcommand is None:
         _ensure_setup(ctx)
         config = ctx.obj["config"]
-        _require_claude_auth(config)
+        _require_backend_auth(config)
         if not config.openai_api_key:
             console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
             console.print("Run [bold]memclaw configure[/bold] to set it.")
@@ -196,7 +205,7 @@ def consolidate(ctx, since_date):
 
     config: MemclawConfig = ctx.obj["config"]
 
-    _require_claude_auth(config)
+    _require_backend_auth(config)
     if not config.openai_api_key:
         console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
         raise SystemExit(1)
@@ -395,7 +404,7 @@ def whatsapp(ctx):
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
-    _require_claude_auth(config)
+    _require_backend_auth(config)
 
     # Logging
     logger.remove()
@@ -461,7 +470,7 @@ def slack(ctx):
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
-    _require_claude_auth(config)
+    _require_backend_auth(config)
 
     # Logging
     logger.remove()

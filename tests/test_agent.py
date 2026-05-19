@@ -1,13 +1,22 @@
-"""Tests for MemclawAgent — history, consolidation, context, sync, fs guardrail."""
+"""Tests for MemclawAgent — history, consolidation, context, sync, fs guardrail.
+
+These tests run against a backend-agnostic `FakeBackend` so they exercise the
+orchestration in `MemclawAgent` without depending on any SDK. Per-backend
+behavior (env scrubbing, MCP wrapping, …) is tested separately in
+`tests/backends/`.
+"""
 from __future__ import annotations
 
 import json
 from datetime import date, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock
+from dataclasses import dataclass, field
 
 import pytest
 
+from memclaw.backends.base import TurnResult
 from memclaw.config import MemclawConfig
 from memclaw.search import SearchResult
 
@@ -29,51 +38,35 @@ def cfg(tmp_path: Path) -> MemclawConfig:
     return _make_config(tmp_path)
 
 
-def _mock_sdk_client(text: str):
-    """Build a fake ClaudeSDKClient that yields a single assistant message
-    with *text*, then a ResultMessage. Returns (ctx_factory, client_mock).
+@dataclass
+class FakeBackend:
+    """Backend stub that records calls and returns canned responses."""
 
-    Use with `patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory)`
-    so each `ClaudeSDKClient(options=…)` constructor call returns a fresh
-    async-context object whose `__aenter__` yields the same client mock.
-    """
-    from memclaw.agent import AssistantMessage, ResultMessage, TextBlock
+    name: str = "fake"
+    display_name: str = "Fake backend"
+    bills_per_token: bool = False
+    one_shot_response: str = ""
+    turn_response: TurnResult = field(default_factory=lambda: TurnResult(text=""))
+    one_shot_calls: list[dict[str, Any]] = field(default_factory=list)
+    turn_calls: list[dict[str, Any]] = field(default_factory=list)
 
-    assistant = AssistantMessage(
-        content=[TextBlock(text=text)],
-        model="claude-sonnet-4-6",
-    )
-    result = ResultMessage(
-        subtype="result",
-        duration_ms=10,
-        duration_api_ms=8,
-        is_error=False,
-        num_turns=1,
-        session_id="test",
-        total_cost_usd=None,
-        usage={"input_tokens": 100, "output_tokens": 50,
-               "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
-        result=None,
-    )
+    async def run_one_shot(self, *, system_prompt: str, user_message: str) -> str:
+        self.one_shot_calls.append({"system": system_prompt, "user": user_message})
+        return self.one_shot_response
 
-    client = MagicMock()
-    client.query = AsyncMock()
+    async def run_turn(self, **kwargs) -> TurnResult:
+        self.turn_calls.append(kwargs)
+        return self.turn_response
 
-    def _receive_factory():
-        async def _gen():
-            yield assistant
-            yield result
-        return _gen()
 
-    client.receive_response = MagicMock(side_effect=_receive_factory)
+@pytest.fixture
+def fake_backend() -> FakeBackend:
+    return FakeBackend()
 
-    def _ctx_factory(*args, **kwargs):
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=client)
-        ctx.__aexit__ = AsyncMock(return_value=None)
-        return ctx
 
-    return _ctx_factory, client
+def _make_agent(cfg: MemclawConfig, backend: FakeBackend):
+    from memclaw.agent import MemclawAgent
+    return MemclawAgent(cfg, backend=backend)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -81,24 +74,21 @@ def _mock_sdk_client(text: str):
 # ────────────────────────────────────────────────────────────────────
 
 class TestConversationHistory:
-    def test_history_initialized_empty(self, cfg: MemclawConfig):
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+    def test_history_initialized_empty(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend)
         assert agent._history == []
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_history_appended_after_handle(self, cfg: MemclawConfig):
+    async def test_history_appended_after_handle(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """handle() should append user + assistant messages to _history."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        fake_backend.turn_response = TurnResult(text="Hello! I'm Memclaw.")
+        agent = _make_agent(cfg, fake_backend)
 
         agent.build_context = AsyncMock(return_value="No memories found yet.")
         agent._maybe_consolidate = AsyncMock(return_value=False)
 
-        ctx_factory, _client = _mock_sdk_client("Hello! I'm Memclaw.")
-        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
-            await agent.handle("Hello")
+        await agent.handle("Hello")
 
         assert len(agent._history) == 2
         assert agent._history[0]["role"] == "user"
@@ -106,13 +96,15 @@ class TestConversationHistory:
         assert agent._history[1]["role"] == "assistant"
         assert agent._history[1]["content"] == "Hello! I'm Memclaw."
         assert "timestamp" in agent._history[0]
+        # Backend was called exactly once with the user message.
+        assert len(fake_backend.turn_calls) == 1
+        assert fake_backend.turn_calls[0]["user_message"] == "Hello"
         agent.close()
 
-    def test_history_trimming(self, cfg: MemclawConfig):
+    def test_history_trimming(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """History should be trimmed to conversation_history_limit * 2."""
-        from memclaw.agent import MemclawAgent
         cfg.conversation_history_limit = 3  # Keep last 3 pairs = 6 entries
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         # Manually populate history with 10 entries
         for i in range(10):
@@ -133,10 +125,9 @@ class TestConversationHistory:
         assert agent._history[-1]["content"] == "message 9"
         agent.close()
 
-    def test_image_placeholder_in_history(self, cfg: MemclawConfig):
+    def test_image_placeholder_in_history(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """When an image is sent, history should store a placeholder, not base64."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         # Simulate what handle() does for images
         image_b64 = "base64data..."
@@ -158,11 +149,10 @@ class TestConversationHistory:
 
 class TestConsolidation:
     @pytest.mark.asyncio
-    async def test_skips_when_below_threshold(self, cfg: MemclawConfig):
+    async def test_skips_when_below_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """Consolidation should not run when file count < threshold."""
-        from memclaw.agent import MemclawAgent
         cfg.consolidation_threshold = 7
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         # Create 3 daily files (below threshold of 7)
         for i in range(3):
@@ -172,14 +162,15 @@ class TestConsolidation:
 
         result = await agent._maybe_consolidate()
         assert result is False
+        assert fake_backend.one_shot_calls == []
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_runs_when_above_threshold(self, cfg: MemclawConfig):
+    async def test_runs_when_above_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """Consolidation should run when file count >= threshold."""
-        from memclaw.agent import MemclawAgent
         cfg.consolidation_threshold = 3
-        agent = MemclawAgent(cfg)
+        fake_backend.one_shot_response = "## Key Facts\n\n- Fact 0\n- Fact 1\n"
+        agent = _make_agent(cfg, fake_backend)
 
         # Create 5 daily files (above threshold of 3)
         for i in range(5):
@@ -189,9 +180,7 @@ class TestConsolidation:
 
         agent.index.index_file = AsyncMock()
 
-        ctx_factory, _client = _mock_sdk_client("## Key Facts\n\n- Fact 0\n- Fact 1\n")
-        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
-            result = await agent._maybe_consolidate()
+        result = await agent._maybe_consolidate()
 
         assert result is True
         assert cfg.memory_file.exists()
@@ -205,29 +194,27 @@ class TestConsolidation:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_force_ignores_threshold(self, cfg: MemclawConfig):
+    async def test_force_ignores_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """force=True should run consolidation even with 1 file."""
-        from memclaw.agent import MemclawAgent
         cfg.consolidation_threshold = 100
-        agent = MemclawAgent(cfg)
+        fake_backend.one_shot_response = "## Notes\n- One note"
+        agent = _make_agent(cfg, fake_backend)
 
         path = cfg.memory_subdir / "2025-03-01.md"
         path.write_text("# Single day\nJust one note")
 
         agent.index.index_file = AsyncMock()
 
-        ctx_factory, _client = _mock_sdk_client("## Notes\n- One note")
-        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
-            result = await agent._maybe_consolidate(force=True)
+        result = await agent._maybe_consolidate(force=True)
 
         assert result is True
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_consolidated_through_override(self, cfg: MemclawConfig):
+    async def test_consolidated_through_override(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """consolidated_through_override should override meta.json."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        fake_backend.one_shot_response = "## Consolidated"
+        agent = _make_agent(cfg, fake_backend)
 
         for i in range(1, 11):
             d = date(2025, 3, i)
@@ -239,16 +226,14 @@ class TestConsolidation:
 
         agent.index.index_file = AsyncMock()
 
-        ctx_factory, client = _mock_sdk_client("## Consolidated")
-        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
-            result = await agent._maybe_consolidate(
-                force=True,
-                consolidated_through_override=date(2025, 3, 8),
-            )
+        result = await agent._maybe_consolidate(
+            force=True,
+            consolidated_through_override=date(2025, 3, 8),
+        )
 
         assert result is True
-        # The user message passed to the SDK should cover days > 2025-03-08.
-        user_msg = client.query.call_args.args[0]
+        # The user message passed to the backend should cover days > 2025-03-08.
+        user_msg = fake_backend.one_shot_calls[-1]["user"]
         assert "2025-03-09" in user_msg
         assert "2025-03-10" in user_msg
         assert "2025-03-05" not in user_msg
@@ -256,19 +241,19 @@ class TestConsolidation:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_no_files_returns_false(self, cfg: MemclawConfig):
+    async def test_no_files_returns_false(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """If there are no daily files at all, return False."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
         result = await agent._maybe_consolidate(force=True)
         assert result is False
+        assert fake_backend.one_shot_calls == []
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_content_limit_30000_chars(self, cfg: MemclawConfig):
+    async def test_content_limit_30000_chars(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """Content gathering should stop at 30000 chars."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        fake_backend.one_shot_response = "## Consolidated"
+        agent = _make_agent(cfg, fake_backend)
 
         for i in range(1, 6):
             d = date(2025, 3, i)
@@ -277,11 +262,9 @@ class TestConsolidation:
 
         agent.index.index_file = AsyncMock()
 
-        ctx_factory, client = _mock_sdk_client("## Consolidated")
-        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
-            await agent._maybe_consolidate(force=True)
+        await agent._maybe_consolidate(force=True)
 
-        user_msg = client.query.call_args.args[0]
+        user_msg = fake_backend.one_shot_calls[-1]["user"]
         assert len(user_msg) < 35000
 
         agent.close()
@@ -293,10 +276,9 @@ class TestConsolidation:
 
 class TestContextStrategy:
     @pytest.mark.asyncio
-    async def test_small_memory_included_in_full(self, cfg: MemclawConfig):
+    async def test_small_memory_included_in_full(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """MEMORY.md under 4000 chars should be included completely."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         small_content = "## Key Facts\n\n- I like Python\n- My name is Test"
         cfg.memory_file.write_text(small_content)
@@ -308,10 +290,9 @@ class TestContextStrategy:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_large_memory_truncated_with_search(self, cfg: MemclawConfig):
+    async def test_large_memory_truncated_with_search(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """MEMORY.md over 4000 chars: first 2000 + semantic search results."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         large_content = "## Key Facts\n\n" + "Important fact. " * 400
         cfg.memory_file.write_text(large_content)
@@ -347,10 +328,9 @@ class TestContextStrategy:
 
 class TestSyncOptimization:
     @pytest.mark.asyncio
-    async def test_start_calls_sync(self, cfg: MemclawConfig):
+    async def test_start_calls_sync(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """start() should call index.sync() once."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
         agent.index.sync = AsyncMock(return_value=False)
 
         await agent.start()
@@ -358,11 +338,10 @@ class TestSyncOptimization:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_background_sync_creates_task(self, cfg: MemclawConfig):
+    async def test_background_sync_creates_task(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """start_background_sync() should create an asyncio task."""
         import asyncio
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
         agent.index.sync = AsyncMock(return_value=False)
 
         await agent.start_background_sync(interval=1)
@@ -383,10 +362,9 @@ class TestSyncOptimization:
 
 class TestFilesystemGuardrail:
     @pytest.mark.asyncio
-    async def test_allows_write_inside_memory_dir(self, cfg: MemclawConfig):
+    async def test_allows_write_inside_memory_dir(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """file_write to a path under memory_dir should succeed."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         result = await agent._tools.execute(
             "file_write",
@@ -397,10 +375,9 @@ class TestFilesystemGuardrail:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_blocks_write_outside_memory_dir(self, cfg: MemclawConfig):
+    async def test_blocks_write_outside_memory_dir(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """file_write to a path outside memory_dir should be blocked."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         result = await agent._tools.execute(
             "file_write",
@@ -410,10 +387,9 @@ class TestFilesystemGuardrail:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_blocks_write_to_home_dir(self, cfg: MemclawConfig):
+    async def test_blocks_write_to_home_dir(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """file_write to ~/something.md should be blocked."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         result = await agent._tools.execute(
             "file_write",
@@ -423,10 +399,9 @@ class TestFilesystemGuardrail:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_blocks_path_traversal(self, cfg: MemclawConfig):
+    async def test_blocks_path_traversal(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """Path traversal attempts (../../etc) should be blocked."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         result = await agent._tools.execute(
             "file_write",
@@ -436,10 +411,9 @@ class TestFilesystemGuardrail:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_allows_nested_path_inside_memory_dir(self, cfg: MemclawConfig):
+    async def test_allows_nested_path_inside_memory_dir(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """Writing to a subdirectory of memory_dir should work."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         result = await agent._tools.execute(
             "file_write",
@@ -450,10 +424,9 @@ class TestFilesystemGuardrail:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_blocks_read_outside(self, cfg: MemclawConfig):
+    async def test_blocks_read_outside(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """file_read outside memory_dir should be blocked."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         result = await agent._tools.execute(
             "file_read",
@@ -463,10 +436,9 @@ class TestFilesystemGuardrail:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_file_read_returns_content(self, cfg: MemclawConfig):
+    async def test_file_read_returns_content(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """file_read should return content for files inside memory_dir."""
-        from memclaw.agent import MemclawAgent
-        agent = MemclawAgent(cfg)
+        agent = _make_agent(cfg, fake_backend)
 
         (cfg.memory_dir / "test.md").write_text("hello world")
         result = await agent._tools.execute(

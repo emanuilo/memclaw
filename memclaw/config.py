@@ -31,6 +31,10 @@ class MemclawConfig:
     anthropic_api_key: str = ""
     claude_code_oauth_token: str = ""
 
+    # Which agent backend to use (see memclaw.backends.REGISTRY). Empty
+    # value resolves to the default backend at runtime.
+    agent_backend: str = ""
+
     # Conversation continuity
     conversation_history_limit: int = 10
 
@@ -54,6 +58,8 @@ class MemclawConfig:
             self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not self.claude_code_oauth_token:
             self.claude_code_oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+        if not self.agent_backend:
+            self.agent_backend = os.environ.get("AGENT_BACKEND", "")
         if not self.telegram_bot_token:
             self.telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not self.allowed_user_ids:
@@ -70,21 +76,6 @@ class MemclawConfig:
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_subdir.mkdir(exist_ok=True)
         self._init_default_files()
-
-    @property
-    def auth_mode(self) -> str:
-        """Which Claude auth path is configured.
-
-        Returns:
-            "subscription" if CLAUDE_CODE_OAUTH_TOKEN is set (no per-message cost),
-            "api_key" if only ANTHROPIC_API_KEY is set (billed per token),
-            "" if neither is set.
-        """
-        if self.claude_code_oauth_token:
-            return "subscription"
-        if self.anthropic_api_key:
-            return "api_key"
-        return ""
 
     def _init_default_files(self):
         """Copy default files into memory_dir if they don't exist yet."""

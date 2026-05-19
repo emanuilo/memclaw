@@ -9,31 +9,19 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 
+from .backends import DEFAULT_BACKEND, get_backend_class, list_backends
+
 console = Console()
 
 ENV_FILE = Path.home() / ".memclaw" / ".env"
 
-# Keys in the order they are prompted.
+# Generic keys prompted for every install. The agent-backend credential is
+# collected by the chosen backend's `wizard_setup()`, not by this list.
 # `channel` is None for always-asked keys, or a channel name (e.g. "telegram")
-# for keys that are only relevant to that bot command.
-# `required` for a channel-scoped key means "required when invoked via that
-# channel" (e.g. SLACK_BOT_TOKEN is required during `memclaw slack`, but not
-# enforced during `memclaw configure` which shows everything).
-# The Claude auth credential is chosen by the user at runtime; both candidates
-# are listed here so reconfigure can render the right prompt.
-_CLAUDE_SUBSCRIPTION_KEY = (
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "Claude subscription OAuth token (run `claude setup-token`)",
-    True,
-    None,
-)
-_CLAUDE_API_KEY = (
-    "ANTHROPIC_API_KEY",
-    "Anthropic API key (sk-ant-...)",
-    True,
-    None,
-)
-
+# for keys that are only relevant to that bot command. `required` for a
+# channel-scoped key means "required when invoked via that channel" (e.g.
+# SLACK_BOT_TOKEN is required during `memclaw slack`, but not enforced during
+# `memclaw configure` which shows everything).
 KEYS: list[tuple[str, str, bool, str | None]] = [
     ("OPENAI_API_KEY", "OpenAI API key (for embeddings + voice transcription)", True, None),
     ("TELEGRAM_BOT_TOKEN", "Telegram bot token", True, "telegram"),
@@ -45,33 +33,35 @@ KEYS: list[tuple[str, str, bool, str | None]] = [
 ]
 
 
-def _prompt_auth_mode(existing: dict[str, str]) -> str:
-    """Ask the user how they want to authenticate with Claude.
+def _select_backend(existing: dict[str, str]) -> str:
+    """Pick the agent backend.
 
-    Returns "subscription" or "api_key".
+    With one registered backend this just returns its name silently.
+    A panel only appears when there are multiple to choose from, so adding
+    a second backend later becomes a UI change for free.
     """
+    backends = list_backends()
+    if len(backends) <= 1:
+        return backends[0].name if backends else DEFAULT_BACKEND
+
     console.print()
+    bullets = "\n\n".join(
+        f"[bold]{i + 1})[/bold] {cls.display_name}" for i, cls in enumerate(backends)
+    )
     console.print(
-        Panel(
-            "[bold]1)[/bold] Claude subscription (Pro / Max / Team)\n"
-            "    No per-message cost — uses your subscription quota.\n"
-            "    Generate a token with: [bold]claude setup-token[/bold]\n\n"
-            "[bold]2)[/bold] Anthropic API key (pay-as-you-go)\n"
-            "    Billed per token against your console credits.\n"
-            "    Get a key at: console.anthropic.com",
-            title="How do you want to authenticate with Claude?",
-            border_style="bright_cyan",
-        )
+        Panel(bullets, title="Which agent SDK do you want to use?",
+              border_style="bright_cyan")
     )
 
-    # Default to whichever the user already has configured.
-    if existing.get("ANTHROPIC_API_KEY") and not existing.get("CLAUDE_CODE_OAUTH_TOKEN"):
-        default = "2"
-    else:
-        default = "1"
-
-    choice = Prompt.ask("Choose", choices=["1", "2"], default=default)
-    return "subscription" if choice == "1" else "api_key"
+    # Default to whichever backend the existing config already names.
+    current = existing.get("AGENT_BACKEND", "")
+    default_idx = next(
+        (str(i + 1) for i, cls in enumerate(backends) if cls.name == current),
+        "1",
+    )
+    choices = [str(i + 1) for i in range(len(backends))]
+    choice = Prompt.ask("Choose", choices=choices, default=default_idx)
+    return backends[int(choice) - 1].name
 
 
 def _mask(value: str) -> str:
@@ -136,20 +126,14 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
     # skip this round are preserved.
     values: dict[str, str] = dict(existing)
 
-    auth_mode = _prompt_auth_mode(existing)
-    auth_key = (
-        _CLAUDE_SUBSCRIPTION_KEY if auth_mode == "subscription" else _CLAUDE_API_KEY
-    )
-    # Drop the unselected credential so a stale value from a prior run can't
-    # silently override the chosen mode at runtime.
-    other_env_key = (
-        _CLAUDE_API_KEY[0] if auth_mode == "subscription" else _CLAUDE_SUBSCRIPTION_KEY[0]
-    )
-    values.pop(other_env_key, None)
-
-    # Prompt the chosen Claude credential first (right after the auth-mode
-    # choice the user just made), then everything else.
-    keys_to_prompt: list[tuple[str, str, bool, str | None]] = [auth_key, *KEYS]
+    # 1) Choose backend, 2) let it collect its own credentials.
+    backend_name = _select_backend(existing)
+    values["AGENT_BACKEND"] = backend_name
+    backend_cls = get_backend_class(backend_name)
+    backend_values, drop_keys = backend_cls.wizard_setup(console, existing)
+    values.update(backend_values)
+    for key in drop_keys:
+        values.pop(key, None)
 
     # A channel-scoped required key is only enforced when invoked via that
     # channel; in reconfigure mode nothing is enforced (user is just editing).
@@ -158,7 +142,7 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
             return False
         return key_channel is None or key_channel == channel
 
-    for env_key, label, required, key_channel in keys_to_prompt:
+    for env_key, label, required, key_channel in KEYS:
         # Skip channel-scoped keys that don't match this invocation (unless
         # the user is explicitly reconfiguring, in which case show all).
         if not reconfigure and key_channel is not None and key_channel != channel:
@@ -183,7 +167,7 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
             values[env_key] = current
 
     # Validate required keys (always-required + channel-scoped required).
-    for env_key, label, required, key_channel in keys_to_prompt:
+    for env_key, label, required, key_channel in KEYS:
         if _is_required(required, key_channel) and not values.get(env_key):
             console.print(f"[red]Error:[/red] {label} is required.")
             raise SystemExit(1)
@@ -195,8 +179,9 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
 
     # Sync the current process env with the freshly-written .env. Without this,
     # MemclawConfig.__post_init__ would still see stale values (e.g. an OAuth
-    # token left over from a prior run after the user switched to api_key).
-    os.environ.pop(other_env_key, None)
+    # token left over from a prior run after the user switched backends).
+    for key in drop_keys:
+        os.environ.pop(key, None)
     for k, v in values.items():
         if v:
             os.environ[k] = v

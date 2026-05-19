@@ -1,38 +1,28 @@
-"""Memclaw agent — backed by claude-agent-sdk (claude CLI subprocess).
+"""Memclaw agent — backend-agnostic orchestration over a pluggable agent SDK.
 
-Auth is controlled via ClaudeAgentOptions.env: `_build_env` scrubs every
-Claude/Anthropic credential env var the subprocess could otherwise inherit
-and then injects exactly one based on `config.auth_mode` — either
-CLAUDE_CODE_OAUTH_TOKEN (subscription billing) or ANTHROPIC_API_KEY
-(per-token billing).
+The agent owns memory, search, history, consolidation, and the system-prompt
+shape, but delegates every LLM call to an `AgentBackend` (see
+`memclaw.backends`). The backend is selected by `config.agent_backend`
+(env var `AGENT_BACKEND`), defaulting to `claude`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
 
-from claude_agent_sdk import (
-    AssistantMessage,
-    ClaudeAgentOptions,
-    ClaudeSDKClient,
-    ResultMessage,
-    TextBlock,
-    ToolUseBlock,
-)
 from loguru import logger
 
+from .backends import AgentBackend, build_backend
 from .config import MemclawConfig
 from .index import MemoryIndex
 from .reminders import ReminderScheduler
 from .search import HybridSearch
 from .store import MemoryStore
-from .tools import MCP_SERVER_NAME, TOOL_DEFINITIONS, ToolExecutor, build_mcp_server
+from .tools import ToolExecutor
 
 # ── Prompts ──────────────────────────────────────────────────────────
 
@@ -107,64 +97,13 @@ appropriate.
 explanation or preamble.
 """
 
-# Sonnet 4 pricing (per 1M tokens) — used as fallback when the SDK doesn't
-# return a total_cost_usd, and for the "(in=..., out=..., cache_read=...)"
-# log line so it mirrors the old raw-API log format.
-_INPUT_COST_PER_M = 3.0
-_OUTPUT_COST_PER_M = 15.0
-
-_MODEL = "claude-sonnet-4-6"
-
-# All Claude Code built-in tools — disabled so the agent only uses our MCP tools.
-_BUILTIN_TOOLS_DISALLOW = [
-    "Bash", "BashOutput", "KillBash",
-    "Read", "Write", "Edit", "NotebookEdit",
-    "Grep", "Glob",
-    "Task",
-    "WebFetch", "WebSearch",
-    "TodoWrite",
-    "SlashCommand", "ExitPlanMode",
-]
-
-# Pre-approved MCP tool names as Claude sees them.
-_ALLOWED_TOOLS = [
-    f"mcp__{MCP_SERVER_NAME}__{t['name']}" for t in TOOL_DEFINITIONS
-]
-
-
-def _build_env(config: MemclawConfig) -> dict[str, str]:
-    """Build the env dict for the Claude CLI subprocess.
-
-    Scrubs every credential env var first so the subprocess never inherits a
-    stale token from the parent shell, then injects exactly one credential
-    based on the configured auth mode:
-
-    - subscription → CLAUDE_CODE_OAUTH_TOKEN, billed against the Claude plan.
-    - api_key      → ANTHROPIC_API_KEY, billed against Console credits.
-    """
-    env = {
-        k: v for k, v in os.environ.items()
-        if k not in (
-            "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
-            "CLAUDE_CODE_USE_FOUNDRY",
-        )
-    }
-    if config.auth_mode == "subscription":
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = config.claude_code_oauth_token
-    elif config.auth_mode == "api_key":
-        env["ANTHROPIC_API_KEY"] = config.anthropic_api_key
-    return env
-
 
 class MemclawAgent:
     """Unified agent for both interactive CLI and messaging bots.
 
-    Delegates every turn to the `claude` CLI via claude-agent-sdk, which:
-    - Authenticates against the user's Claude subscription (Max / Extra usage).
-    - Runs an in-process MCP server exposing the memclaw tool suite.
-    - Handles prompt caching, tool loops, and session persistence itself.
+    Memory, search, history, and consolidation orchestration live here.
+    Every LLM call is delegated to a pluggable `AgentBackend` chosen via
+    `config.agent_backend`.
     """
 
     def __init__(
@@ -173,6 +112,7 @@ class MemclawAgent:
         platform: str | None = None,
         *,
         scheduler: ReminderScheduler | None = None,
+        backend: AgentBackend | None = None,
     ):
         self.config = config
         self.platform = platform
@@ -191,8 +131,7 @@ class MemclawAgent:
             platform=platform,
             scheduler=scheduler,
         )
-        self._mcp_server = build_mcp_server(self._tools)
-        self._env = _build_env(config)
+        self.backend: AgentBackend = backend or build_backend(config)
 
     # ── Startup / sync ───────────────────────────────────────────────
 
@@ -277,26 +216,10 @@ class MemclawAgent:
         if existing_memory.strip():
             user_message += "\n\n## Current MEMORY.md\n\n" + existing_memory
 
-        options = ClaudeAgentOptions(
-            env=self._env,
-            model=_MODEL,
+        result_text = await self.backend.run_one_shot(
             system_prompt=_CONSOLIDATION_PROMPT,
-            setting_sources=None,
-            disallowed_tools=_BUILTIN_TOOLS_DISALLOW,
-            max_turns=1,
+            user_message=user_message,
         )
-
-        result_text = ""
-        async with ClaudeSDKClient(options=options) as client:
-            await client.query(user_message)
-            async for msg in client.receive_response():
-                if isinstance(msg, AssistantMessage):
-                    for block in msg.content:
-                        if isinstance(block, TextBlock):
-                            result_text += block.text
-                elif isinstance(msg, ResultMessage):
-                    if msg.result and not result_text:
-                        result_text = msg.result
 
         if not result_text.strip():
             return False
@@ -401,105 +324,36 @@ class MemclawAgent:
             history=history_text,
         )
 
-        options = ClaudeAgentOptions(
-            env=self._env,
-            model=_MODEL,
-            system_prompt=system_prompt,
-            setting_sources=None,
-            mcp_servers={MCP_SERVER_NAME: self._mcp_server},
-            allowed_tools=_ALLOWED_TOOLS,
-            disallowed_tools=_BUILTIN_TOOLS_DISALLOW,
-            # SAFETY: bypassPermissions is only safe because allowed_tools
-            # restricts execution to mcp__memclaw__* (our in-process server)
-            # and _BUILTIN_TOOLS_DISALLOW blocks Claude Code's built-ins.
-            # If either guardrail is loosened, revisit this — bypass mode
-            # would otherwise turn any future broad tool into an RCE vector.
-            permission_mode="bypassPermissions",
-            max_turns=10,
-            # Every handle() call is a fresh conversation — the system prompt
-            # carries the relevant history snapshot. Giving the client a fresh
-            # session id each turn also isolates the CLI's own transcript from
-            # our in-process history accounting.
-        )
-
         t0 = time.perf_counter()
-        last_text = ""
-        num_turns = 0
-        total_input_tokens = 0
-        total_output_tokens = 0
-        total_cache_read_tokens = 0
-        total_cache_creation_tokens = 0
-        total_cost_usd: float | None = None
-
-        async with ClaudeSDKClient(options=options) as client:
-            if image_b64:
-                await client.query(_image_prompt_stream(
-                    message, image_b64, image_media_type,
-                ))
-            else:
-                await client.query(message)
-
-            async for msg in client.receive_response():
-                if isinstance(msg, AssistantMessage):
-                    turn_text = ""
-                    for block in msg.content:
-                        if isinstance(block, TextBlock):
-                            turn_text += block.text
-                        elif isinstance(block, ToolUseBlock):
-                            args_str = json.dumps(block.input, ensure_ascii=False)
-                            if len(args_str) > 300:
-                                args_str = args_str[:300] + "..."
-                            tool_name = block.name
-                            if tool_name.startswith(f"mcp__{MCP_SERVER_NAME}__"):
-                                tool_name = tool_name[len(f"mcp__{MCP_SERVER_NAME}__"):]
-                            logger.info("Tool call: {name}({args})", name=tool_name, args=args_str)
-                    if turn_text:
-                        last_text = turn_text
-                elif isinstance(msg, ResultMessage):
-                    num_turns = msg.num_turns
-                    total_cost_usd = msg.total_cost_usd
-                    if msg.usage:
-                        total_input_tokens = msg.usage.get("input_tokens", 0) or 0
-                        total_output_tokens = msg.usage.get("output_tokens", 0) or 0
-                        total_cache_read_tokens = msg.usage.get("cache_read_input_tokens", 0) or 0
-                        total_cache_creation_tokens = msg.usage.get("cache_creation_input_tokens", 0) or 0
-                    if msg.result and not last_text:
-                        last_text = msg.result
-
+        result = await self.backend.run_turn(
+            system_prompt=system_prompt,
+            user_message=message,
+            tool_executor=self._tools,
+            image_b64=image_b64,
+            image_media_type=image_media_type,
+            max_turns=10,
+        )
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
         token_summary = (
-            f"in={total_input_tokens}, out={total_output_tokens}, "
-            f"cache_read={total_cache_read_tokens}, cache_create={total_cache_creation_tokens}"
+            f"in={result.input_tokens}, out={result.output_tokens}, "
+            f"cache_read={result.cache_read_tokens}, "
+            f"cache_create={result.cache_creation_tokens}"
         )
-
-        if self.config.auth_mode == "subscription":
-            # Requests are billed against the Claude plan, not per-token, so
-            # the dollar figure would be misleading. Token counts still help
-            # diagnose context bloat.
-            logger.info(
-                "Agent done: {turns} turns, {ms}ms ({tokens})",
-                turns=num_turns or 1, ms=elapsed_ms, tokens=token_summary,
-            )
-        else:
-            # Prefer the SDK's client-side cost estimate when available; else
-            # compute from tokens the way the raw-API loop used to.
-            if total_cost_usd is None:
-                cache_read_cost = total_cache_read_tokens * _INPUT_COST_PER_M * 0.1 / 1_000_000
-                cost = (
-                    total_input_tokens * _INPUT_COST_PER_M / 1_000_000
-                    + total_output_tokens * _OUTPUT_COST_PER_M / 1_000_000
-                    + cache_read_cost
-                )
-            else:
-                cost = total_cost_usd
-
+        if self.backend.bills_per_token and result.cost_usd is not None:
             logger.info(
                 "Agent done: {turns} turns, {ms}ms, cost ${cost:.4f} ({tokens})",
-                turns=num_turns or 1, ms=elapsed_ms, cost=cost, tokens=token_summary,
+                turns=result.num_turns or 1, ms=elapsed_ms,
+                cost=result.cost_usd, tokens=token_summary,
+            )
+        else:
+            # Subscription-billed backends, or backends that don't report cost.
+            logger.info(
+                "Agent done: {turns} turns, {ms}ms ({tokens})",
+                turns=result.num_turns or 1, ms=elapsed_ms, tokens=token_summary,
             )
 
-        response_text = last_text or "I couldn't generate a response."
+        response_text = result.text or "I couldn't generate a response."
         self._history.append({
             "role": "assistant",
             "content": response_text,
@@ -517,32 +371,3 @@ class MemclawAgent:
         if task is not None and not task.done():
             task.cancel()
         self.index.close()
-
-
-async def _image_prompt_stream(
-    message: str, image_b64: str, image_media_type: str,
-) -> AsyncIterator[dict[str, Any]]:
-    """Yield a single streaming-input user message containing an image + text.
-
-    The Claude CLI's stream-json protocol expects Anthropic-style content
-    blocks here, so we pass an "image" block with a base64 source followed
-    by the user's text.
-    """
-    yield {
-        "type": "user",
-        "message": {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": image_media_type,
-                        "data": image_b64,
-                    },
-                },
-                {"type": "text", "text": message},
-            ],
-        },
-        "parent_tool_use_id": None,
-    }
