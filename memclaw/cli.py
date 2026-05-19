@@ -101,6 +101,21 @@ def _log_auth_environment(config: MemclawConfig) -> None:
             logger.info("settings.json read failed: {e}", e=exc)
 
 
+def _require_claude_auth(config: MemclawConfig) -> None:
+    """Exit with a helpful message unless one Claude credential is configured."""
+    if config.auth_mode:
+        return
+    console.print(
+        "[red]Error:[/red] no Claude credential is configured.\n"
+        "Choose one:\n"
+        "  • Claude subscription — generate a token with [bold]claude setup-token[/bold] "
+        "and save it as CLAUDE_CODE_OAUTH_TOKEN.\n"
+        "  • Anthropic API key — set ANTHROPIC_API_KEY (billed per token).\n"
+        "Run [bold]memclaw configure[/bold] to set either."
+    )
+    raise SystemExit(1)
+
+
 def _ensure_setup(ctx, channel: str | None = None):
     """Run first-time setup if ~/.memclaw/.env doesn't exist, then reload config.
 
@@ -134,11 +149,7 @@ def cli(ctx, memory_dir):
     if ctx.invoked_subcommand is None:
         _ensure_setup(ctx)
         config = ctx.obj["config"]
-        if not config.claude_code_oauth_token:
-            console.print("[red]Error:[/red] CLAUDE_CODE_OAUTH_TOKEN is not set.")
-            console.print("Generate one by running [bold]claude setup-token[/bold].")
-            console.print("Run [bold]memclaw configure[/bold] to set it.")
-            raise SystemExit(1)
+        _require_claude_auth(config)
         if not config.openai_api_key:
             console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
             console.print("Run [bold]memclaw configure[/bold] to set it.")
@@ -269,10 +280,7 @@ def consolidate(ctx, since_date):
 
     config: MemclawConfig = ctx.obj["config"]
 
-    if not config.claude_code_oauth_token:
-        console.print("[red]Error:[/red] CLAUDE_CODE_OAUTH_TOKEN is not set.")
-        console.print("Generate one by running [bold]claude setup-token[/bold].")
-        raise SystemExit(1)
+    _require_claude_auth(config)
     if not config.openai_api_key:
         console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
         raise SystemExit(1)
@@ -473,11 +481,7 @@ def whatsapp(ctx):
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
-    if not config.claude_code_oauth_token:
-        console.print("[red]Error:[/red] CLAUDE_CODE_OAUTH_TOKEN is not set.")
-        console.print("Generate one by running [bold]claude setup-token[/bold].")
-        console.print("Run [bold]memclaw configure[/bold] to set it.")
-        raise SystemExit(1)
+    _require_claude_auth(config)
 
     # Logging
     logger.remove()
@@ -543,11 +547,7 @@ def slack(ctx):
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
-    if not config.claude_code_oauth_token:
-        console.print("[red]Error:[/red] CLAUDE_CODE_OAUTH_TOKEN is not set.")
-        console.print("Generate one by running [bold]claude setup-token[/bold].")
-        console.print("Run [bold]memclaw configure[/bold] to set it.")
-        raise SystemExit(1)
+    _require_claude_auth(config)
 
     # Logging
     logger.remove()

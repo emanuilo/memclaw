@@ -71,6 +71,21 @@ class MemclawConfig:
         self.memory_subdir.mkdir(exist_ok=True)
         self._init_default_files()
 
+    @property
+    def auth_mode(self) -> str:
+        """Which Claude auth path is configured.
+
+        Returns:
+            "subscription" if CLAUDE_CODE_OAUTH_TOKEN is set (no per-message cost),
+            "api_key" if only ANTHROPIC_API_KEY is set (billed per token),
+            "" if neither is set.
+        """
+        if self.claude_code_oauth_token:
+            return "subscription"
+        if self.anthropic_api_key:
+            return "api_key"
+        return ""
+
     def _init_default_files(self):
         """Copy default files into memory_dir if they don't exist yet."""
         defaults = {"AGENTS.md": self.agent_file}

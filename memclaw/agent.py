@@ -131,22 +131,29 @@ _ALLOWED_TOOLS = [
 ]
 
 
-def _build_env(oauth_token: str) -> dict[str, str]:
+def _build_env(config: MemclawConfig) -> dict[str, str]:
     """Build the env dict for the Claude CLI subprocess.
 
-    Scrub ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN so the OAuth token wins
-    precedence and requests bill against the Max subscription, not API credits.
+    Scrubs every credential env var first so the subprocess never inherits a
+    stale token from the parent shell, then injects exactly one credential
+    based on the configured auth mode:
+
+    - subscription → CLAUDE_CODE_OAUTH_TOKEN, billed against the Claude plan.
+    - api_key      → ANTHROPIC_API_KEY, billed against Console credits.
     """
     env = {
         k: v for k, v in os.environ.items()
         if k not in (
             "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
             "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
             "CLAUDE_CODE_USE_FOUNDRY",
         )
     }
-    if oauth_token:
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    if config.auth_mode == "subscription":
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = config.claude_code_oauth_token
+    elif config.auth_mode == "api_key":
+        env["ANTHROPIC_API_KEY"] = config.anthropic_api_key
     return env
 
 
@@ -184,10 +191,7 @@ class MemclawAgent:
             scheduler=scheduler,
         )
         self._mcp_server = build_mcp_server(self._tools)
-        self._env = _build_env(config.claude_code_oauth_token)
-        # Keep a stable session id so the CLI's prompt cache stays warm across
-        # turns for this agent instance.
-        self._session_id = f"memclaw-{platform or 'cli'}"
+        self._env = _build_env(config)
 
     # ── Startup / sync ───────────────────────────────────────────────
 
@@ -458,29 +462,36 @@ class MemclawAgent:
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
-        # Prefer the SDK's client-side cost estimate when available; else
-        # compute from tokens the way the raw-API loop used to.
-        if total_cost_usd is None:
-            cache_read_cost = total_cache_read_tokens * _INPUT_COST_PER_M * 0.1 / 1_000_000
-            cost = (
-                total_input_tokens * _INPUT_COST_PER_M / 1_000_000
-                + total_output_tokens * _OUTPUT_COST_PER_M / 1_000_000
-                + cache_read_cost
+        token_summary = (
+            f"in={total_input_tokens}, out={total_output_tokens}, "
+            f"cache_read={total_cache_read_tokens}, cache_create={total_cache_creation_tokens}"
+        )
+
+        if self.config.auth_mode == "subscription":
+            # Requests are billed against the Claude plan, not per-token, so
+            # the dollar figure would be misleading. Token counts still help
+            # diagnose context bloat.
+            logger.info(
+                "Agent done: {turns} turns, {ms}ms ({tokens})",
+                turns=num_turns or 1, ms=elapsed_ms, tokens=token_summary,
             )
         else:
-            cost = total_cost_usd
+            # Prefer the SDK's client-side cost estimate when available; else
+            # compute from tokens the way the raw-API loop used to.
+            if total_cost_usd is None:
+                cache_read_cost = total_cache_read_tokens * _INPUT_COST_PER_M * 0.1 / 1_000_000
+                cost = (
+                    total_input_tokens * _INPUT_COST_PER_M / 1_000_000
+                    + total_output_tokens * _OUTPUT_COST_PER_M / 1_000_000
+                    + cache_read_cost
+                )
+            else:
+                cost = total_cost_usd
 
-        logger.info(
-            "Agent done: {turns} turns, {ms}ms, cost ${cost:.4f} "
-            "(in={input_t}, out={output_t}, cache_read={cache_r}, cache_create={cache_c})",
-            turns=num_turns or 1,
-            ms=elapsed_ms,
-            cost=cost,
-            input_t=total_input_tokens,
-            output_t=total_output_tokens,
-            cache_r=total_cache_read_tokens,
-            cache_c=total_cache_creation_tokens,
-        )
+            logger.info(
+                "Agent done: {turns} turns, {ms}ms, cost ${cost:.4f} ({tokens})",
+                turns=num_turns or 1, ms=elapsed_ms, cost=cost, tokens=token_summary,
+            )
 
         response_text = last_text or "I couldn't generate a response."
         self._history.append({
