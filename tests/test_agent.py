@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import numpy as np
 import pytest
 
 from memclaw.config import MemclawConfig
@@ -30,21 +29,51 @@ def cfg(tmp_path: Path) -> MemclawConfig:
     return _make_config(tmp_path)
 
 
-def _mock_api_response(text: str, stop_reason: str = "end_turn"):
-    """Create a mock Anthropic API response with a text block."""
-    block = MagicMock()
-    block.type = "text"
-    block.text = text
-    resp = MagicMock()
-    resp.content = [block]
-    resp.stop_reason = stop_reason
-    resp.usage = MagicMock(
-        input_tokens=100,
-        output_tokens=50,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
+def _mock_sdk_client(text: str):
+    """Build a fake ClaudeSDKClient that yields a single assistant message
+    with *text*, then a ResultMessage. Returns (ctx_factory, client_mock).
+
+    Use with `patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory)`
+    so each `ClaudeSDKClient(options=…)` constructor call returns a fresh
+    async-context object whose `__aenter__` yields the same client mock.
+    """
+    from memclaw.agent import AssistantMessage, ResultMessage, TextBlock
+
+    assistant = AssistantMessage(
+        content=[TextBlock(text=text)],
+        model="claude-sonnet-4-6",
     )
-    return resp
+    result = ResultMessage(
+        subtype="result",
+        duration_ms=10,
+        duration_api_ms=8,
+        is_error=False,
+        num_turns=1,
+        session_id="test",
+        total_cost_usd=None,
+        usage={"input_tokens": 100, "output_tokens": 50,
+               "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+        result=None,
+    )
+
+    client = MagicMock()
+    client.query = AsyncMock()
+
+    def _receive_factory():
+        async def _gen():
+            yield assistant
+            yield result
+        return _gen()
+
+    client.receive_response = MagicMock(side_effect=_receive_factory)
+
+    def _ctx_factory(*args, **kwargs):
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=client)
+        ctx.__aexit__ = AsyncMock(return_value=None)
+        return ctx
+
+    return _ctx_factory, client
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -66,11 +95,10 @@ class TestConversationHistory:
 
         agent.build_context = AsyncMock(return_value="No memories found yet.")
         agent._maybe_consolidate = AsyncMock(return_value=False)
-        agent._client.messages.create = AsyncMock(
-            return_value=_mock_api_response("Hello! I'm Memclaw.")
-        )
 
-        await agent.handle("Hello")
+        ctx_factory, _client = _mock_sdk_client("Hello! I'm Memclaw.")
+        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
+            await agent.handle("Hello")
 
         assert len(agent._history) == 2
         assert agent._history[0]["role"] == "user"
@@ -159,15 +187,11 @@ class TestConsolidation:
             path = cfg.memory_subdir / f"{d.isoformat()}.md"
             path.write_text(f"# Day {i}\nImportant fact {i}")
 
-        mock_response = MagicMock()
-        mock_block = MagicMock()
-        mock_block.text = "## Key Facts\n\n- Fact 0\n- Fact 1\n"
-        mock_response.content = [mock_block]
-
-        agent._client.messages.create = AsyncMock(return_value=mock_response)
         agent.index.index_file = AsyncMock()
 
-        result = await agent._maybe_consolidate()
+        ctx_factory, _client = _mock_sdk_client("## Key Facts\n\n- Fact 0\n- Fact 1\n")
+        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
+            result = await agent._maybe_consolidate()
 
         assert result is True
         assert cfg.memory_file.exists()
@@ -190,15 +214,11 @@ class TestConsolidation:
         path = cfg.memory_subdir / "2025-03-01.md"
         path.write_text("# Single day\nJust one note")
 
-        mock_response = MagicMock()
-        mock_block = MagicMock()
-        mock_block.text = "## Notes\n- One note"
-        mock_response.content = [mock_block]
-
-        agent._client.messages.create = AsyncMock(return_value=mock_response)
         agent.index.index_file = AsyncMock()
 
-        result = await agent._maybe_consolidate(force=True)
+        ctx_factory, _client = _mock_sdk_client("## Notes\n- One note")
+        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
+            result = await agent._maybe_consolidate(force=True)
 
         assert result is True
         agent.close()
@@ -217,22 +237,18 @@ class TestConsolidation:
         meta_path = cfg.memory_dir / "meta.json"
         meta_path.write_text(json.dumps({"consolidated_through": "2025-03-01"}))
 
-        mock_response = MagicMock()
-        mock_block = MagicMock()
-        mock_block.text = "## Consolidated"
-        mock_response.content = [mock_block]
-
-        agent._client.messages.create = AsyncMock(return_value=mock_response)
         agent.index.index_file = AsyncMock()
 
-        result = await agent._maybe_consolidate(
-            force=True,
-            consolidated_through_override=date(2025, 3, 8),
-        )
+        ctx_factory, client = _mock_sdk_client("## Consolidated")
+        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
+            result = await agent._maybe_consolidate(
+                force=True,
+                consolidated_through_override=date(2025, 3, 8),
+            )
 
         assert result is True
-        call_args = agent._client.messages.create.call_args
-        user_msg = call_args.kwargs["messages"][0]["content"]
+        # The user message passed to the SDK should cover days > 2025-03-08.
+        user_msg = client.query.call_args.args[0]
         assert "2025-03-09" in user_msg
         assert "2025-03-10" in user_msg
         assert "2025-03-05" not in user_msg
@@ -259,18 +275,13 @@ class TestConsolidation:
             path = cfg.memory_subdir / f"{d.isoformat()}.md"
             path.write_text("x" * 10000)
 
-        mock_response = MagicMock()
-        mock_block = MagicMock()
-        mock_block.text = "## Consolidated"
-        mock_response.content = [mock_block]
-
-        agent._client.messages.create = AsyncMock(return_value=mock_response)
         agent.index.index_file = AsyncMock()
 
-        await agent._maybe_consolidate(force=True)
+        ctx_factory, client = _mock_sdk_client("## Consolidated")
+        with patch("memclaw.agent.ClaudeSDKClient", side_effect=ctx_factory):
+            await agent._maybe_consolidate(force=True)
 
-        call_args = agent._client.messages.create.call_args
-        user_msg = call_args.kwargs["messages"][0]["content"]
+        user_msg = client.query.call_args.args[0]
         assert len(user_msg) < 35000
 
         agent.close()

@@ -1,9 +1,10 @@
 """Memclaw agent — backed by claude-agent-sdk (claude CLI subprocess).
 
-Auth precedence is managed via ClaudeAgentOptions.env: we strip ANTHROPIC_API_KEY
-and ANTHROPIC_AUTH_TOKEN and set CLAUDE_CODE_OAUTH_TOKEN so requests bill against
-the user's Claude subscription (Max plan + Extra usage) rather than the API
-console credit balance.
+Auth is controlled via ClaudeAgentOptions.env: `_build_env` scrubs every
+Claude/Anthropic credential env var the subprocess could otherwise inherit
+and then injects exactly one based on `config.auth_mode` — either
+CLAUDE_CODE_OAUTH_TOKEN (subscription billing) or ANTHROPIC_API_KEY
+(per-token billing).
 """
 
 from __future__ import annotations
@@ -408,6 +409,11 @@ class MemclawAgent:
             mcp_servers={MCP_SERVER_NAME: self._mcp_server},
             allowed_tools=_ALLOWED_TOOLS,
             disallowed_tools=_BUILTIN_TOOLS_DISALLOW,
+            # SAFETY: bypassPermissions is only safe because allowed_tools
+            # restricts execution to mcp__memclaw__* (our in-process server)
+            # and _BUILTIN_TOOLS_DISALLOW blocks Claude Code's built-ins.
+            # If either guardrail is loosened, revisit this — bypass mode
+            # would otherwise turn any future broad tool into an RCE vector.
             permission_mode="bypassPermissions",
             max_turns=10,
             # Every handle() call is a fresh conversation — the system prompt
