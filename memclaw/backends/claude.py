@@ -232,7 +232,8 @@ class ClaudeAgentBackend:
             drop_key = "CLAUDE_CODE_OAUTH_TOKEN"
 
         current = existing.get(env_key, "")
-        answer = Prompt.ask(f"{label} (required)", default="", show_default=False)
+        from ..setup import _masked_input  # local import — setup imports backends
+        answer = _masked_input(f"{label} (required)")
         value = answer or current
         if not value:
             console.print(f"[red]Error:[/red] {label} is required.")

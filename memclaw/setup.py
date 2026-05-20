@@ -107,6 +107,60 @@ def _mask(value: str) -> str:
     return value[:4] + "..." + value[-4:]
 
 
+def _masked_input(prompt_text: str, *, visible: int = 4) -> str:
+    """Read a line from stdin, echoing only the first `visible` chars verbatim
+    and '*' for everything after. Used for API keys and other config values
+    during the wizard so pasted secrets don't sit in the scrollback in clear.
+    """
+    import sys
+
+    console.print(prompt_text, end=": ")
+    sys.stdout.flush()
+
+    if not sys.stdin.isatty():
+        line = sys.stdin.readline().rstrip("\n")
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        return line
+
+    try:
+        import termios
+        import tty
+    except ImportError:
+        # Non-POSIX (e.g. Windows): fall back to unmasked input.
+        return input()
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    buf: list[str] = []
+    try:
+        tty.setcbreak(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                break
+            if ch == "\x03":  # Ctrl-C
+                raise KeyboardInterrupt
+            if ch in ("\x7f", "\b"):
+                if buf:
+                    buf.pop()
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+            if ord(ch) < 32:
+                continue
+            buf.append(ch)
+            display = ch if len(buf) <= visible else "*"
+            sys.stdout.write(display)
+            sys.stdout.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+    return "".join(buf)
+
+
 def _load_existing() -> dict[str, str]:
     """Load existing values from ~/.memclaw/.env."""
     values: dict[str, str] = {}
@@ -199,7 +253,7 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
         else:
             prompt_text = f"{label} (optional)"
 
-        answer = Prompt.ask(prompt_text, default="", show_default=False)
+        answer = _masked_input(prompt_text)
 
         if answer:
             values[env_key] = answer
