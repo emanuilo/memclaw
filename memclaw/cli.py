@@ -295,6 +295,7 @@ def telegram(ctx):
 
     from loguru import logger
     from openai import AsyncOpenAI
+    from telegram.error import NetworkError, TimedOut
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
     from .bot.handlers import MessageHandlers
@@ -363,6 +364,15 @@ def telegram(ctx):
 
     async def _voice(update, context):
         await context.bot_data["handlers"].handle_voice(update, context)
+
+    async def _on_error(update, context):
+        err = context.error
+        if isinstance(err, (NetworkError, TimedOut)):
+            logger.warning(f"Network blip ({type(err).__name__}): {err} — polling will retry")
+            return
+        logger.exception("Unhandled error in Telegram handler", exc_info=err)
+
+    app.add_error_handler(_on_error)
 
     app.add_handler(CommandHandler("start", _start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text))
