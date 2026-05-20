@@ -8,7 +8,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Anthropic API](https://img.shields.io/badge/Anthropic-API-blueviolet.svg)](https://docs.anthropic.com/)
+[![Claude Agent SDK](https://img.shields.io/badge/Claude-Agent%20SDK-blueviolet.svg)](https://pypi.org/project/claude-agent-sdk/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp-Bot-25D366.svg)](https://github.com/krypton-byte/neonize)
 [![Slack Bot](https://img.shields.io/badge/Slack-Bot-4A154B.svg)](https://api.slack.com/bolt)
@@ -42,7 +42,7 @@ Memclaw takes one slice of what OpenClaw does — **memory** — and does it rea
 
 **Sandboxed by design.** Memclaw only touches `~/.memclaw/`. No filesystem access, no shell commands, no path traversal. You don't need to trust it with your whole computer — it can't see it.
 
-**Lightweight and cheap.** No Docker. No Postgres. No sprawling tool graph burning tokens. Just Python, SQLite, and two API keys. Fast responses, minimal cost.
+**Lightweight and cheap.** No Docker. No Postgres. No sprawling tool graph burning tokens. Just Python, SQLite, and two API tokens. Fast responses, minimal cost.
 
 ## Quick Start
 
@@ -51,7 +51,7 @@ pip install memclaw
 memclaw
 ```
 
-On first run, Memclaw will prompt you for your API keys and save them to `~/.memclaw/.env`. You can update them anytime with `memclaw configure`.
+On first run, Memclaw will prompt you for your API tokens and save them to `~/.memclaw/.env`. You can update them anytime with `memclaw configure`.
 
 ## Messaging Platforms
 
@@ -193,7 +193,7 @@ flowchart LR
     end
 ```
 
-Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and uses the [Anthropic API](https://docs.anthropic.com/) directly with a lightweight agentic loop.
+Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and runs Claude through the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/), which manages the agentic loop, prompt caching, and tool wiring.
 
 ### Storage Layer
 
@@ -217,7 +217,7 @@ Every memory is chunked, embedded, and indexed in SQLite. Retrieval combines two
 
 ### Agent Layer
 
-Powered by Claude via the [Anthropic API](https://docs.anthropic.com/) with a hand-rolled agentic loop. The agent maintains a rolling 10-message-pair conversation history and decides when to **store** vs **search** based on your intent.
+Powered by Claude through the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/) (which itself drives the `claude` CLI subprocess). The agent maintains a rolling 10-message-pair conversation history and decides when to **store** vs **search** based on your intent. You can authenticate either with a Claude subscription or an Anthropic API key — see [Configuration](#configuration).
 
 | Tool | What it does |
 |------|-------------|
@@ -292,12 +292,23 @@ You can also set keys via environment variables or a `.env` in the current direc
 memclaw --memory-dir ~/my-vault   # override storage location
 ```
 
-### API Keys
+### Claude authentication
+
+You authenticate Claude in one of two ways. The setup wizard asks you to pick:
+
+- **Claude subscription** (Pro / Max / Team) — generate a long-lived token with `claude setup-token` and Memclaw saves it as `CLAUDE_CODE_OAUTH_TOKEN`. Requests are billed against your plan, so the per-message cost line is omitted from logs.
+- **Anthropic API key** (pay-as-you-go) — set `ANTHROPIC_API_KEY` to an `sk-ant-…` key. Requests are billed per token against your console credits, and the cost is logged with each turn.
+
+Only one of the two is set at a time — switching modes via `memclaw configure` scrubs the other.
+
+### Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes | Embeddings + image descriptions |
-| `ANTHROPIC_API_KEY` | Yes | Powers the Claude agent |
+| `OPENAI_API_KEY` | Yes | Embeddings + image descriptions + voice transcription |
+| `CLAUDE_CODE_OAUTH_TOKEN` | One of these two | Claude subscription token from `claude setup-token` |
+| `ANTHROPIC_API_KEY` | One of these two | Anthropic API key (`sk-ant-…`), pay-as-you-go |
+| `AGENT_BACKEND` | Optional | Agent SDK to use (defaults to `claude`) |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
 | `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
 | `SLACK_BOT_TOKEN` | For Slack bot | Slack bot token (`xoxb-...`) |
@@ -328,7 +339,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **Claude Agent SDK** — intelligent agent loop that autonomously decides how to handle your input
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
 - **Auto-consolidation** — daily files are periodically distilled into MEMORY.md
-- **Filesystem guardrail** — SDK-level callback blocks all file access outside `~/.memclaw/`
+- **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/`
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
 
 For a deep dive into how memory storage, search, consolidation, and context injection work, see the [Memory Architecture](docs/memory-architecture.md) doc.
@@ -379,5 +390,6 @@ MIT — see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - [OpenClaw](https://github.com/openclaw/openclaw) for the memory architecture inspiration
-- [Anthropic API](https://docs.anthropic.com/) for the agent framework
+- [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/) for the agent runtime
+- [Anthropic](https://www.anthropic.com/) for Claude
 - [SQLite FTS5](https://www.sqlite.org/fts5.html) for full-text search
