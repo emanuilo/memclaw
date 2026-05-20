@@ -8,12 +8,48 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.text import Text
 
 from .backends import DEFAULT_BACKEND, get_backend_class, list_backends
 
 console = Console()
 
 ENV_FILE = Path.home() / ".memclaw" / ".env"
+
+# Wordmark generated with pyfiglet font "ansi_shadow". Split into two halves
+# so each can be colored independently (white for "mem", cyan for "claw")
+# to mirror the logo's color split. Regenerate with:
+#   python -c "import pyfiglet; print(pyfiglet.figlet_format('mem', font='ansi_shadow'))"
+#   python -c "import pyfiglet; print(pyfiglet.figlet_format('claw', font='ansi_shadow'))"
+_LOGO_MEM = (
+    "███╗   ███╗███████╗███╗   ███╗\n"
+    "████╗ ████║██╔════╝████╗ ████║\n"
+    "██╔████╔██║█████╗  ██╔████╔██║\n"
+    "██║╚██╔╝██║██╔══╝  ██║╚██╔╝██║\n"
+    "██║ ╚═╝ ██║███████╗██║ ╚═╝ ██║\n"
+    "╚═╝     ╚═╝╚══════╝╚═╝     ╚═╝"
+)
+_LOGO_CLAW = (
+    " ██████╗██╗      █████╗ ██╗    ██╗\n"
+    "██╔════╝██║     ██╔══██╗██║    ██║\n"
+    "██║     ██║     ███████║██║ █╗ ██║\n"
+    "██║     ██║     ██╔══██║██║███╗██║\n"
+    "╚██████╗███████╗██║  ██║╚███╔███╔╝\n"
+    " ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝ "
+)
+
+
+def _build_logo_banner() -> Text:
+    """Assemble the two-color wordmark as a single Rich Text."""
+    mem_lines = _LOGO_MEM.split("\n")
+    claw_lines = _LOGO_CLAW.split("\n")
+    banner = Text()
+    for i, (m, c) in enumerate(zip(mem_lines, claw_lines)):
+        banner.append(m, style="white")
+        banner.append(c, style="cyan")
+        if i < len(mem_lines) - 1:
+            banner.append("\n")
+    return banner
 
 # Generic keys prompted for every install. The agent-backend credential is
 # collected by the chosen backend's `wizard_setup()`, not by this list.
@@ -101,6 +137,10 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
     """
     existing = _load_existing()
 
+    console.print()
+    console.print(_build_logo_banner(), soft_wrap=True)
+    console.print()
+
     if reconfigure:
         console.print(
             Panel(
@@ -114,7 +154,7 @@ def run_setup(*, reconfigure: bool = False, channel: str | None = None) -> None:
         console.print(
             Panel(
                 "[bold]Welcome to Memclaw![/bold]\n\n"
-                "Let's set up your API keys.\n"
+                "Let's set up your API tokens.\n"
                 "Optional keys can be left blank and configured later\n"
                 "with [bold]memclaw configure[/bold].",
                 title="memclaw setup",
