@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 from cursor_sdk import HttpMcpServerConfig
 
+from memclaw.backends.base import TurnResult
 from memclaw.backends import REGISTRY, get_backend_class
 from memclaw.backends.cursor import (
     CursorAgentBackend,
@@ -18,9 +19,13 @@ from memclaw.backends.cursor import (
     _build_user_message,
 )
 from memclaw.backends.cursor_sdk_adapter import (
+    RunUsageTracker,
+    accumulate_usage,
     assistant_message_text,
     collect_run_result,
     normalize_tool_call,
+    parse_cursor_usage,
+    record_interaction_usage,
 )
 from memclaw.backends.mcp_bridge import HttpMcpServer
 from memclaw.backends.cursor_hooks import cursor_hooks_installed
@@ -154,18 +159,52 @@ class TestCollectRunResult:
         )
         assert assistant_message_text(message) == "Here's a motivational video for you."
 
+    def test_parse_cursor_usage_accepts_snake_and_camel_case(self):
+        parsed = parse_cursor_usage(
+            {
+                "inputTokens": 120,
+                "output_tokens": 45,
+                "cacheReadInputTokens": 10,
+                "cache_creation_input_tokens": 5,
+                "totalCostUsd": 0.0123,
+            }
+        )
+        assert parsed["input_tokens"] == 120
+        assert parsed["output_tokens"] == 45
+        assert parsed["cache_read_tokens"] == 10
+        assert parsed["cache_creation_tokens"] == 5
+        assert parsed["cost_usd"] == pytest.approx(0.0123)
+
+    def test_accumulate_usage_sums_multiple_turns(self):
+        totals: dict[str, int | float | None] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cost_usd": None,
+        }
+        accumulate_usage(totals, {"input_tokens": 100, "output_tokens": 20})
+        accumulate_usage(totals, {"input_tokens": 50, "output_tokens": 10, "total_cost_usd": 0.01})
+        assert totals["input_tokens"] == 150
+        assert totals["output_tokens"] == 30
+        assert totals["cost_usd"] == pytest.approx(0.01)
+
     @pytest.mark.asyncio
     async def test_collect_run_result_prefers_longer_wait_text(self):
-        async def _messages():
+        async def _events():
             yield SimpleNamespace(
-                type="assistant",
-                message=SimpleNamespace(
-                    content=[SimpleNamespace(type="text", text="you.")],
+                sdk_message=SimpleNamespace(
+                    type="assistant",
+                    message=SimpleNamespace(
+                        content=[SimpleNamespace(type="text", text="you.")],
+                    ),
                 ),
+                interaction_update=None,
+                result=None,
             )
 
         mock_run = AsyncMock()
-        mock_run.messages = MagicMock(return_value=_messages())
+        mock_run.events = MagicMock(return_value=_events())
         mock_run.wait = AsyncMock(
             return_value=SimpleNamespace(
                 result="Here's your motivational video: youtube.com/watch?v=abc",
@@ -176,6 +215,46 @@ class TestCollectRunResult:
         result = await collect_run_result(mock_run, max_turns=10)
         assert "motivational video" in result.text
         assert result.text != "you."
+
+    @pytest.mark.asyncio
+    async def test_collect_run_result_reads_turn_ended_usage(self):
+        tracker = RunUsageTracker()
+        tracker.on_delta(
+            SimpleNamespace(
+                type="turn-ended",
+                usage={"input_tokens": 100, "output_tokens": 50},
+            )
+        )
+
+        mock_run = AsyncMock()
+        mock_run.events = MagicMock(return_value=_empty_events())
+        mock_run.wait = AsyncMock(return_value=SimpleNamespace(result="done", num_turns=1))
+
+        result = await collect_run_result(
+            mock_run,
+            max_turns=10,
+            usage_tracker=tracker,
+        )
+        assert result.input_tokens == 100
+        assert result.output_tokens == 50
+        assert result.num_turns == 1
+
+    def test_record_interaction_usage_falls_back_to_token_delta(self):
+        totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "token_delta_sum": 0,
+            "cost_usd": None,
+            "turn_count": 0,
+        }
+        record_interaction_usage(totals, SimpleNamespace(type="token-delta", tokens=42))
+        tracker = RunUsageTracker()
+        tracker.totals = totals
+        result = TurnResult(text="hi")
+        tracker.apply_to_result(result)
+        assert result.output_tokens == 42
 
 
 class TestCursorAgentBackendRuns:
@@ -218,7 +297,7 @@ class TestCursorAgentBackendRuns:
         backend = CursorAgentBackend(cfg)
 
         mock_run = AsyncMock()
-        mock_run.messages = MagicMock(return_value=_empty_messages())
+        mock_run.events = MagicMock(return_value=_empty_events())
         mock_run.wait = AsyncMock(return_value=SimpleNamespace(result="Turn response", num_turns=2))
         mock_agent = AsyncMock()
         mock_agent.send = AsyncMock(return_value=mock_run)
@@ -243,6 +322,9 @@ class TestCursorAgentBackendRuns:
 
         assert result.text == "Turn response"
         assert result.num_turns == 2
+        assert result.cost_usd is None
+        send_options = mock_agent.send.await_args.args[1]
+        assert send_options.on_delta is not None
         mock_client.agents.create.assert_awaited_once()
         create_options = mock_client.agents.create.await_args.args[0]
         assert create_options.mcp_servers == {"memclaw": mock_mcp}
@@ -250,6 +332,55 @@ class TestCursorAgentBackendRuns:
         assert send_options.mcp_servers == {"memclaw": mock_mcp}
         mock_agent.send.assert_awaited_once()
         mock_agent.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_turn_applies_cost_fallback(self, tmp_path):
+        cfg = _make_config(tmp_path, cursor_api_key="crsr_test_key")
+        backend = CursorAgentBackend(cfg)
+
+        async def _events():
+            yield SimpleNamespace(sdk_message=None, interaction_update=None, result=None)
+
+        mock_run = AsyncMock()
+        mock_run.events = MagicMock(return_value=_events())
+        mock_run.wait = AsyncMock(return_value=SimpleNamespace(result="Turn response", num_turns=1))
+
+        captured: dict[str, object] = {}
+
+        async def _send(message, options):
+            options.on_delta(
+                SimpleNamespace(
+                    type="turn-ended",
+                    usage={"input_tokens": 1000, "output_tokens": 500},
+                )
+            )
+            return mock_run
+
+        mock_agent = AsyncMock()
+        mock_agent.send = AsyncMock(side_effect=_send)
+        mock_agent.close = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.agents.create = AsyncMock(return_value=mock_agent)
+        mock_mcp = HttpMcpServerConfig(url="http://127.0.0.1:8765/mcp", type="http")
+
+        with patch("cursor_sdk.AsyncClient") as mock_client_cls, patch.object(
+            backend, "_ensure_mcp_server", new_callable=AsyncMock
+        ), patch.object(
+            HttpMcpServer, "config", new_callable=PropertyMock, return_value=mock_mcp
+        ):
+            mock_client_cls.launch_bridge = AsyncMock(return_value=mock_client)
+
+            result = await backend.run_turn(
+                system_prompt="System",
+                user_message="User",
+                tool_executor=MagicMock(),
+                max_turns=5,
+            )
+
+        assert result.input_tokens == 1000
+        assert result.output_tokens == 500
+        assert result.cost_usd is not None
+        assert result.cost_usd > 0
 
     @pytest.mark.asyncio
     async def test_run_turn_without_mcp_server_raises(self, tmp_path):
@@ -288,6 +419,11 @@ class TestCursorAgentBackendRuns:
         ) as mock_stop:
             await agent.aclose()
             mock_stop.assert_awaited_once()
+
+
+async def _empty_events():
+    if False:  # pragma: no cover - async generator helper
+        yield
 
 
 async def _empty_messages():

@@ -344,6 +344,22 @@ class TestSyncOptimization:
         agent.close()
 
     @pytest.mark.asyncio
+    async def test_start_without_backend_skips_lifecycle(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        """start(include_backend=False) should sync without backend startup."""
+        agent = _make_agent(cfg, fake_backend)
+        agent.index.sync = AsyncMock(return_value=False)
+        fake_backend.on_agent_start = AsyncMock()
+        fake_backend.on_agent_shutdown = AsyncMock()
+
+        await agent.start(include_backend=False)
+        agent.index.sync.assert_called_once()
+        fake_backend.on_agent_start.assert_not_called()
+        assert not agent._backend_started
+
+        await agent.aclose()
+        fake_backend.on_agent_shutdown.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_background_sync_creates_task(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """start_background_sync() should create an asyncio task."""
         import asyncio

@@ -10,7 +10,7 @@ from loguru import logger
 
 from .base import TurnResult
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks
-from .cursor_sdk_adapter import collect_run_result, extract_run_text
+from .cursor_sdk_adapter import RunUsageTracker, collect_run_result, extract_run_text
 from .mcp_bridge import HttpMcpServer, mcp_servers_for
 
 if TYPE_CHECKING:
@@ -20,6 +20,11 @@ if TYPE_CHECKING:
     from ..tools import ToolExecutor
 
 _DEFAULT_MODEL = "composer-2.5"
+
+# Composer 2.5 default pricing (per 1M tokens) — fallback when the SDK
+# doesn't return total cost on a turn-ended usage payload.
+_INPUT_COST_PER_M = 0.5
+_OUTPUT_COST_PER_M = 2.5
 
 # Scrub Claude credentials when switching to Cursor so they can't shadow selection.
 _DROP_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
@@ -32,6 +37,19 @@ def _cursor_api_key(config: "MemclawConfig") -> str:
 def _cursor_model(config: "MemclawConfig") -> str:
     model = (config.cursor_model or os.environ.get("CURSOR_MODEL", "")).strip()
     return model or _DEFAULT_MODEL
+
+
+def _apply_cost_fallback(result: TurnResult, *, bills_per_token: bool) -> None:
+    if result.cost_usd is not None or not bills_per_token:
+        return
+    if not (result.input_tokens or result.output_tokens or result.cache_read_tokens):
+        return
+    cache_read_cost = result.cache_read_tokens * _INPUT_COST_PER_M * 0.1 / 1_000_000
+    result.cost_usd = (
+        result.input_tokens * _INPUT_COST_PER_M / 1_000_000
+        + result.output_tokens * _OUTPUT_COST_PER_M / 1_000_000
+        + cache_read_cost
+    )
 
 
 def _build_combined_prompt(*, system_prompt: str, user_message: str) -> str:
@@ -149,20 +167,19 @@ class CursorAgentBackend:
         from rich.prompt import Prompt
 
         model_answer = Prompt.ask(
-            f"Cursor model [{model_current or _DEFAULT_MODEL}]",
-            default=model_current or _DEFAULT_MODEL,
+            r"Cursor model \[composer-2.5 is default, optional]",
+            default="",
             show_default=False,
         )
         if model_answer.strip():
             values["CURSOR_MODEL"] = model_answer.strip()
+        elif model_current:
+            values["CURSOR_MODEL"] = model_current
 
         from ..config import MemclawConfig
 
         cfg = MemclawConfig(memory_dir=Path(memory_dir)) if memory_dir else MemclawConfig()
-        if ensure_cursor_hooks(cfg.memory_dir):
-            status = cursor_hooks_status(cfg.memory_dir)
-            logger.info("Cursor tool-restriction hooks: {status}", status=status)
-        else:
+        if not ensure_cursor_hooks(cfg.memory_dir):
             status = cursor_hooks_status(cfg.memory_dir)
             logger.warning(
                 "Cursor tool-restriction hooks are not ready ({status}). "
@@ -265,6 +282,7 @@ class CursorAgentBackend:
             raise RuntimeError("MCP server failed to start")
 
         mcp_servers = mcp_servers_for(mcp_config)
+        usage_tracker = RunUsageTracker()
         client = await self._launch_client()
         try:
             agent = await client.agents.create(
@@ -278,14 +296,22 @@ class CursorAgentBackend:
             try:
                 run = await agent.send(
                     message,
-                    SendOptions(mcp_servers=mcp_servers),
+                    SendOptions(
+                        mcp_servers=mcp_servers,
+                        on_delta=usage_tracker.on_delta,
+                    ),
                 )
-                result = await collect_run_result(run, max_turns=max_turns)
+                result = await collect_run_result(
+                    run,
+                    max_turns=max_turns,
+                    usage_tracker=usage_tracker,
+                )
             finally:
                 await agent.close()
 
             if not result.text.strip():
                 result.text = "I couldn't generate a response."
+            _apply_cost_fallback(result, bills_per_token=self.bills_per_token)
             return result
         except CursorAgentError as exc:
             logger.error("Cursor SDK turn failed: {msg}", msg=exc.message)

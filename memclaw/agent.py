@@ -132,6 +132,7 @@ class MemclawAgent:
             scheduler=scheduler,
         )
         self.backend: AgentBackend = backend or build_backend(config)
+        self._backend_started = False
 
     # ── Startup / sync ───────────────────────────────────────────────
 
@@ -147,13 +148,17 @@ class MemclawAgent:
         if len(self._history) > max_entries:
             self._history = self._history[-max_entries:]
 
-    async def start(self):
+    async def start(self, *, include_backend: bool = True):
         await self.index.sync()
-        await self.backend.on_agent_start(self._tools)
+        if include_backend:
+            await self.backend.on_agent_start(self._tools)
+            self._backend_started = True
 
     async def aclose(self):
         """Async shutdown: release backend resources then sync cleanup."""
-        await self.backend.on_agent_shutdown()
+        if self._backend_started:
+            await self.backend.on_agent_shutdown()
+            self._backend_started = False
         self._close_sync_only()
 
     async def start_background_sync(self, interval: int = 60):
