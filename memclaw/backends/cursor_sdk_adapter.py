@@ -140,6 +140,8 @@ def parse_cursor_usage(usage: Mapping[str, Any] | None) -> dict[str, int | float
         ),
         "cache_creation_tokens": _mapping_get_int(
             usage,
+            "cache_write_tokens",
+            "cacheWriteTokens",
             "cache_creation_input_tokens",
             "cacheCreationInputTokens",
             "cache_creation_tokens",

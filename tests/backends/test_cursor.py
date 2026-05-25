@@ -164,8 +164,8 @@ class TestCollectRunResult:
             {
                 "inputTokens": 120,
                 "output_tokens": 45,
-                "cacheReadInputTokens": 10,
-                "cache_creation_input_tokens": 5,
+                "cacheReadTokens": 10,
+                "cacheWriteTokens": 5,
                 "totalCostUsd": 0.0123,
             }
         )
@@ -345,13 +345,16 @@ class TestCursorAgentBackendRuns:
         mock_run.events = MagicMock(return_value=_events())
         mock_run.wait = AsyncMock(return_value=SimpleNamespace(result="Turn response", num_turns=1))
 
-        captured: dict[str, object] = {}
-
         async def _send(message, options):
             options.on_delta(
                 SimpleNamespace(
                     type="turn-ended",
-                    usage={"input_tokens": 1000, "output_tokens": 500},
+                    usage={
+                        "inputTokens": 1000,
+                        "outputTokens": 500,
+                        "cacheReadTokens": 200,
+                        "cacheWriteTokens": 50,
+                    },
                 )
             )
             return mock_run
@@ -379,6 +382,8 @@ class TestCursorAgentBackendRuns:
 
         assert result.input_tokens == 1000
         assert result.output_tokens == 500
+        assert result.cache_read_tokens == 200
+        assert result.cache_creation_tokens == 50
         assert result.cost_usd is not None
         assert result.cost_usd > 0
 
