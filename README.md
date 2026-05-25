@@ -9,6 +9,7 @@ Store your thoughts. Save your images and links. Ask anything, anytime.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Claude Agent SDK](https://img.shields.io/badge/Claude-Agent%20SDK-blueviolet.svg)](https://pypi.org/project/claude-agent-sdk/)
+[![Cursor SDK](https://img.shields.io/badge/Cursor-SDK-000000.svg)](https://pypi.org/project/cursor-sdk/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4.svg)](https://core.telegram.org/bots)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp-Bot-25D366.svg)](https://github.com/krypton-byte/neonize)
 [![Slack Bot](https://img.shields.io/badge/Slack-Bot-4A154B.svg)](https://api.slack.com/bolt)
@@ -165,7 +166,8 @@ To update keys later: `memclaw configure`.
 
 | Message type | What happens |
 |-------------|-------------|
-| **Text** | Agent decides: store as memory, search existing memories, or both. Links are extracted, fetched, and summarized automatically. |
+| **Text** | Agent decides: store as memory, search existing memories, or both. |
+| **Link** | URLs in any message are fetched, summarized, and indexed alongside the surrounding text for later retrieval. |
 | **Photo** | AI-described via vision model, stored and indexed. Agent acknowledges and responds. Saved for later retrieval. |
 | **Voice / Audio** | Transcribed via Whisper, stored as text. Agent responds to the content. Links extracted. |
 | **Reminders** | One-shot (`remind me tomorrow at 9am to call Alex`) or recurring (`remind me every 5 hours to drink water`). Delivered back to the same chat. List with *show my reminders*, cancel by id. |
@@ -188,6 +190,30 @@ Here's the sprint planning whiteboard you saved last week.
 Reminder #4 scheduled for 2025-06-16T09:00.
 ```
 
+## Agent Backend
+
+Memclaw runs your messages through a pluggable agent SDK. Two backends are supported, and the setup wizard asks which one to use — only that backend's keys are saved to `~/.memclaw/.env`. Switch later anytime with `memclaw configure`.
+
+- **Claude** (default) — via the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/). Works with a Claude subscription (Pro/Max/Team) or an Anthropic API key.
+- **Cursor** — via the [`cursor-sdk`](https://pypi.org/project/cursor-sdk/). Uses Composer 2.5 by default. Requires a Cursor API key. Install with `pip install 'memclaw[cursor]'` to pull in the SDK.
+
+### Claude
+
+The wizard asks you to pick one of two auth modes:
+
+- **Claude subscription** (Pro / Max / Team) — generate a long-lived token with `claude setup-token`; Memclaw saves it as `CLAUDE_CODE_OAUTH_TOKEN`. Requests bill against your plan, and the per-message cost line is omitted from logs.
+- **Anthropic API key** (pay-as-you-go) — set `ANTHROPIC_API_KEY` to an `sk-ant-…` key. Requests bill per token against your console credits, and the cost is logged with each turn.
+
+Only one of the two is set at a time.
+
+### Cursor
+
+- Generate an API key from the Cursor Dashboard → Integrations (or a team service account key).
+- The wizard prompts for `CURSOR_API_KEY` and an optional `CURSOR_MODEL` (defaults to `composer-2.5`).
+- Memclaw tools are exposed to the Cursor agent via a long-lived local HTTP MCP server on `127.0.0.1` (default port `17373`, override with `MEMCLAW_MCP_PORT`).
+- Requests bill per token against your Cursor plan (or pay-as-you-go overage rates once your plan limit is reached), and the cost is logged with each turn.
+
+
 ## How It Works
 
 ```mermaid
@@ -205,7 +231,7 @@ flowchart LR
     end
 ```
 
-Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and runs Claude through the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/), which manages the agentic loop, prompt caching, and tool wiring.
+Memclaw draws inspiration from [OpenClaw](https://github.com/openclaw/openclaw)'s memory architecture and drives a pluggable agent SDK ([Claude](https://pypi.org/project/claude-agent-sdk/) or [Cursor](https://pypi.org/project/cursor-sdk/)) that handles the agentic loop, prompt caching, and tool wiring — see [Agent Backend](#agent-backend) for setup.
 
 ### Storage Layer
 
@@ -229,7 +255,7 @@ Every memory is chunked, embedded, and indexed in SQLite. Retrieval combines two
 
 ### Agent Layer
 
-Powered by Claude through the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/) (which itself drives the `claude` CLI subprocess). The agent maintains a rolling 10-message-pair conversation history and decides when to **store** vs **search** based on your intent. You can authenticate either with a Claude subscription or an Anthropic API key — see [Configuration](#configuration).
+A pluggable agent SDK drives the loop — Claude or Cursor, picked during setup ([Agent Backend](#agent-backend)). The agent maintains a rolling 10-message-pair conversation history and decides when to **store** vs **search** based on your intent.
 
 | Tool | What it does |
 |------|-------------|
@@ -264,7 +290,7 @@ She's moving to Berlin for a new role at Stripe.
 
 ### Direct Commands
 
-These work without the Claude agent — only the OpenAI key is needed for embeddings.
+These work without the agent — only the OpenAI key is needed for embeddings.
 
 ```bash
 # Save a quick note
@@ -309,26 +335,7 @@ You can also set keys via environment variables or a `.env` in the current direc
 memclaw --memory-dir ~/my-vault   # override storage location
 ```
 
-### Claude authentication
-
-You authenticate Claude in one of two ways. The setup wizard asks you to pick:
-
-- **Claude subscription** (Pro / Max / Team) — generate a long-lived token with `claude setup-token` and Memclaw saves it as `CLAUDE_CODE_OAUTH_TOKEN`. Requests are billed against your plan, so the per-message cost line is omitted from logs.
-- **Anthropic API key** (pay-as-you-go) — set `ANTHROPIC_API_KEY` to an `sk-ant-…` key. Requests are billed per token against your console credits, and the cost is logged with each turn.
-
-Only one of the two is set at a time — switching modes via `memclaw configure` scrubs the other.
-
-### Cursor backend
-
-Set `AGENT_BACKEND=cursor` to use the [Cursor Python SDK](https://pypi.org/project/cursor-sdk/) instead of Claude. The setup wizard shows a backend selector when both are available.
-
-- **`CURSOR_API_KEY`** (required) — from Cursor Dashboard → Integrations, or a team service account key.
-- **`CURSOR_MODEL`** (optional) — defaults to `composer-2.5`.
-- **`MEMCLAW_MCP_PORT`** (optional) — local MCP HTTP port (default `17373`).
-
-Memclaw tools (`memory_save`, reminders, etc.) are exposed to the Cursor agent via a long-lived local HTTP MCP server on `127.0.0.1`, started and stopped with Memclaw. The port defaults to **17373** (`MEMCLAW_MCP_PORT`), matching the Claude backend's tool surface.
-
-Built-in Cursor tools are blocked via project hooks installed at `~/.memclaw/.cursor/hooks.json` (loaded with `setting_sources=["project"]`). Restart Memclaw or run `memclaw configure` after upgrading to refresh hooks if built-in tools still appear.
+Backend choice and credentials are covered above in [Agent Backend](#agent-backend).
 
 ### Environment variables
 
@@ -369,7 +376,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **Markdown as source of truth** — all memories live as plain text you can read, edit, and version-control
 - **SQLite for indexing** — zero-config database with FTS5 for keyword search and BLOBs for embeddings
 - **NumPy for vectors** — cosine similarity computed in-memory, no native extensions required
-- **Claude Agent SDK** — intelligent agent loop that autonomously decides how to handle your input
+- **Pluggable agent SDK** — Claude or Cursor drives the agentic loop that decides how to handle your input ([Agent Backend](#agent-backend))
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
 - **Auto-consolidation** — daily files are periodically distilled into MEMORY.md
 - **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/`
