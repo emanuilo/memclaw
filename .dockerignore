@@ -1,0 +1,47 @@
+# VCS
+.git
+.gitignore
+.github
+
+# Python build / cache
+__pycache__
+*.py[cod]
+*.so
+*.egg-info
+build
+dist
+.venv
+venv
+
+# Test / lint caches
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Editor / IDE
+.idea
+.vscode
+.cursorignore
+.cursorindexingignore
+
+# Local secrets and runtime state
+.env
+.env.*
+!.env.example
+.memclaw
+
+# Docs and meta - not needed inside the image. README.md is kept because
+# pyproject.toml references it during the build.
+docs
+tests
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+LICENSE
+
+# Docker artifacts themselves
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
