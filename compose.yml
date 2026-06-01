@@ -12,7 +12,7 @@ services:
   memclaw:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     image: memclaw:latest
     container_name: memclaw
     restart: unless-stopped

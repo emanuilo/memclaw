@@ -7,7 +7,7 @@
 # Claude CLI + libmagic for WhatsApp/neonize).
 
 # ---------- 1. dependency build ----------
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.12-slim-trixie AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -15,7 +15,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 
 # Static-linked uv binary, copied from the official image.
-COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.17 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 # ---------- 2. runtime ----------
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-trixie
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -59,8 +59,11 @@ RUN apt-get update \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @anthropic-ai/claude-code \
-    && apt-get purge -y curl \
-    && apt-get autoremove -y \
+    # gnupg/dirmngr only existed to verify the NodeSource apt signature;
+    # keeping them in the final image would carry ~12 unfixed GnuPG CVEs
+    # for no runtime benefit.
+    && apt-get purge -y curl gnupg gnupg-l10n dirmngr \
+    && apt-get autoremove -y --purge \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Non-root runtime user. Fixed UID/GID so bind-mounted host volumes can be

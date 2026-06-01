@@ -41,7 +41,7 @@ CONTRIBUTING.md
 LICENSE
 
 # Docker artifacts themselves
-Dockerfile
+docker/Dockerfile
 .dockerignore
-docker-compose.yml
-docker-compose.*.yml
+compose.yml
+compose.*.yml
