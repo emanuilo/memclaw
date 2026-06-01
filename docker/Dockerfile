@@ -56,7 +56,7 @@ RUN apt-get update \
         gosu \
         libmagic1 \
         tini \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @anthropic-ai/claude-code \
     # gnupg/dirmngr only existed to verify the NodeSource apt signature;

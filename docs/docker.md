@@ -8,7 +8,7 @@ ports, just OpenAI + agent-backend credentials and bot tokens.
 
 - `python:3.12-slim-bookworm` base
 - Memclaw and its Python deps, installed from `uv.lock` into `/app/.venv`
-- Node.js 22 + `@anthropic-ai/claude-code` (the Claude backend shells out to it)
+- Node.js 24 (active LTS) + `@anthropic-ai/claude-code` (the Claude backend shells out to it)
 - `libmagic1` (required by `neonize` / `python-magic` for the WhatsApp backend)
 - A non-root user `memclaw` (uid 1000) whose `~/.memclaw` is the persistent
   data volume
