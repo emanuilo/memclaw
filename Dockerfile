@@ -45,12 +45,15 @@ ENV PYTHONUNBUFFERED=1 \
 # System deps:
 #   libmagic1 - python-magic / neonize (WhatsApp backend)
 #   tini      - PID 1 signal handling, clean Ctrl-C and SIGTERM
+#   gosu      - entrypoint chowns the bind mount as root then drops to
+#               the memclaw user (standard Postgres-image pattern)
 #   nodejs    - the claude-agent-sdk shells out to the Claude Code CLI
 #   curl/ca-certificates - needed temporarily for the NodeSource setup
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        gosu \
         libmagic1 \
         tini \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -73,7 +76,9 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /home/memclaw/.memclaw \
     && chown -R memclaw:memclaw /home/memclaw
 
-USER memclaw
+# Entrypoint starts as root so it can chown the bind-mounted data dir
+# when the host user isn't already uid 1000, then drops to `memclaw`
+# via gosu. See docker/entrypoint.sh.
 WORKDIR /home/memclaw
 
 # Persistent state: MEMORY.md, memclaw.db, daily notes, images, bot sessions.

@@ -74,12 +74,12 @@ rebuilds and can be backed up / inspected directly. It holds:
 - `whatsapp/session.db` - the paired WhatsApp session
 - `slack/`, `bot.log`, `whatsapp.log`, `slack.log`
 
-The container runs as uid:gid `1000:1000`. If your host user isn't
-already 1000, create the directory and chown it before the first `up`:
-
-```bash
-mkdir -p data && sudo chown -R 1000:1000 data
-```
+The container runs as uid:gid `1000:1000`. The entrypoint starts as
+root, chowns `./data` to that uid on first boot (only when ownership
+is actually wrong, so steady-state restarts skip the walk), and drops
+to the `memclaw` user via `gosu` before exec'ing the CLI - so you do
+*not* need to `chown` the directory yourself, even on a host where
+your user isn't 1000.
 
 `data/` is gitignored. Prefer a named volume instead? Swap the bind
 mount for `memclaw-data:/home/memclaw/.memclaw` and add a top-level

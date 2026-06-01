@@ -21,9 +21,9 @@ services:
     volumes:
       # Bind mount keeps MEMORY.md, the SQLite index, images, and bot
       # sessions on the host so they survive image rebuilds and can be
-      # backed up / git-tracked directly. The container's `memclaw` user
-      # is uid:gid 1000:1000 - `chown -R 1000:1000 ./data` first if your
-      # host user isn't already 1000.
+      # backed up / git-tracked directly. The entrypoint runs as root,
+      # chowns the directory to the in-container `memclaw` user (uid
+      # 1000), then drops privileges - so no host-side chown needed.
       - ./data:/home/memclaw/.memclaw
     # WhatsApp's QR pairing on first run needs a TTY. Telegram/Slack don't,
     # but keeping these on is harmless and lets `docker compose attach` work.
