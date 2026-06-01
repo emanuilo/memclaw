@@ -19,17 +19,14 @@ services:
     env_file:
       - .env
     volumes:
-      # Named volume keeps MEMORY.md, the SQLite index, images, and bot
-      # sessions across container restarts and image rebuilds. Swap for a
-      # bind mount (e.g. `./data:/home/memclaw/.memclaw`) if you'd rather
-      # see the files on the host - chown the directory to 1000:1000 first.
-      - memclaw-data:/home/memclaw/.memclaw
+      # Bind mount keeps MEMORY.md, the SQLite index, images, and bot
+      # sessions on the host so they survive image rebuilds and can be
+      # backed up / git-tracked directly. The container's `memclaw` user
+      # is uid:gid 1000:1000 - `chown -R 1000:1000 ./data` first if your
+      # host user isn't already 1000.
+      - ./data:/home/memclaw/.memclaw
     # WhatsApp's QR pairing on first run needs a TTY. Telegram/Slack don't,
     # but keeping these on is harmless and lets `docker compose attach` work.
     stdin_open: true
     tty: true
     # Telegram/Slack/WhatsApp are all outbound - no ports to publish.
-
-volumes:
-  memclaw-data:
-    name: memclaw-data

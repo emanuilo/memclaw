@@ -64,8 +64,9 @@ the named volume, so you only pair once.
 
 ## 4. Data persistence
 
-The compose file declares a named volume `memclaw-data` mounted at
-`/home/memclaw/.memclaw`. It holds:
+The compose file bind-mounts `./data` on the host to
+`/home/memclaw/.memclaw` in the container so files survive image
+rebuilds and can be backed up / inspected directly. It holds:
 
 - `MEMORY.md`, `AGENTS.md`, and `memory/YYYY-MM-DD.md` daily notes
 - `memclaw.db` - the SQLite index (embeddings + FTS5)
@@ -73,15 +74,16 @@ The compose file declares a named volume `memclaw-data` mounted at
 - `whatsapp/session.db` - the paired WhatsApp session
 - `slack/`, `bot.log`, `whatsapp.log`, `slack.log`
 
-To use a host directory instead so you can `git`/back up the files
-directly, replace the volume with a bind mount in `docker-compose.yml`:
+The container runs as uid:gid `1000:1000`. If your host user isn't
+already 1000, create the directory and chown it before the first `up`:
 
-```yaml
-    volumes:
-      - ./data:/home/memclaw/.memclaw
+```bash
+mkdir -p data && sudo chown -R 1000:1000 data
 ```
 
-Then `mkdir -p data && sudo chown -R 1000:1000 data` before `up`.
+`data/` is gitignored. Prefer a named volume instead? Swap the bind
+mount for `memclaw-data:/home/memclaw/.memclaw` and add a top-level
+`volumes: { memclaw-data: {} }` block.
 
 ## 5. Common operations
 

@@ -33,3 +33,4 @@ htmlcov/
 
 # Memclaw local data
 .memclaw/
+data/
