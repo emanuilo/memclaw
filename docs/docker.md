@@ -29,6 +29,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 TELEGRAM_BOT_TOKEN=123456:ABC...
 ALLOWED_USER_IDS=123456789
+
+# Local timezone for reminders and daily-note dates (defaults to UTC)
+TZ=Europe/Belgrade
 ```
 
 Slack and WhatsApp work the same way - set `MEMCLAW_PLATFORM` and fill in
@@ -37,6 +40,13 @@ that platform's tokens. See the project README for the full list of env vars.
 > The container's entrypoint creates an empty `~/.memclaw/.env` on first
 > boot to skip Memclaw's interactive setup wizard. Credentials are taken
 > from the env vars supplied by Docker, not from that file.
+
+> **Set `TZ` to your local timezone** (an IANA name such as
+> `Europe/Belgrade` or `America/New_York`). Memclaw reads the system clock,
+> so if `TZ` is unset the container runs on UTC: absolute reminders ("remind
+> me at 9am") fire on UTC wall-clock time and daily notes roll over at UTC
+> midnight. The image bundles `tzdata`, so any IANA zone works and the
+> CET/CEST daylight-saving switch is handled automatically.
 
 ## 2. Build and start
 
