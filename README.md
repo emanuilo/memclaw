@@ -62,6 +62,8 @@ pip install --upgrade memclaw   # or `pipx upgrade memclaw`
 
 Your config and memories live in `~/.memclaw/` and are preserved across upgrades.
 
+> **Deploying to a server?** See [Running on a VPS with Docker](docs/docker.md) for a Docker Compose setup.
+
 ## Messaging Platforms
 
 The main way to use Memclaw. Just talk to it naturally — no commands needed. Send text, photos, voice messages, or links, or ask to be reminded later. The agent figures out what to do: store it, search your memories, retrieve images, schedule a reminder, or just chat.
