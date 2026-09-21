@@ -18,15 +18,18 @@ from memclaw.config import MemclawConfig
 # ────────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _isolate_credentials(monkeypatch):
-    """Prevent the developer's shell env from leaking into `MemclawConfig`.
+def _isolate_claude_env(monkeypatch):
+    """Prevent the developer's own settings from leaking into `MemclawConfig`.
 
     MemclawConfig.__post_init__ falls back to os.environ when fields are
-    blank, so a real CLAUDE_CODE_OAUTH_TOKEN in the parent shell would
-    silently override `_make_config(api_key=...)`.
+    blank, and importing memclaw.config loads ~/.memclaw/.env into os.environ.
+    So a real CLAUDE_CODE_OAUTH_TOKEN would silently override
+    `_make_config(api_key=...)`, and a developer who has run the wizard would
+    see their own ANTHROPIC_MODEL stand in for the built-in default.
     """
     for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY",
-                 "ANTHROPIC_AUTH_TOKEN"):
+                 "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
+                 "ANTHROPIC_EFFORT"):
         monkeypatch.delenv(name, raising=False)
 
 
