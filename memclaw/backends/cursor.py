@@ -145,6 +145,10 @@ class CursorAgentBackend:
         )
 
     @classmethod
+    def status_rows(cls, config: "MemclawConfig") -> list[tuple[str, str]]:
+        return [("Model", _cursor_model(config))]
+
+    @classmethod
     def wizard_setup(
         cls,
         console: "Console",

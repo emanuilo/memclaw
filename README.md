@@ -208,6 +208,8 @@ The wizard asks you to pick one of two auth modes:
 
 Only one of the two is set at a time.
 
+The wizard then lets you pick a model from the list Anthropic offers your credential and, if the model supports it, an effort level. Pressing Enter keeps your current choice.
+
 ### Cursor
 
 - Generate an API key from the Cursor Dashboard → Integrations (or a team service account key).
@@ -346,6 +348,8 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 | `OPENAI_API_KEY` | Yes | Embeddings + image descriptions + voice transcription |
 | `CLAUDE_CODE_OAUTH_TOKEN` | One of these two | Claude subscription token from `claude setup-token` |
 | `ANTHROPIC_API_KEY` | One of these two | Anthropic API key (`sk-ant-…`), pay-as-you-go |
+| `CLAUDE_MODEL` | Optional | Claude model to run (defaults to `claude-sonnet-4-6`) |
+| `CLAUDE_EFFORT` | Optional | Effort level: `low`, `medium`, `high`, `xhigh`, or `max` (unset lets the model decide) |
 | `AGENT_BACKEND` | Optional | Agent SDK to use (defaults to `claude`; set to `cursor` for Cursor SDK) |
 | `MEMCLAW_PLATFORM` | Optional | Front-end the bare `memclaw` launches: `telegram`, `whatsapp`, `slack`, or `terminal` (defaults to `terminal`) |
 | `CURSOR_API_KEY` | For Cursor backend | Cursor API key from Dashboard → Integrations |

@@ -422,6 +422,8 @@ def rebuild_index(ctx):
 @click.pass_context
 def status(ctx):
     """Show memory vault status."""
+    from .backends import get_backend_class, resolve_backend_name
+
     config: MemclawConfig = ctx.obj["config"]
     store = MemoryStore(config)
     index = MemoryIndex(config)
@@ -430,14 +432,20 @@ def status(ctx):
     stats = index.get_stats()
     index.close()
 
+    backend_cls = get_backend_class(resolve_backend_name(config))
+    rows = [
+        ("Memory directory", config.memory_dir),
+        ("Memory files", len(files)),
+        ("Platform", config.platform or "terminal"),
+        *backend_cls.status_rows(config),
+        ("Indexed chunks", stats["chunks"]),
+        ("Stored images", stats["images"]),
+        ("Database", config.db_path),
+    ]
+
     console.print(
         Panel(
-            f"Memory directory : {config.memory_dir}\n"
-            f"Memory files     : {len(files)}\n"
-            f"Platform         : {config.platform or 'terminal'}\n"
-            f"Indexed chunks   : {stats['chunks']}\n"
-            f"Stored images    : {stats['images']}\n"
-            f"Database         : {config.db_path}",
+            "\n".join(f"{label:<16} : {value}" for label, value in rows),
             title="Memclaw Status",
             border_style="bright_cyan",
         )

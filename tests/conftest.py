@@ -26,6 +26,34 @@ def tmp_config(tmp_path: Path) -> MemclawConfig:
 
 
 @pytest.fixture
+def isolate_claude_env(monkeypatch):
+    """Keep the developer's own Claude settings out of `MemclawConfig`.
+
+    MemclawConfig.__post_init__ falls back to os.environ when fields are
+    blank, and importing memclaw.config loads ~/.memclaw/.env into os.environ.
+    So a real CLAUDE_CODE_OAUTH_TOKEN would silently override the credential
+    a test configures, and a developer who has run the wizard would see their
+    own CLAUDE_MODEL stand in for the built-in default.
+    """
+    for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY",
+                 "ANTHROPIC_AUTH_TOKEN", "CLAUDE_MODEL", "CLAUDE_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def claude_config(tmp_path: Path, isolate_claude_env):
+    """Factory for a MemclawConfig carrying only the Claude credential given."""
+    def _make(*, oauth: str = "", api_key: str = "") -> MemclawConfig:
+        return MemclawConfig(
+            memory_dir=tmp_path / "m",
+            openai_api_key="test-openai-key",
+            anthropic_api_key=api_key,
+            claude_code_oauth_token=oauth,
+        )
+    return _make
+
+
+@pytest.fixture
 def store(tmp_config: MemclawConfig) -> MemoryStore:
     return MemoryStore(tmp_config)
 
