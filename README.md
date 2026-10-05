@@ -208,7 +208,7 @@ The wizard asks you to pick one of two auth modes:
 
 Only one of the two is set at a time.
 
-The wizard then asks which model to run. The list is fetched live from Anthropic with the credential you just entered, so a newly released model appears without a Memclaw update — and a model that supports it also gets an effort question (`low`, `medium`, `high`, `xhigh`, `max`), which sets how deeply Claude thinks before answering. Lower is faster and cheaper. Both answers are saved as `CLAUDE_MODEL` and `CLAUDE_EFFORT`, and `memclaw status` shows them. Accept the defaults and nothing changes; if the list cannot be fetched (no network, bad key), the wizard warns once and keeps the current model.
+The wizard then lets you pick a model from the list Anthropic offers your credential and, if the model supports it, an effort level. Pressing Enter keeps your current choice.
 
 ### Cursor
 
