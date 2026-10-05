@@ -208,7 +208,7 @@ The wizard asks you to pick one of two auth modes:
 
 Only one of the two is set at a time.
 
-The wizard then asks which model to run. The list is fetched live from Anthropic with the credential you just entered, so a newly released model appears without a Memclaw update — and a model that supports it also gets an effort question (`low`, `medium`, `high`, `xhigh`, `max`), which sets how deeply Claude thinks before answering. Lower is faster and cheaper. Both answers are saved as `ANTHROPIC_MODEL` and `ANTHROPIC_EFFORT`, and `memclaw status` shows them. Accept the defaults and nothing changes; if the list cannot be fetched (no network, bad key), the wizard warns once and keeps the current model.
+The wizard then asks which model to run. The list is fetched live from Anthropic with the credential you just entered, so a newly released model appears without a Memclaw update — and a model that supports it also gets an effort question (`low`, `medium`, `high`, `xhigh`, `max`), which sets how deeply Claude thinks before answering. Lower is faster and cheaper. Both answers are saved as `CLAUDE_MODEL` and `CLAUDE_EFFORT`, and `memclaw status` shows them. Accept the defaults and nothing changes; if the list cannot be fetched (no network, bad key), the wizard warns once and keeps the current model.
 
 ### Cursor
 
@@ -348,8 +348,8 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 | `OPENAI_API_KEY` | Yes | Embeddings + image descriptions + voice transcription |
 | `CLAUDE_CODE_OAUTH_TOKEN` | One of these two | Claude subscription token from `claude setup-token` |
 | `ANTHROPIC_API_KEY` | One of these two | Anthropic API key (`sk-ant-…`), pay-as-you-go |
-| `ANTHROPIC_MODEL` | Optional | Claude model to run (defaults to `claude-sonnet-4-6`) |
-| `ANTHROPIC_EFFORT` | Optional | Effort level: `low`, `medium`, `high`, `xhigh`, or `max` (unset lets the model decide) |
+| `CLAUDE_MODEL` | Optional | Claude model to run (defaults to `claude-sonnet-4-6`) |
+| `CLAUDE_EFFORT` | Optional | Effort level: `low`, `medium`, `high`, `xhigh`, or `max` (unset lets the model decide) |
 | `AGENT_BACKEND` | Optional | Agent SDK to use (defaults to `claude`; set to `cursor` for Cursor SDK) |
 | `MEMCLAW_PLATFORM` | Optional | Front-end the bare `memclaw` launches: `telegram`, `whatsapp`, `slack`, or `terminal` (defaults to `terminal`) |
 | `CURSOR_API_KEY` | For Cursor backend | Cursor API key from Dashboard → Integrations |

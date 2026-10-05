@@ -75,7 +75,7 @@ def _claude_auth_mode(config: "MemclawConfig") -> str:
 
 def _resolve_model(config: "MemclawConfig") -> str:
     """The configured model, or the built-in default when unset."""
-    return (config.anthropic_model or "").strip() or _MODEL
+    return (config.claude_model or "").strip() or _MODEL
 
 
 def _resolve_effort(config: "MemclawConfig") -> str | None:
@@ -89,7 +89,7 @@ def _resolve_effort(config: "MemclawConfig") -> str | None:
     Whether the chosen *model* accepts an effort level is a separate question,
     settled in the wizard — it stores no level for a model that reports none.
     """
-    effort = (config.anthropic_effort or "").strip().lower()
+    effort = (config.claude_effort or "").strip().lower()
     return effort if effort in SDK_EFFORT_LEVELS else None
 
 
@@ -291,7 +291,7 @@ class ClaudeAgentBackend:
         already had in place: picking a model is a convenience, and it must
         never be the reason `memclaw configure` cannot finish.
         """
-        current_model = existing.get("ANTHROPIC_MODEL", "") or _MODEL
+        current_model = existing.get("CLAUDE_MODEL", "") or _MODEL
 
         def _keep_current(reason: str) -> tuple[dict[str, str], list[str]]:
             console.print(
@@ -310,16 +310,16 @@ class ClaudeAgentBackend:
             return _keep_current("the API returned none")
 
         picked = cls._pick_model(console, models, current_model)
-        values = {"ANTHROPIC_MODEL": picked.id}
+        values = {"CLAUDE_MODEL": picked.id}
 
         if not picked.effort_levels:
             # This model takes no effort value. Skip the question with no
             # message, and drop any level left over from a previous choice so
             # it can't be sent to a model that would reject it.
-            return values, ["ANTHROPIC_EFFORT"]
+            return values, ["CLAUDE_EFFORT"]
 
-        values["ANTHROPIC_EFFORT"] = cls._pick_effort(
-            console, picked.effort_levels, existing.get("ANTHROPIC_EFFORT", ""),
+        values["CLAUDE_EFFORT"] = cls._pick_effort(
+            console, picked.effort_levels, existing.get("CLAUDE_EFFORT", ""),
         )
         return values, []
 

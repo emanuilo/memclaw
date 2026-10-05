@@ -26,11 +26,10 @@ def _isolate_claude_env(monkeypatch):
     blank, and importing memclaw.config loads ~/.memclaw/.env into os.environ.
     So a real CLAUDE_CODE_OAUTH_TOKEN would silently override
     `_make_config(api_key=...)`, and a developer who has run the wizard would
-    see their own ANTHROPIC_MODEL stand in for the built-in default.
+    see their own CLAUDE_MODEL stand in for the built-in default.
     """
     for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY",
-                 "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
-                 "ANTHROPIC_EFFORT"):
+                 "ANTHROPIC_AUTH_TOKEN", "CLAUDE_MODEL", "CLAUDE_EFFORT"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -227,12 +226,12 @@ class TestResolveModel:
 
     def test_configured_model_wins(self, tmp_path: Path):
         cfg = _make_config(tmp_path, oauth="x")
-        cfg.anthropic_model = "claude-opus-5"
+        cfg.claude_model = "claude-opus-5"
         assert claude_backend._resolve_model(cfg) == "claude-opus-5"
 
     def test_blank_value_falls_back(self, tmp_path: Path):
         cfg = _make_config(tmp_path, oauth="x")
-        cfg.anthropic_model = "   "
+        cfg.claude_model = "   "
         assert claude_backend._resolve_model(cfg) == claude_backend._MODEL
 
 
@@ -243,18 +242,18 @@ class TestResolveEffort:
 
     def test_known_level_passes_through(self, tmp_path: Path):
         cfg = _make_config(tmp_path, oauth="x")
-        cfg.anthropic_effort = "xhigh"
+        cfg.claude_effort = "xhigh"
         assert claude_backend._resolve_effort(cfg) == "xhigh"
 
     def test_case_and_padding_are_normalised(self, tmp_path: Path):
         cfg = _make_config(tmp_path, oauth="x")
-        cfg.anthropic_effort = "  HIGH  "
+        cfg.claude_effort = "  HIGH  "
         assert claude_backend._resolve_effort(cfg) == "high"
 
     def test_level_the_sdk_does_not_know_is_ignored(self, tmp_path: Path):
         """A typo in ~/.memclaw/.env must not reach the CLI as an argument."""
         cfg = _make_config(tmp_path, oauth="x")
-        cfg.anthropic_effort = "ultra"
+        cfg.claude_effort = "ultra"
         assert claude_backend._resolve_effort(cfg) is None
 
 
@@ -262,8 +261,8 @@ class TestOptionsCarryModelAndEffort:
     @pytest.mark.asyncio
     async def test_configured_values_reach_the_sdk(self, tmp_path: Path):
         cfg = _make_config(tmp_path, oauth="x")
-        cfg.anthropic_model = "claude-opus-5"
-        cfg.anthropic_effort = "max"
+        cfg.claude_model = "claude-opus-5"
+        cfg.claude_effort = "max"
         backend = ClaudeAgentBackend(cfg)
 
         ctx_factory, _client = _mock_sdk_client("ok")
@@ -339,7 +338,7 @@ class TestWizardModelQuestion:
     def test_picked_model_and_effort_are_stored(self, tmp_path: Path):
         models = [_model_info("claude-opus-5", effort_levels=["low", "high", "max"])]
         values, drops, prompts, _ = _ask(models, answers=("1", "3"))
-        assert values == {"ANTHROPIC_MODEL": "claude-opus-5", "ANTHROPIC_EFFORT": "max"}
+        assert values == {"CLAUDE_MODEL": "claude-opus-5", "CLAUDE_EFFORT": "max"}
         assert drops == []
         assert len(prompts) == 2
 
@@ -348,10 +347,10 @@ class TestWizardModelQuestion:
         level left over from an earlier choice is dropped."""
         models = [_model_info("claude-haiku-4-5")]
         values, drops, prompts, _ = _ask(
-            models, existing={"ANTHROPIC_EFFORT": "high"}, answers=("1",),
+            models, existing={"CLAUDE_EFFORT": "high"}, answers=("1",),
         )
-        assert values == {"ANTHROPIC_MODEL": "claude-haiku-4-5"}
-        assert drops == ["ANTHROPIC_EFFORT"]
+        assert values == {"CLAUDE_MODEL": "claude-haiku-4-5"}
+        assert drops == ["CLAUDE_EFFORT"]
         assert len(prompts) == 1
 
     def test_effort_defaults_to_high(self, tmp_path: Path):
@@ -368,7 +367,7 @@ class TestWizardModelQuestion:
         models = [_model_info("claude-opus-5"), _model_info("claude-sonnet-5")]
         _, _, prompts, _ = _ask(
             models,
-            existing={"ANTHROPIC_MODEL": "claude-sonnet-5"}, answers=("2",),
+            existing={"CLAUDE_MODEL": "claude-sonnet-5"}, answers=("2",),
         )
         assert prompts[0]["default"] == "2"
 
@@ -376,7 +375,7 @@ class TestWizardModelQuestion:
         models = [_model_info("claude-opus-5", effort_levels=["low", "medium", "high"])]
         _, _, prompts, _ = _ask(
             models,
-            existing={"ANTHROPIC_EFFORT": "low"}, answers=("1", "1"),
+            existing={"CLAUDE_EFFORT": "low"}, answers=("1", "1"),
         )
         assert prompts[1]["default"] == "1"
 
