@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -11,35 +10,14 @@ import pytest
 from memclaw.backends import claude as claude_backend
 from memclaw.backends.claude import ClaudeAgentBackend
 from memclaw.backends.claude_models import ModelInfo
-from memclaw.config import MemclawConfig
 
 
 # ────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────
 
-@pytest.fixture(autouse=True)
-def _isolate_claude_env(monkeypatch):
-    """Prevent the developer's own settings from leaking into `MemclawConfig`.
-
-    MemclawConfig.__post_init__ falls back to os.environ when fields are
-    blank, and importing memclaw.config loads ~/.memclaw/.env into os.environ.
-    So a real CLAUDE_CODE_OAUTH_TOKEN would silently override
-    `_make_config(api_key=...)`, and a developer who has run the wizard would
-    see their own CLAUDE_MODEL stand in for the built-in default.
-    """
-    for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY",
-                 "ANTHROPIC_AUTH_TOKEN", "CLAUDE_MODEL", "CLAUDE_EFFORT"):
-        monkeypatch.delenv(name, raising=False)
-
-
-def _make_config(tmp_path: Path, *, oauth: str = "", api_key: str = "") -> MemclawConfig:
-    return MemclawConfig(
-        memory_dir=tmp_path / "m",
-        openai_api_key="test-openai-key",
-        anthropic_api_key=api_key,
-        claude_code_oauth_token=oauth,
-    )
+# Every test here runs with the developer's Claude env vars cleared.
+pytestmark = pytest.mark.usefixtures("isolate_claude_env")
 
 
 def _mock_sdk_client(text: str):
@@ -90,32 +68,32 @@ def _mock_sdk_client(text: str):
 # ────────────────────────────────────────────────────────────────────
 
 class TestAuthMode:
-    def test_subscription_when_oauth_set(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="oauth-token")
+    def test_subscription_when_oauth_set(self, claude_config):
+        cfg = claude_config(oauth="oauth-token")
         assert claude_backend._claude_auth_mode(cfg) == "subscription"
 
-    def test_api_key_when_only_api_key_set(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, api_key="sk-ant-test")
+    def test_api_key_when_only_api_key_set(self, claude_config):
+        cfg = claude_config(api_key="sk-ant-test")
         assert claude_backend._claude_auth_mode(cfg) == "api_key"
 
-    def test_oauth_wins_when_both_set(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="oauth-token", api_key="sk-ant-test")
+    def test_oauth_wins_when_both_set(self, claude_config):
+        cfg = claude_config(oauth="oauth-token", api_key="sk-ant-test")
         assert claude_backend._claude_auth_mode(cfg) == "subscription"
 
-    def test_empty_when_neither_set(self, tmp_path: Path):
-        cfg = _make_config(tmp_path)
+    def test_empty_when_neither_set(self, claude_config):
+        cfg = claude_config()
         assert claude_backend._claude_auth_mode(cfg) == ""
 
-    def test_bills_per_token_only_for_api_key(self, tmp_path: Path):
-        sub = ClaudeAgentBackend(_make_config(tmp_path, oauth="oauth-token"))
-        api = ClaudeAgentBackend(_make_config(tmp_path, api_key="sk-ant-test"))
+    def test_bills_per_token_only_for_api_key(self, claude_config):
+        sub = ClaudeAgentBackend(claude_config(oauth="oauth-token"))
+        api = ClaudeAgentBackend(claude_config(api_key="sk-ant-test"))
         assert sub.bills_per_token is False
         assert api.bills_per_token is True
 
 
 class TestBuildEnv:
-    def test_strips_stale_credentials(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="my-oauth")
+    def test_strips_stale_credentials(self, claude_config):
+        cfg = claude_config(oauth="my-oauth")
         with patch.dict(os.environ, {
             "ANTHROPIC_API_KEY": "stale-key",
             "ANTHROPIC_AUTH_TOKEN": "stale-token",
@@ -133,15 +111,15 @@ class TestBuildEnv:
         # Unrelated env survives.
         assert env["PATH"] == "/usr/bin"
 
-    def test_injects_api_key_when_configured(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, api_key="my-api-key")
+    def test_injects_api_key_when_configured(self, claude_config):
+        cfg = claude_config(api_key="my-api-key")
         with patch.dict(os.environ, {}, clear=True):
             env = claude_backend._build_env(cfg)
         assert env["ANTHROPIC_API_KEY"] == "my-api-key"
         assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
 
-    def test_no_credential_injected_when_unconfigured(self, tmp_path: Path):
-        cfg = _make_config(tmp_path)
+    def test_no_credential_injected_when_unconfigured(self, claude_config):
+        cfg = claude_config()
         with patch.dict(os.environ, {}, clear=True):
             env = claude_backend._build_env(cfg)
         assert "ANTHROPIC_API_KEY" not in env
@@ -153,14 +131,14 @@ class TestBuildEnv:
 # ────────────────────────────────────────────────────────────────────
 
 class TestIsConfigured:
-    def test_oauth_token_satisfies(self, tmp_path: Path):
-        assert ClaudeAgentBackend.is_configured(_make_config(tmp_path, oauth="x"))
+    def test_oauth_token_satisfies(self, claude_config):
+        assert ClaudeAgentBackend.is_configured(claude_config(oauth="x"))
 
-    def test_api_key_satisfies(self, tmp_path: Path):
-        assert ClaudeAgentBackend.is_configured(_make_config(tmp_path, api_key="x"))
+    def test_api_key_satisfies(self, claude_config):
+        assert ClaudeAgentBackend.is_configured(claude_config(api_key="x"))
 
-    def test_neither_fails(self, tmp_path: Path):
-        assert not ClaudeAgentBackend.is_configured(_make_config(tmp_path))
+    def test_neither_fails(self, claude_config):
+        assert not ClaudeAgentBackend.is_configured(claude_config())
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -169,8 +147,8 @@ class TestIsConfigured:
 
 class TestRunOneShot:
     @pytest.mark.asyncio
-    async def test_returns_text(self, tmp_path: Path):
-        backend = ClaudeAgentBackend(_make_config(tmp_path, oauth="x"))
+    async def test_returns_text(self, claude_config):
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
         ctx_factory, client = _mock_sdk_client("hello world")
         with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=ctx_factory):
             text = await backend.run_one_shot(
@@ -184,10 +162,10 @@ class TestRunOneShot:
 
 class TestRunTurn:
     @pytest.mark.asyncio
-    async def test_returns_turn_result(self, tmp_path: Path):
+    async def test_returns_turn_result(self, claude_config):
         from memclaw.tools import ToolExecutor
 
-        backend = ClaudeAgentBackend(_make_config(tmp_path, api_key="x"))
+        backend = ClaudeAgentBackend(claude_config(api_key="x"))
         cfg = backend.config
         executor = ToolExecutor(
             config=cfg,
@@ -215,10 +193,10 @@ class TestRunTurn:
         assert result.cost_usd > 0
 
     @pytest.mark.asyncio
-    async def test_fallback_cost_uses_the_configured_models_price(self, tmp_path: Path):
+    async def test_fallback_cost_uses_the_configured_models_price(self, claude_config):
         from memclaw.tools import ToolExecutor
 
-        cfg = _make_config(tmp_path, api_key="x")
+        cfg = claude_config(api_key="x")
         cfg.claude_model = "claude-opus-5"
         backend = ClaudeAgentBackend(cfg)
         executor = ToolExecutor(
@@ -258,61 +236,61 @@ class TestPrices:
 # ────────────────────────────────────────────────────────────────────
 
 class TestResolveModel:
-    def test_falls_back_to_default_when_unset(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="x")
+    def test_falls_back_to_default_when_unset(self, claude_config):
+        cfg = claude_config(oauth="x")
         assert claude_backend._resolve_model(cfg) == claude_backend._DEFAULT_MODEL
 
-    def test_configured_model_wins(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="x")
+    def test_configured_model_wins(self, claude_config):
+        cfg = claude_config(oauth="x")
         cfg.claude_model = "claude-opus-5"
         assert claude_backend._resolve_model(cfg) == "claude-opus-5"
 
-    def test_blank_value_falls_back(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="x")
+    def test_blank_value_falls_back(self, claude_config):
+        cfg = claude_config(oauth="x")
         cfg.claude_model = "   "
         assert claude_backend._resolve_model(cfg) == claude_backend._DEFAULT_MODEL
 
 
 class TestResolveEffort:
-    def test_unset_gives_none(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="x")
+    def test_unset_gives_none(self, claude_config):
+        cfg = claude_config(oauth="x")
         assert claude_backend._resolve_effort(cfg) is None
 
-    def test_known_level_passes_through(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="x")
+    def test_known_level_passes_through(self, claude_config):
+        cfg = claude_config(oauth="x")
         cfg.claude_effort = "xhigh"
         assert claude_backend._resolve_effort(cfg) == "xhigh"
 
-    def test_case_and_padding_are_normalised(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="x")
+    def test_case_and_padding_are_normalised(self, claude_config):
+        cfg = claude_config(oauth="x")
         cfg.claude_effort = "  HIGH  "
         assert claude_backend._resolve_effort(cfg) == "high"
 
-    def test_level_the_sdk_does_not_know_is_ignored(self, tmp_path: Path):
+    def test_level_the_sdk_does_not_know_is_ignored(self, claude_config):
         """A typo in ~/.memclaw/.env must not reach the CLI as an argument."""
-        cfg = _make_config(tmp_path, oauth="x")
+        cfg = claude_config(oauth="x")
         cfg.claude_effort = "ultra"
         assert claude_backend._resolve_effort(cfg) is None
 
 
 class TestStatusRows:
-    def test_configured_values_are_shown(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, api_key="k")
+    def test_configured_values_are_shown(self, claude_config):
+        cfg = claude_config(api_key="k")
         cfg.claude_model = "claude-opus-5"
         cfg.claude_effort = "max"
         assert ClaudeAgentBackend.status_rows(cfg) == [
             ("Model", "claude-opus-5"), ("Effort", "max"),
         ]
 
-    def test_defaults_are_shown_when_unset(self, tmp_path: Path):
-        rows = ClaudeAgentBackend.status_rows(_make_config(tmp_path, api_key="k"))
+    def test_defaults_are_shown_when_unset(self, claude_config):
+        rows = ClaudeAgentBackend.status_rows(claude_config(api_key="k"))
         assert rows == [("Model", claude_backend._DEFAULT_MODEL), ("Effort", "default")]
 
 
 class TestOptionsCarryModelAndEffort:
     @pytest.mark.asyncio
-    async def test_configured_values_reach_the_sdk(self, tmp_path: Path):
-        cfg = _make_config(tmp_path, oauth="x")
+    async def test_configured_values_reach_the_sdk(self, claude_config):
+        cfg = claude_config(oauth="x")
         cfg.claude_model = "claude-opus-5"
         cfg.claude_effort = "max"
         backend = ClaudeAgentBackend(cfg)
@@ -331,8 +309,8 @@ class TestOptionsCarryModelAndEffort:
         assert seen["options"].effort == "max"
 
     @pytest.mark.asyncio
-    async def test_defaults_reach_the_sdk_when_nothing_configured(self, tmp_path: Path):
-        backend = ClaudeAgentBackend(_make_config(tmp_path, oauth="x"))
+    async def test_defaults_reach_the_sdk_when_nothing_configured(self, claude_config):
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
 
         ctx_factory, _client = _mock_sdk_client("ok")
         seen = {}
@@ -502,3 +480,75 @@ def _warned(console) -> bool:
     printed = [c.args[0] for c in console.print.call_args_list
                if c.args and isinstance(c.args[0], str)]
     return sum("[yellow]" in line for line in printed) == 1
+
+
+# ────────────────────────────────────────────────────────────────────
+# Wizard: the whole wizard_setup flow
+# ────────────────────────────────────────────────────────────────────
+
+def _wizard(*, answers, credential="", existing=None, models=None,
+            fetch_error: Exception | None = None):
+    """Run `wizard_setup` end to end with every prompt and the fetch mocked.
+
+    *answers* feeds the numbered pickers in order (auth, model, effort);
+    *credential* is what the user types at the masked credential prompt.
+    Returns (values, drop_keys, fetch_mock).
+    """
+    fetch = AsyncMock(side_effect=fetch_error) if fetch_error else AsyncMock(
+        return_value=models or [])
+    answer_iter = iter(answers)
+
+    with patch("memclaw.prompts.Prompt.ask",
+               side_effect=lambda *a, **k: next(answer_iter)), \
+            patch("memclaw.setup._masked_input", return_value=credential), \
+            patch("memclaw.backends.claude.fetch_models", fetch):
+        values, drops = ClaudeAgentBackend.wizard_setup(MagicMock(), existing or {})
+    return values, drops, fetch
+
+
+class TestWizardSetupFlow:
+    def test_subscription_with_an_effort_model(self):
+        models = [_model_info("claude-opus-5", effort_levels=["low", "high"])]
+        values, drops, fetch = _wizard(
+            answers=("1", "1", "2"), credential="oat-token", models=models,
+        )
+
+        fetch.assert_awaited_once_with("subscription", "oat-token")
+        assert values == {
+            "CLAUDE_CODE_OAUTH_TOKEN": "oat-token",
+            "CLAUDE_MODEL": "claude-opus-5",
+            "CLAUDE_EFFORT": "high",
+        }
+        assert drops == ["ANTHROPIC_API_KEY"]
+
+    def test_api_key_with_a_model_without_effort(self):
+        models = [_model_info("claude-haiku-4-5")]
+        values, drops, fetch = _wizard(
+            answers=("2", "1"), credential="sk-ant-new", models=models,
+            existing={"CLAUDE_EFFORT": "max"},
+        )
+
+        fetch.assert_awaited_once_with("api_key", "sk-ant-new")
+        assert values == {"ANTHROPIC_API_KEY": "sk-ant-new",
+                          "CLAUDE_MODEL": "claude-haiku-4-5"}
+        assert drops == ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_EFFORT"]
+
+    def test_enter_keeps_the_saved_credential_for_the_fetch(self):
+        """A blank answer reuses the saved key, and the list is fetched with it."""
+        models = [_model_info("claude-sonnet-5")]
+        values, _, fetch = _wizard(
+            answers=("2", "1"), credential="", models=models,
+            existing={"ANTHROPIC_API_KEY": "sk-ant-saved"},
+        )
+
+        fetch.assert_awaited_once_with("api_key", "sk-ant-saved")
+        assert values["ANTHROPIC_API_KEY"] == "sk-ant-saved"
+
+    def test_fetch_failure_still_saves_the_credential(self):
+        values, drops, _ = _wizard(
+            answers=("2",), credential="sk-ant-new",
+            fetch_error=httpx.ConnectError("no network"),
+        )
+
+        assert values == {"ANTHROPIC_API_KEY": "sk-ant-new"}
+        assert drops == ["CLAUDE_CODE_OAUTH_TOKEN"]

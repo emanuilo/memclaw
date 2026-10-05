@@ -10,10 +10,9 @@ from memclaw.cli import cli
 
 
 @pytest.fixture(autouse=True)
-def _isolate_env(monkeypatch):
+def _isolate_env(monkeypatch, isolate_claude_env):
     """Keep the developer's own backend settings out of the status output."""
-    for name in ("AGENT_BACKEND", "CLAUDE_MODEL", "CLAUDE_EFFORT",
-                 "CURSOR_MODEL", "MEMCLAW_PLATFORM"):
+    for name in ("AGENT_BACKEND", "CURSOR_MODEL", "MEMCLAW_PLATFORM"):
         monkeypatch.delenv(name, raising=False)
 
 

@@ -40,10 +40,8 @@ def test_custom_values(tmp_path: Path):
     assert cfg.mmr_lambda == 0.5
 
 
-def test_claude_model_and_effort_default_to_empty(tmp_path: Path, monkeypatch):
+def test_claude_model_and_effort_default_to_empty(tmp_path: Path, isolate_claude_env):
     """Empty is the signal to fall back to the backend built-in default."""
-    monkeypatch.delenv("CLAUDE_MODEL", raising=False)
-    monkeypatch.delenv("CLAUDE_EFFORT", raising=False)
     cfg = MemclawConfig(memory_dir=tmp_path / "m", openai_api_key="k", anthropic_api_key="k")
     assert cfg.claude_model == ""
     assert cfg.claude_effort == ""
@@ -71,11 +69,11 @@ def test_explicit_claude_values_win_over_env(tmp_path: Path, monkeypatch):
     assert cfg.claude_effort == "high"
 
 
-def test_claude_cli_model_vars_are_not_picked_up(tmp_path: Path, monkeypatch):
+def test_claude_cli_model_vars_are_not_picked_up(
+    tmp_path: Path, monkeypatch, isolate_claude_env,
+):
     """ANTHROPIC_MODEL belongs to the Claude CLI; exporting it for Claude Code
     must not change which model Memclaw runs."""
-    monkeypatch.delenv("CLAUDE_MODEL", raising=False)
-    monkeypatch.delenv("CLAUDE_EFFORT", raising=False)
     monkeypatch.setenv("ANTHROPIC_MODEL", "claude-opus-5")
     cfg = MemclawConfig(memory_dir=tmp_path / "m", openai_api_key="k", anthropic_api_key="k")
     assert cfg.claude_model == ""
