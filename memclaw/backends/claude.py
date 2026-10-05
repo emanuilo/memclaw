@@ -213,6 +213,13 @@ class ClaudeAgentBackend:
         )
 
     @classmethod
+    def status_rows(cls, config: "MemclawConfig") -> list[tuple[str, str]]:
+        return [
+            ("Model", _resolve_model(config)),
+            ("Effort", _resolve_effort(config) or "default"),
+        ]
+
+    @classmethod
     def wizard_setup(
         cls,
         console: "Console",

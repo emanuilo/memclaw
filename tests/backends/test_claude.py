@@ -257,6 +257,20 @@ class TestResolveEffort:
         assert claude_backend._resolve_effort(cfg) is None
 
 
+class TestStatusRows:
+    def test_configured_values_are_shown(self, tmp_path: Path):
+        cfg = _make_config(tmp_path, api_key="k")
+        cfg.claude_model = "claude-opus-5"
+        cfg.claude_effort = "max"
+        assert ClaudeAgentBackend.status_rows(cfg) == [
+            ("Model", "claude-opus-5"), ("Effort", "max"),
+        ]
+
+    def test_defaults_are_shown_when_unset(self, tmp_path: Path):
+        rows = ClaudeAgentBackend.status_rows(_make_config(tmp_path, api_key="k"))
+        assert rows == [("Model", claude_backend._MODEL), ("Effort", "default")]
+
+
 class TestOptionsCarryModelAndEffort:
     @pytest.mark.asyncio
     async def test_configured_values_reach_the_sdk(self, tmp_path: Path):

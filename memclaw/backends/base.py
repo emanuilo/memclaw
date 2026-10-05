@@ -70,6 +70,15 @@ class AgentBackend(Protocol):
         ...
 
     @classmethod
+    def status_rows(cls, config: "MemclawConfig") -> list[tuple[str, str]]:
+        """``(label, value)`` pairs `memclaw status` shows for this backend.
+
+        Typically the model that will run and any settings that shape it.
+        Return an empty list when there is nothing worth showing.
+        """
+        ...
+
+    @classmethod
     def wizard_setup(
         cls,
         console: "Console",

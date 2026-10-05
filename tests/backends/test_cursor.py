@@ -96,6 +96,14 @@ class TestCursorAgentBackendConfig:
         assert backend.bills_per_token is True
         assert cursor_hooks_installed(cfg.memory_dir) is False
 
+    def test_status_rows_show_the_model(self, tmp_path):
+        cfg = _make_config(tmp_path, cursor_model="composer-3")
+        assert CursorAgentBackend.status_rows(cfg) == [("Model", "composer-3")]
+
+    def test_status_rows_fall_back_to_default_model(self, tmp_path):
+        rows = CursorAgentBackend.status_rows(_make_config(tmp_path))
+        assert rows == [("Model", "composer-2.5")]
+
 
 class TestPromptBuilding:
     def test_agent_options_loads_project_setting_sources(self):

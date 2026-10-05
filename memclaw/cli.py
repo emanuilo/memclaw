@@ -422,8 +422,7 @@ def rebuild_index(ctx):
 @click.pass_context
 def status(ctx):
     """Show memory vault status."""
-    from .backends import ClaudeAgentBackend, resolve_backend_name
-    from .backends.claude import _resolve_effort, _resolve_model
+    from .backends import get_backend_class, resolve_backend_name
 
     config: MemclawConfig = ctx.obj["config"]
     store = MemoryStore(config)
@@ -433,27 +432,20 @@ def status(ctx):
     stats = index.get_stats()
     index.close()
 
+    backend_cls = get_backend_class(resolve_backend_name(config))
     rows = [
-        f"Memory directory : {config.memory_dir}",
-        f"Memory files     : {len(files)}",
-        f"Platform         : {config.platform or 'terminal'}",
-    ]
-
-    # Model and effort belong to the Claude backend. Printing them while
-    # Cursor is the active backend would name a model that isn't going to run.
-    if resolve_backend_name(config) == ClaudeAgentBackend.name:
-        rows.append(f"Model            : {_resolve_model(config)}")
-        rows.append(f"Effort           : {_resolve_effort(config) or 'default'}")
-
-    rows += [
-        f"Indexed chunks   : {stats['chunks']}",
-        f"Stored images    : {stats['images']}",
-        f"Database         : {config.db_path}",
+        ("Memory directory", config.memory_dir),
+        ("Memory files", len(files)),
+        ("Platform", config.platform or "terminal"),
+        *backend_cls.status_rows(config),
+        ("Indexed chunks", stats["chunks"]),
+        ("Stored images", stats["images"]),
+        ("Database", config.db_path),
     ]
 
     console.print(
         Panel(
-            "\n".join(rows),
+            "\n".join(f"{label:<16} : {value}" for label, value in rows),
             title="Memclaw Status",
             border_style="bright_cyan",
         )
