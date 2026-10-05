@@ -214,6 +214,44 @@ class TestRunTurn:
         assert result.cost_usd is not None
         assert result.cost_usd > 0
 
+    @pytest.mark.asyncio
+    async def test_fallback_cost_uses_the_configured_models_price(self, tmp_path: Path):
+        from memclaw.tools import ToolExecutor
+
+        cfg = _make_config(tmp_path, api_key="x")
+        cfg.claude_model = "claude-opus-5"
+        backend = ClaudeAgentBackend(cfg)
+        executor = ToolExecutor(
+            config=cfg, store=MagicMock(), index=MagicMock(),
+            search=MagicMock(), found_images=[], platform="test",
+        )
+
+        ctx_factory, _client = _mock_sdk_client("done")
+        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=ctx_factory):
+            result = await backend.run_turn(
+                system_prompt="sys", user_message="hello", tool_executor=executor,
+            )
+
+        # 100 input tokens at $5/M + 50 output tokens at $25/M (Opus 5).
+        assert result.cost_usd == pytest.approx((100 * 5 + 50 * 25) / 1_000_000)
+
+
+class TestPrices:
+    @pytest.mark.parametrize("model, prices", [
+        ("claude-opus-5", (5.0, 25.0)),
+        ("claude-opus-5-5", (4.0, 20.0)),         # not mistaken for claude-opus-5
+        ("claude-sonnet-4-6", (3.0, 15.0)),
+        ("claude-haiku-4-5-20251001", (1.0, 5.0)),  # dated snapshot
+    ])
+    def test_known_models(self, model, prices):
+        assert claude_backend._prices_per_m(model) == prices
+
+    @pytest.mark.parametrize("model", ["opus", "claude-future-9"])
+    def test_unknown_model_uses_the_default_models_price(self, model):
+        assert claude_backend._prices_per_m(model) == claude_backend._prices_per_m(
+            claude_backend._DEFAULT_MODEL,
+        )
+
 
 # ────────────────────────────────────────────────────────────────────
 # Model + effort resolution
@@ -222,7 +260,7 @@ class TestRunTurn:
 class TestResolveModel:
     def test_falls_back_to_default_when_unset(self, tmp_path: Path):
         cfg = _make_config(tmp_path, oauth="x")
-        assert claude_backend._resolve_model(cfg) == claude_backend._MODEL
+        assert claude_backend._resolve_model(cfg) == claude_backend._DEFAULT_MODEL
 
     def test_configured_model_wins(self, tmp_path: Path):
         cfg = _make_config(tmp_path, oauth="x")
@@ -232,7 +270,7 @@ class TestResolveModel:
     def test_blank_value_falls_back(self, tmp_path: Path):
         cfg = _make_config(tmp_path, oauth="x")
         cfg.claude_model = "   "
-        assert claude_backend._resolve_model(cfg) == claude_backend._MODEL
+        assert claude_backend._resolve_model(cfg) == claude_backend._DEFAULT_MODEL
 
 
 class TestResolveEffort:
@@ -268,7 +306,7 @@ class TestStatusRows:
 
     def test_defaults_are_shown_when_unset(self, tmp_path: Path):
         rows = ClaudeAgentBackend.status_rows(_make_config(tmp_path, api_key="k"))
-        assert rows == [("Model", claude_backend._MODEL), ("Effort", "default")]
+        assert rows == [("Model", claude_backend._DEFAULT_MODEL), ("Effort", "default")]
 
 
 class TestOptionsCarryModelAndEffort:
@@ -306,7 +344,7 @@ class TestOptionsCarryModelAndEffort:
         with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=_capture):
             await backend.run_one_shot(system_prompt="s", user_message="u")
 
-        assert seen["options"].model == claude_backend._MODEL
+        assert seen["options"].model == claude_backend._DEFAULT_MODEL
         assert seen["options"].effort is None
 
 

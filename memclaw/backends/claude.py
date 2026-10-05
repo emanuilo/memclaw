@@ -39,16 +39,33 @@ if TYPE_CHECKING:
     from ..tools import ToolExecutor
 
 
-_MODEL = "claude-sonnet-4-6"
+_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Preselected in the wizard for any model that supports effort at all.
 # Every model that reports effort support accepts this level.
 _DEFAULT_EFFORT = "high"
 
-# Sonnet 4 pricing (per 1M tokens) — only used as a fallback if the SDK
-# doesn't return total_cost_usd for an API-key turn.
-_INPUT_COST_PER_M = 3.0
-_OUTPUT_COST_PER_M = 15.0
+# Anthropic list prices, (input, output) USD per 1M tokens. Only used as a
+# fallback when the SDK doesn't return total_cost_usd for an API-key turn.
+# Ids are matched by prefix, so dated snapshots (claude-haiku-4-5-20251001)
+# resolve too. A model missing here (an alias, or one released later) is
+# estimated at the default model's price, so the figure is approximate.
+_PRICES_PER_M: dict[str, tuple[float, float]] = {
+    "claude-fable-5-1": (10.0, 50.0),
+    "claude-fable-5": (10.0, 50.0),
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-opus-5": (5.0, 25.0),
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-4-7": (5.0, 25.0),
+    "claude-opus-4-6": (5.0, 25.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+
+# Cache reads are billed at a tenth of the input price.
+_CACHE_READ_MULTIPLIER = 0.1
 
 _ALLOWED_TOOLS = [
     f"mcp__{MCP_SERVER_NAME}__{t['name']}" for t in TOOL_DEFINITIONS
@@ -73,7 +90,16 @@ def _claude_auth_mode(config: "MemclawConfig") -> str:
 
 def _resolve_model(config: "MemclawConfig") -> str:
     """The configured model, or the built-in default when unset."""
-    return (config.claude_model or "").strip() or _MODEL
+    return (config.claude_model or "").strip() or _DEFAULT_MODEL
+
+
+def _prices_per_m(model: str) -> tuple[float, float]:
+    """(input, output) USD per 1M tokens for *model*; see _PRICES_PER_M."""
+    # Longest prefix first, so claude-opus-5-5 doesn't match claude-opus-5.
+    for prefix in sorted(_PRICES_PER_M, key=len, reverse=True):
+        if model == prefix or model.startswith(f"{prefix}-"):
+            return _PRICES_PER_M[prefix]
+    return _PRICES_PER_M[_DEFAULT_MODEL]
 
 
 def _resolve_effort(config: "MemclawConfig") -> str | None:
@@ -155,7 +181,7 @@ async def _image_prompt_stream(
 
     The Claude CLI's stream-json protocol expects Anthropic-style content
     blocks here, so we pass an "image" block with a base64 source followed
-    by the user's text. Targets claude-agent-sdk 0.1.x.
+    by the user's text. Targets claude-agent-sdk 0.2.x.
     """
     yield {
         "type": "user",
@@ -299,7 +325,7 @@ class ClaudeAgentBackend:
         # as the current one, so accepting the defaults never replaces it.
         current_model = (
             existing.get("CLAUDE_MODEL") or os.environ.get("CLAUDE_MODEL", "")
-        ).strip() or _MODEL
+        ).strip() or _DEFAULT_MODEL
         current_effort = (
             existing.get("CLAUDE_EFFORT") or os.environ.get("CLAUDE_EFFORT", "")
         ).strip().lower()
@@ -500,12 +526,12 @@ class ClaudeAgentBackend:
 
         # Fallback cost estimate when the SDK didn't supply one.
         if result.cost_usd is None and self.bills_per_token:
-            cache_read_cost = result.cache_read_tokens * _INPUT_COST_PER_M * 0.1 / 1_000_000
+            input_per_m, output_per_m = _prices_per_m(self._model)
             result.cost_usd = (
-                result.input_tokens * _INPUT_COST_PER_M / 1_000_000
-                + result.output_tokens * _OUTPUT_COST_PER_M / 1_000_000
-                + cache_read_cost
-            )
+                result.input_tokens * input_per_m
+                + result.output_tokens * output_per_m
+                + result.cache_read_tokens * input_per_m * _CACHE_READ_MULTIPLIER
+            ) / 1_000_000
 
         result.text = last_text
         return result
