@@ -340,7 +340,7 @@ def _ask(models, *, existing=None, answers=("1",),
         return answers[len(prompts) - 1]
 
     with patch("memclaw.backends.claude.fetch_models", fetch), \
-            patch("memclaw.backends.claude.Prompt.ask", side_effect=_prompt):
+            patch("memclaw.prompts.Prompt.ask", side_effect=_prompt):
         values, drops = ClaudeAgentBackend._ask_model_and_effort(
             console, existing or {}, auth_mode="api_key", credential="sk-ant-test",
         )
@@ -349,14 +349,14 @@ def _ask(models, *, existing=None, answers=("1",),
 
 
 class TestWizardModelQuestion:
-    def test_picked_model_and_effort_are_stored(self, tmp_path: Path):
+    def test_picked_model_and_effort_are_stored(self):
         models = [_model_info("claude-opus-5", effort_levels=["low", "high", "max"])]
         values, drops, prompts, _ = _ask(models, answers=("1", "3"))
         assert values == {"CLAUDE_MODEL": "claude-opus-5", "CLAUDE_EFFORT": "max"}
         assert drops == []
         assert len(prompts) == 2
 
-    def test_effort_question_is_skipped_without_support(self, tmp_path: Path):
+    def test_effort_question_is_skipped_without_support(self):
         """A model reporting no effort level is never asked about one, and any
         level left over from an earlier choice is dropped."""
         models = [_model_info("claude-haiku-4-5")]
@@ -367,17 +367,17 @@ class TestWizardModelQuestion:
         assert drops == ["CLAUDE_EFFORT"]
         assert len(prompts) == 1
 
-    def test_effort_defaults_to_high(self, tmp_path: Path):
+    def test_effort_defaults_to_high(self):
         models = [_model_info("claude-opus-5", effort_levels=["low", "medium", "high"])]
         _, _, prompts, _ = _ask(models, answers=("1", "3"))
         assert prompts[1]["default"] == "3"
 
-    def test_effort_default_falls_back_when_high_is_unsupported(self, tmp_path: Path):
+    def test_effort_default_falls_back_when_high_is_unsupported(self):
         models = [_model_info("claude-opus-5", effort_levels=["low", "medium"])]
         _, _, prompts, _ = _ask(models, answers=("1", "1"))
         assert prompts[1]["default"] == "1"
 
-    def test_current_model_is_preselected(self, tmp_path: Path):
+    def test_current_model_is_preselected(self):
         models = [_model_info("claude-opus-5"), _model_info("claude-sonnet-5")]
         _, _, prompts, _ = _ask(
             models,
@@ -385,7 +385,7 @@ class TestWizardModelQuestion:
         )
         assert prompts[0]["default"] == "2"
 
-    def test_current_effort_is_preselected(self, tmp_path: Path):
+    def test_current_effort_is_preselected(self):
         models = [_model_info("claude-opus-5", effort_levels=["low", "medium", "high"])]
         _, _, prompts, _ = _ask(
             models,
@@ -394,20 +394,66 @@ class TestWizardModelQuestion:
         assert prompts[1]["default"] == "1"
 
 
+class TestWizardKeepsCurrentModel:
+    """Accepting the defaults must never change the model."""
+
+    MODELS = [_model_info("claude-opus-5", effort_levels=["high"]),
+              _model_info("claude-sonnet-5")]
+
+    def test_alias_not_in_the_list_stays_the_default(self):
+        _, _, prompts, _ = _ask(
+            self.MODELS, existing={"CLAUDE_MODEL": "opus"}, answers=("3",),
+        )
+        assert prompts[0]["choices"] == ["1", "2", "3"]
+        assert prompts[0]["default"] == "3"
+
+    def test_keeping_it_changes_nothing(self):
+        values, drops, prompts, _ = _ask(
+            self.MODELS,
+            existing={"CLAUDE_MODEL": "opus", "CLAUDE_EFFORT": "max"},
+            answers=("3",),
+        )
+        assert (values, drops) == ({}, [])
+        assert len(prompts) == 1     # no effort question for an unknown model
+
+    def test_a_listed_model_can_still_be_picked(self):
+        values, _, _, _ = _ask(
+            self.MODELS, existing={"CLAUDE_MODEL": "opus"}, answers=("2",),
+        )
+        assert values == {"CLAUDE_MODEL": "claude-sonnet-5"}
+
+    def test_model_set_only_in_the_shell_counts_as_current(self, monkeypatch):
+        monkeypatch.setenv("CLAUDE_MODEL", "claude-sonnet-5")
+        _, _, prompts, _ = _ask(self.MODELS, answers=("2",))
+        assert prompts[0]["default"] == "2"
+
+    def test_effort_set_only_in_the_shell_counts_as_current(self, monkeypatch):
+        monkeypatch.setenv("CLAUDE_EFFORT", "LOW")
+        models = [_model_info("claude-opus-5", effort_levels=["low", "high"])]
+        _, _, prompts, _ = _ask(models, answers=("1", "1"))
+        assert prompts[1]["default"] == "1"
+
+    def test_unset_default_model_missing_from_the_list_is_kept(self):
+        """With nothing configured, the built-in default is the current model."""
+        values, _, prompts, _ = _ask(self.MODELS, answers=("3",))
+        assert prompts[0]["default"] == "3"
+        assert values == {}
+
+
 class TestWizardSurvivesFetchFailure:
     @pytest.mark.parametrize("error", [
         httpx.ConnectError("no network"),
         httpx.ReadTimeout("timed out"),
         RuntimeError("no Claude credential configured"),
     ])
-    def test_failure_warns_and_keeps_the_current_value(self, tmp_path: Path, error):
+    def test_failure_warns_and_keeps_the_current_value(self, error):
         values, drops, prompts, console = _ask([], fetch_error=error)
         assert values == {}
         assert drops == []
         assert prompts == []          # nothing was asked
         assert _warned(console)
 
-    def test_empty_model_list_warns_and_keeps_the_current_value(self, tmp_path: Path):
+    def test_empty_model_list_warns_and_keeps_the_current_value(self):
         values, drops, prompts, console = _ask([])
         assert (values, drops, prompts) == ({}, [], [])
         assert _warned(console)

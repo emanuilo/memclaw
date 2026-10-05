@@ -25,9 +25,7 @@ from claude_agent_sdk import (
     tool,
 )
 from loguru import logger
-from rich.panel import Panel
-from rich.prompt import Prompt
-
+from ..prompts import choose
 from ..tools import TOOL_DEFINITIONS
 from .base import TurnResult
 from .claude_models import SDK_EFFORT_LEVELS, ModelInfo, fetch_models
@@ -230,27 +228,26 @@ class ClaudeAgentBackend:
         """Ask whether to use a subscription or API key, then prompt the
         chosen credential. Returns (values_to_save, env_keys_to_drop).
         """
-        console.print()
-        console.print(
-            Panel(
-                "[bold]1)[/bold] Claude subscription (Pro / Max / Team)\n"
+        if existing.get("ANTHROPIC_API_KEY") and not existing.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            default = 1
+        else:
+            default = 0
+        choice = choose(
+            console,
+            title="How do you want to authenticate with Claude?",
+            rows=[
+                "Claude subscription (Pro / Max / Team)\n"
                 "    No per-message cost — uses your subscription quota.\n"
-                "    Generate a token with: [bold]claude setup-token[/bold]\n\n"
-                "[bold]2)[/bold] Anthropic API key (pay-as-you-go)\n"
+                "    Generate a token with: [bold]claude setup-token[/bold]",
+                "Anthropic API key (pay-as-you-go)\n"
                 "    Billed per token against your console credits.\n"
                 "    Get a key at: console.anthropic.com",
-                title="How do you want to authenticate with Claude?",
-                border_style="bright_cyan",
-            )
+            ],
+            default=default,
+            separator="\n\n",
         )
 
-        if existing.get("ANTHROPIC_API_KEY") and not existing.get("CLAUDE_CODE_OAUTH_TOKEN"):
-            default = "2"
-        else:
-            default = "1"
-        choice = Prompt.ask("Choose", choices=["1", "2"], default=default)
-
-        if choice == "1":
+        if choice == 0:
             auth_mode = "subscription"
             env_key = "CLAUDE_CODE_OAUTH_TOKEN"
             label = "Claude subscription OAuth token (run `claude setup-token`)"
@@ -298,7 +295,14 @@ class ClaudeAgentBackend:
         already had in place: picking a model is a convenience, and it must
         never be the reason `memclaw configure` cannot finish.
         """
-        current_model = existing.get("CLAUDE_MODEL", "") or _MODEL
+        # Like CURSOR_MODEL, a value exported only in the shell still counts
+        # as the current one, so accepting the defaults never replaces it.
+        current_model = (
+            existing.get("CLAUDE_MODEL") or os.environ.get("CLAUDE_MODEL", "")
+        ).strip() or _MODEL
+        current_effort = (
+            existing.get("CLAUDE_EFFORT") or os.environ.get("CLAUDE_EFFORT", "")
+        ).strip().lower()
 
         def _keep_current(reason: str) -> tuple[dict[str, str], list[str]]:
             console.print(
@@ -317,6 +321,10 @@ class ClaudeAgentBackend:
             return _keep_current("the API returned none")
 
         picked = cls._pick_model(console, models, current_model)
+        if picked is None:
+            # Kept a current model the list doesn't name. Its effort support
+            # is unknown, so leave both settings exactly as they were.
+            return {}, []
         values = {"CLAUDE_MODEL": picked.id}
 
         if not picked.effort_levels:
@@ -326,40 +334,37 @@ class ClaudeAgentBackend:
             return values, ["CLAUDE_EFFORT"]
 
         values["CLAUDE_EFFORT"] = cls._pick_effort(
-            console, picked.effort_levels, existing.get("CLAUDE_EFFORT", ""),
+            console, picked.effort_levels, current_effort,
         )
         return values, []
 
     @staticmethod
     def _pick_model(
         console: "Console", models: list[ModelInfo], current_model: str,
-    ) -> ModelInfo:
-        """Show the numbered model picker, preselecting *current_model*."""
-        rows = []
-        default_choice = "1"
-        for i, model in enumerate(models, 1):
-            marker = ""
-            if model.id == current_model:
-                default_choice = str(i)
-                marker = "  [dim](current)[/dim]"
-            rows.append(
-                f"[bold]{i})[/bold] {model.display_name}  "
-                f"[dim]{model.id}[/dim]{marker}"
-            )
-        console.print()
-        console.print(
-            Panel(
-                "\n".join(rows),
-                title="Which Claude model?",
-                border_style="bright_cyan",
-            )
+    ) -> ModelInfo | None:
+        """Show the numbered model picker, preselecting *current_model*.
+
+        A current model the list doesn't name (an alias like `opus`, or an id
+        this credential can't list) gets its own row at the end and stays the
+        default, so pressing Enter never changes the model. Picking that row
+        returns None.
+        """
+        current = "  [dim](current)[/dim]"
+        rows = [
+            f"{m.display_name}  [dim]{m.id}[/dim]{current if m.id == current_model else ''}"
+            for m in models
+        ]
+        ids = [m.id for m in models]
+        if current_model in ids:
+            default = ids.index(current_model)
+        else:
+            rows.append(f"{current_model}{current}")
+            default = len(models)
+
+        index = choose(
+            console, title="Which Claude model?", rows=rows, default=default,
         )
-        choice = Prompt.ask(
-            "Choose",
-            choices=[str(i) for i in range(1, len(models) + 1)],
-            default=default_choice,
-        )
-        return models[int(choice) - 1]
+        return models[index] if index < len(models) else None
 
     @staticmethod
     def _pick_effort(
@@ -371,26 +376,18 @@ class ClaudeAgentBackend:
         value falls back to the first one when the model has no `high`.
         """
         preferred = current_effort if current_effort in levels else _DEFAULT_EFFORT
-        default_choice = str(levels.index(preferred) + 1) if preferred in levels else "1"
-        rows = "    ".join(
-            f"[bold]{i})[/bold] {level}" for i, level in enumerate(levels, 1)
-        )
-        console.print()
-        console.print(
-            Panel(
-                f"{rows}\n\n"
+        index = choose(
+            console,
+            title="Effort level?",
+            rows=levels,
+            default=levels.index(preferred) if preferred in levels else 0,
+            footer=(
                 "[dim]How deeply Claude thinks before answering. "
-                "Lower is faster and cheaper.[/dim]",
-                title="Effort level?",
-                border_style="bright_cyan",
-            )
+                "Lower is faster and cheaper.[/dim]"
+            ),
+            separator="    ",
         )
-        choice = Prompt.ask(
-            "Choose",
-            choices=[str(i) for i in range(1, len(levels) + 1)],
-            default=default_choice,
-        )
-        return levels[int(choice) - 1]
+        return levels[index]
 
     # -- Lifecycle ---------------------------------------------------------
 

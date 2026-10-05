@@ -7,10 +7,10 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
 from rich.text import Text
 
 from .backends import DEFAULT_BACKEND, get_backend_class, list_backends
+from .prompts import choose
 
 console = Console()
 
@@ -86,28 +86,22 @@ KEYS: list[tuple[str, str, bool, str | None]] = [
 
 def _select_platform(existing: dict[str, str]) -> str:
     """Pick the front-end platform Memclaw should launch."""
-    console.print()
-    bullets = "\n\n".join(
-        f"[bold]{i + 1})[/bold] {label}" for i, (_, label) in enumerate(PLATFORMS)
-    )
-    body = (
-        f"{bullets}\n\n"
-        "[dim]See the README for instructions on how to set up Telegram, "
-        "WhatsApp, or Slack credentials.[/dim]"
-    )
-    console.print(
-        Panel(body, title="How do you want to talk to Memclaw?",
-              border_style="bright_cyan")
-    )
-
     current = existing.get("MEMCLAW_PLATFORM", "")
-    default_idx = next(
-        (str(i + 1) for i, (name, _) in enumerate(PLATFORMS) if name == current),
-        "1",
+    default = next(
+        (i for i, (name, _) in enumerate(PLATFORMS) if name == current), 0,
     )
-    choices = [str(i + 1) for i in range(len(PLATFORMS))]
-    choice = Prompt.ask("Choose", choices=choices, default=default_idx)
-    return PLATFORMS[int(choice) - 1][0]
+    index = choose(
+        console,
+        title="How do you want to talk to Memclaw?",
+        rows=[label for _, label in PLATFORMS],
+        default=default,
+        footer=(
+            "[dim]See the README for instructions on how to set up Telegram, "
+            "WhatsApp, or Slack credentials.[/dim]"
+        ),
+        separator="\n\n",
+    )
+    return PLATFORMS[index][0]
 
 
 def _select_backend(existing: dict[str, str]) -> str:
@@ -121,24 +115,19 @@ def _select_backend(existing: dict[str, str]) -> str:
     if len(backends) <= 1:
         return backends[0].name if backends else DEFAULT_BACKEND
 
-    console.print()
-    bullets = "\n\n".join(
-        f"[bold]{i + 1})[/bold] {cls.display_name}" for i, cls in enumerate(backends)
-    )
-    console.print(
-        Panel(bullets, title="Which agent SDK do you want to use?",
-              border_style="bright_cyan")
-    )
-
     # Default to whichever backend the existing config already names.
     current = existing.get("AGENT_BACKEND", "")
-    default_idx = next(
-        (str(i + 1) for i, cls in enumerate(backends) if cls.name == current),
-        "1",
+    default = next(
+        (i for i, cls in enumerate(backends) if cls.name == current), 0,
     )
-    choices = [str(i + 1) for i in range(len(backends))]
-    choice = Prompt.ask("Choose", choices=choices, default=default_idx)
-    return backends[int(choice) - 1].name
+    index = choose(
+        console,
+        title="Which agent SDK do you want to use?",
+        rows=[cls.display_name for cls in backends],
+        default=default,
+        separator="\n\n",
+    )
+    return backends[index].name
 
 
 def _mask(value: str) -> str:
