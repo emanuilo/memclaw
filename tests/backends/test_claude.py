@@ -10,6 +10,7 @@ import pytest
 
 from memclaw.backends import claude as claude_backend
 from memclaw.backends.claude import ClaudeAgentBackend
+from memclaw.backends.claude_models import ModelInfo
 from memclaw.config import MemclawConfig
 
 
@@ -301,8 +302,6 @@ class TestOptionsCarryModelAndEffort:
 # ────────────────────────────────────────────────────────────────────
 
 def _model_info(model_id: str, *, effort_levels: list[str] | None = None):
-    from memclaw.anthropic_models import ModelInfo
-
     return ModelInfo(
         id=model_id,
         display_name=model_id,
@@ -311,7 +310,7 @@ def _model_info(model_id: str, *, effort_levels: list[str] | None = None):
     )
 
 
-def _ask(tmp_path: Path, models, *, existing=None, answers=("1",),
+def _ask(models, *, existing=None, answers=("1",),
          fetch_error: Exception | None = None):
     """Run `_ask_model_and_effort` with the fetch and the prompts mocked.
 
@@ -327,20 +326,19 @@ def _ask(tmp_path: Path, models, *, existing=None, answers=("1",),
         prompts.append({"text": text, **kwargs})
         return answers[len(prompts) - 1]
 
-    with patch("memclaw.anthropic_models.fetch_models", fetch), \
+    with patch("memclaw.backends.claude.fetch_models", fetch), \
             patch("memclaw.backends.claude.Prompt.ask", side_effect=_prompt):
         values, drops = ClaudeAgentBackend._ask_model_and_effort(
-            console, existing or {},
-            credential_key="ANTHROPIC_API_KEY", credential="sk-ant-test",
-            memory_dir=tmp_path / "m",
+            console, existing or {}, auth_mode="api_key", credential="sk-ant-test",
         )
+    fetch.assert_awaited_once_with("api_key", "sk-ant-test")
     return values, drops, prompts, console
 
 
 class TestWizardModelQuestion:
     def test_picked_model_and_effort_are_stored(self, tmp_path: Path):
         models = [_model_info("claude-opus-5", effort_levels=["low", "high", "max"])]
-        values, drops, prompts, _ = _ask(tmp_path, models, answers=("1", "3"))
+        values, drops, prompts, _ = _ask(models, answers=("1", "3"))
         assert values == {"ANTHROPIC_MODEL": "claude-opus-5", "ANTHROPIC_EFFORT": "max"}
         assert drops == []
         assert len(prompts) == 2
@@ -350,7 +348,7 @@ class TestWizardModelQuestion:
         level left over from an earlier choice is dropped."""
         models = [_model_info("claude-haiku-4-5")]
         values, drops, prompts, _ = _ask(
-            tmp_path, models, existing={"ANTHROPIC_EFFORT": "high"}, answers=("1",),
+            models, existing={"ANTHROPIC_EFFORT": "high"}, answers=("1",),
         )
         assert values == {"ANTHROPIC_MODEL": "claude-haiku-4-5"}
         assert drops == ["ANTHROPIC_EFFORT"]
@@ -358,18 +356,18 @@ class TestWizardModelQuestion:
 
     def test_effort_defaults_to_high(self, tmp_path: Path):
         models = [_model_info("claude-opus-5", effort_levels=["low", "medium", "high"])]
-        _, _, prompts, _ = _ask(tmp_path, models, answers=("1", "3"))
+        _, _, prompts, _ = _ask(models, answers=("1", "3"))
         assert prompts[1]["default"] == "3"
 
     def test_effort_default_falls_back_when_high_is_unsupported(self, tmp_path: Path):
         models = [_model_info("claude-opus-5", effort_levels=["low", "medium"])]
-        _, _, prompts, _ = _ask(tmp_path, models, answers=("1", "1"))
+        _, _, prompts, _ = _ask(models, answers=("1", "1"))
         assert prompts[1]["default"] == "1"
 
     def test_current_model_is_preselected(self, tmp_path: Path):
         models = [_model_info("claude-opus-5"), _model_info("claude-sonnet-5")]
         _, _, prompts, _ = _ask(
-            tmp_path, models,
+            models,
             existing={"ANTHROPIC_MODEL": "claude-sonnet-5"}, answers=("2",),
         )
         assert prompts[0]["default"] == "2"
@@ -377,7 +375,7 @@ class TestWizardModelQuestion:
     def test_current_effort_is_preselected(self, tmp_path: Path):
         models = [_model_info("claude-opus-5", effort_levels=["low", "medium", "high"])]
         _, _, prompts, _ = _ask(
-            tmp_path, models,
+            models,
             existing={"ANTHROPIC_EFFORT": "low"}, answers=("1", "1"),
         )
         assert prompts[1]["default"] == "1"
@@ -390,14 +388,14 @@ class TestWizardSurvivesFetchFailure:
         RuntimeError("no Claude credential configured"),
     ])
     def test_failure_warns_and_keeps_the_current_value(self, tmp_path: Path, error):
-        values, drops, prompts, console = _ask(tmp_path, [], fetch_error=error)
+        values, drops, prompts, console = _ask([], fetch_error=error)
         assert values == {}
         assert drops == []
         assert prompts == []          # nothing was asked
         assert _warned(console)
 
     def test_empty_model_list_warns_and_keeps_the_current_value(self, tmp_path: Path):
-        values, drops, prompts, console = _ask(tmp_path, [])
+        values, drops, prompts, console = _ask([])
         assert (values, drops, prompts) == ({}, [], [])
         assert _warned(console)
 

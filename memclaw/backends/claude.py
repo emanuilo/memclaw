@@ -8,6 +8,7 @@ MCP server wrapping for tools, stream-json image protocol, response parsing
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -29,13 +30,13 @@ from rich.prompt import Prompt
 
 from ..tools import TOOL_DEFINITIONS
 from .base import TurnResult
+from .claude_models import SDK_EFFORT_LEVELS, ModelInfo, fetch_models
 from .mcp_tools import MCP_SERVER_NAME
 from .tool_policy import BUILTIN_TOOLS_DISALLOW
 
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from ..anthropic_models import ModelInfo
     from ..config import MemclawConfig
     from ..tools import ToolExecutor
 
@@ -88,10 +89,6 @@ def _resolve_effort(config: "MemclawConfig") -> str | None:
     Whether the chosen *model* accepts an effort level is a separate question,
     settled in the wizard — it stores no level for a model that reports none.
     """
-    # Local import: anthropic_models imports from this module, so importing it
-    # at module level would be circular. Called once, in __init__.
-    from ..anthropic_models import SDK_EFFORT_LEVELS
-
     effort = (config.anthropic_effort or "").strip().lower()
     return effort if effort in SDK_EFFORT_LEVELS else None
 
@@ -247,10 +244,12 @@ class ClaudeAgentBackend:
         choice = Prompt.ask("Choose", choices=["1", "2"], default=default)
 
         if choice == "1":
+            auth_mode = "subscription"
             env_key = "CLAUDE_CODE_OAUTH_TOKEN"
             label = "Claude subscription OAuth token (run `claude setup-token`)"
             drop_key = "ANTHROPIC_API_KEY"
         else:
+            auth_mode = "api_key"
             env_key = "ANTHROPIC_API_KEY"
             label = "Anthropic API key (sk-ant-...)"
             drop_key = "CLAUDE_CODE_OAUTH_TOKEN"
@@ -267,39 +266,11 @@ class ClaudeAgentBackend:
         drop_keys = [drop_key]
 
         model_values, model_drops = cls._ask_model_and_effort(
-            console, existing,
-            credential_key=env_key, credential=value, memory_dir=memory_dir,
+            console, existing, auth_mode=auth_mode, credential=value,
         )
         values.update(model_values)
         drop_keys.extend(model_drops)
         return values, drop_keys
-
-    @classmethod
-    def _probe_config(
-        cls,
-        *,
-        credential_key: str,
-        credential: str,
-        memory_dir: Path | str | None,
-    ) -> "MemclawConfig":
-        """Build a config carrying only the credential just entered.
-
-        The wizard runs before anything is written to ~/.memclaw/.env, so the
-        answer only exists as a local variable at this point. Whichever
-        credential was *not* chosen is blanked afterwards: __post_init__ fills
-        empty fields from os.environ, and a stale token left in the shell would
-        otherwise decide the auth mode instead of the answer given here.
-        """
-        from ..config import MemclawConfig
-
-        config = MemclawConfig(memory_dir=Path(memory_dir)) if memory_dir else MemclawConfig()
-        if credential_key == "CLAUDE_CODE_OAUTH_TOKEN":
-            config.claude_code_oauth_token = credential
-            config.anthropic_api_key = ""
-        else:
-            config.anthropic_api_key = credential
-            config.claude_code_oauth_token = ""
-        return config
 
     @classmethod
     def _ask_model_and_effort(
@@ -307,9 +278,8 @@ class ClaudeAgentBackend:
         console: "Console",
         existing: dict[str, str],
         *,
-        credential_key: str,
+        auth_mode: str,
         credential: str,
-        memory_dir: Path | str | None,
     ) -> tuple[dict[str, str], list[str]]:
         """Ask which model to run and, if it supports one, which effort level.
 
@@ -321,12 +291,6 @@ class ClaudeAgentBackend:
         already had in place: picking a model is a convenience, and it must
         never be the reason `memclaw configure` cannot finish.
         """
-        # Local import: anthropic_models imports _claude_auth_mode from this
-        # module, so importing it at module level would be circular.
-        import asyncio
-
-        from ..anthropic_models import fetch_models
-
         current_model = existing.get("ANTHROPIC_MODEL", "") or _MODEL
 
         def _keep_current(reason: str) -> tuple[dict[str, str], list[str]]:
@@ -338,11 +302,7 @@ class ClaudeAgentBackend:
 
         try:
             with console.status("[cyan]Fetching available Claude models...[/cyan]"):
-                models = asyncio.run(fetch_models(cls._probe_config(
-                    credential_key=credential_key,
-                    credential=credential,
-                    memory_dir=memory_dir,
-                )))
+                models = asyncio.run(fetch_models(auth_mode, credential))
         except Exception as exc:
             return _keep_current(f"{type(exc).__name__}: {exc}")
 
@@ -365,8 +325,8 @@ class ClaudeAgentBackend:
 
     @staticmethod
     def _pick_model(
-        console: "Console", models: list["ModelInfo"], current_model: str,
-    ) -> "ModelInfo":
+        console: "Console", models: list[ModelInfo], current_model: str,
+    ) -> ModelInfo:
         """Show the numbered model picker, preselecting *current_model*."""
         rows = []
         default_choice = "1"

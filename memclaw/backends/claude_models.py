@@ -5,35 +5,21 @@ configured credential, each with a capability tree describing which effort
 levels it accepts. The setup wizard builds its model picker from this, so a
 model Anthropic releases shows up with no code change here.
 
-The result is cached in ~/.memclaw/models_cache.json for a day, so repeated
-`memclaw configure` runs don't re-hit the API.
+The list is fetched fresh on every call. It is only needed by
+`memclaw configure`, and a cached copy would go stale the moment the user
+switches to a credential that can reach a different set of models.
 """
 
 from __future__ import annotations
 
-import json
-import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 
-from .backends.claude import _claude_auth_mode
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from .config import MemclawConfig
-
-
 MODELS_URL = "https://api.anthropic.com/v1/models"
 API_VERSION = "2023-06-01"
-
-# Not required by /v1/models, but other OAuth-authenticated endpoints reject
-# the token without it. Sent for consistency so this header never becomes a
-# surprise when the same auth path is reused elsewhere.
-OAUTH_BETA = "oauth-2025-04-20"
 
 REQUEST_TIMEOUT = 10.0
 
@@ -47,9 +33,6 @@ PAGE_LIMIT = 100
 # outside this set is dropped. Widen the tuple when the SDK gains a level.
 SDK_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
-CACHE_FILENAME = "models_cache.json"
-CACHE_TTL_SECONDS = 24 * 60 * 60
-
 
 @dataclass
 class ModelInfo:
@@ -61,19 +44,21 @@ class ModelInfo:
 
 # ── Request building ────────────────────────────────────────────────
 
-def _build_headers(config: "MemclawConfig") -> dict[str, str]:
-    """Pick the auth header matching the configured credential.
+def _build_headers(auth_mode: str, credential: str) -> dict[str, str]:
+    """Pick the auth header matching the credential type.
 
-    The two credential types are not interchangeable: an OAuth token sent as
-    `x-api-key` comes back 401, so these cases must stay separate.
+    *auth_mode* is "subscription" or "api_key", as returned by
+    `_claude_auth_mode`. The two credential types are not interchangeable:
+    an OAuth token sent as `x-api-key` comes back 401, so these cases must
+    stay separate.
     """
+    if not credential:
+        raise RuntimeError("No Claude credential is configured.")
     headers = {"anthropic-version": API_VERSION}
-    mode = _claude_auth_mode(config)
-    if mode == "subscription":
-        headers["Authorization"] = f"Bearer {config.claude_code_oauth_token}"
-        headers["anthropic-beta"] = OAUTH_BETA
-    elif mode == "api_key":
-        headers["x-api-key"] = config.anthropic_api_key
+    if auth_mode == "subscription":
+        headers["Authorization"] = f"Bearer {credential}"
+    elif auth_mode == "api_key":
+        headers["x-api-key"] = credential
     else:
         raise RuntimeError("No Claude credential is configured.")
     return headers
@@ -126,69 +111,18 @@ def _parse_models(payload: dict[str, Any]) -> list[ModelInfo]:
     return models
 
 
-# ── Cache ───────────────────────────────────────────────────────────
-
-def _cache_path(config: "MemclawConfig") -> "Path":
-    return config.memory_dir / CACHE_FILENAME
-
-
-def _read_cache(config: "MemclawConfig") -> list[ModelInfo] | None:
-    """Return cached models while they're fresh, else None.
-
-    A missing, unreadable or malformed cache is not an error — we just go
-    back to the network. The wizard must never break over a bad cache file.
-    """
-    try:
-        raw = json.loads(_cache_path(config).read_text(encoding="utf-8"))
-        age = time.time() - float(raw["fetched_at"])
-        # A negative age means the clock moved; refetch rather than trust it.
-        if not 0 <= age <= CACHE_TTL_SECONDS:
-            return None
-        return [
-            ModelInfo(
-                id=str(entry["id"]),
-                display_name=str(entry["display_name"]),
-                created_at=str(entry["created_at"]),
-                effort_levels=[str(level) for level in entry["effort_levels"]],
-            )
-            for entry in raw["models"]
-        ]
-    except Exception:
-        return None
-
-
-def _write_cache(config: "MemclawConfig", models: list[ModelInfo]) -> None:
-    """Persist a freshly fetched list. Failing to write is never fatal."""
-    payload = {"fetched_at": time.time(), "models": [asdict(m) for m in models]}
-    try:
-        _cache_path(config).write_text(
-            json.dumps(payload, indent=2), encoding="utf-8",
-        )
-    except OSError:
-        pass
-
-
 # ── Entry point ─────────────────────────────────────────────────────
 
-async def fetch_models(config: "MemclawConfig") -> list[ModelInfo]:
+async def fetch_models(auth_mode: str, credential: str) -> list[ModelInfo]:
     """Fetch models from /v1/models, newest first.
 
-    Serves a cached list when one is younger than CACHE_TTL_SECONDS.
     Raises on network or auth failure — the caller decides what to do.
     """
-    cached = _read_cache(config)
-    if cached is not None:
-        return cached
-
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(
             MODELS_URL,
-            headers=_build_headers(config),
+            headers=_build_headers(auth_mode, credential),
             params={"limit": PAGE_LIMIT},
         )
         response.raise_for_status()
-        payload = response.json()
-
-    models = _parse_models(payload)
-    _write_cache(config, models)
-    return models
+        return _parse_models(response.json())
