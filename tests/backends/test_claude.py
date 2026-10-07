@@ -901,3 +901,50 @@ class TestWizardSetupFlow:
 
         assert values == {"ANTHROPIC_API_KEY": "sk-ant-new"}
         assert drops == ["CLAUDE_CODE_OAUTH_TOKEN"]
+
+
+class TestToolSteps:
+    @pytest.mark.asyncio
+    async def test_each_tool_call_is_reported(self, claude_config):
+        from claude_agent_sdk import AssistantMessage, ToolUseBlock
+
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
+        fake = _FakeClients("done")
+        steps = []
+
+        async def on_tool(step):
+            steps.append(step)
+
+        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+            await _turn(backend, _executor(backend.config))  # builds the client
+            client = fake.clients[0]
+            original = client.receive_response.side_effect
+
+            def with_tools():
+                async def _gen():
+                    yield AssistantMessage(content=[
+                        ToolUseBlock(id="1", name="mcp__memclaw__memory_search",
+                                     input={"query": "dog name"}),
+                        ToolUseBlock(id="2", name="mcp__memclaw__memory_save",
+                                     input={"content": "x"}),
+                    ], model="claude-sonnet-5-5")
+                    async for msg in original():
+                        yield msg
+                return _gen()
+
+            client.receive_response.side_effect = with_tools
+            await _turn(backend, _executor(backend.config), on_tool=on_tool)
+
+        assert [(s.index, s.name, s.summary) for s in steps] == [
+            (1, "memory_search", "Searching memories: dog name"),
+            (2, "memory_save", "Saving to memory"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_failing_callback_does_not_fail_the_turn(self):
+        from memclaw.backends.base import report_tool_step
+
+        async def broken(step):
+            raise RuntimeError("telegram down")
+
+        await report_tool_step(broken, 1, "memory_save", {})  # no exception

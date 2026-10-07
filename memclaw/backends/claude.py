@@ -32,7 +32,7 @@ from claude_agent_sdk import (
 from loguru import logger
 from ..prompts import choose
 from ..tools import TOOL_DEFINITIONS
-from .base import TurnResult
+from .base import ProgressCallback, TurnResult, report_tool_step
 from .claude_models import SDK_EFFORT_LEVELS, ModelInfo, fetch_models
 from .mcp_tools import MCP_SERVER_NAME
 
@@ -677,6 +677,7 @@ class ClaudeAgentBackend:
         image_b64: str | None = None,
         image_media_type: str = "image/jpeg",
         max_turns: int = 10,
+        on_tool: ProgressCallback | None = None,
     ) -> TurnResult:
         if self._mcp_server is None:
             self._mcp_server = _build_mcp_server(tool_executor)
@@ -699,6 +700,7 @@ class ClaudeAgentBackend:
                     _compose_prompt(context, user_message),
                     image_b64=image_b64,
                     image_media_type=image_media_type,
+                    on_tool=on_tool,
                 )
             except BaseException:
                 # The CLI may be dead or mid-turn; reconnect (resuming) next time.
@@ -732,6 +734,7 @@ class ClaudeAgentBackend:
         *,
         image_b64: str | None,
         image_media_type: str,
+        on_tool: ProgressCallback | None = None,
     ) -> TurnResult:
         """Send one user message on a connected client and collect the reply."""
         if image_b64:
@@ -741,6 +744,7 @@ class ClaudeAgentBackend:
 
         last_text = ""
         result = TurnResult(text="")
+        steps = 0
         async for msg in client.receive_response():
             if isinstance(msg, AssistantMessage):
                 turn_text = ""
@@ -756,6 +760,8 @@ class ClaudeAgentBackend:
                         if tool_name.startswith(prefix):
                             tool_name = tool_name[len(prefix):]
                         logger.info("Tool call: {name}({args})", name=tool_name, args=args_str)
+                        steps += 1
+                        await report_tool_step(on_tool, steps, tool_name, block.input)
                 if turn_text:
                     last_text = turn_text
             elif isinstance(msg, ResultMessage):

@@ -24,6 +24,7 @@ from pathlib import Path
 from loguru import logger
 
 from .backends import AgentBackend, build_backend
+from .backends.base import ProgressCallback
 from .config import MemclawConfig
 from .index import MemoryIndex
 from .reminders import ReminderScheduler
@@ -403,6 +404,7 @@ class MemclawAgent:
         image_b64: str | None = None,
         image_media_type: str = "image/jpeg",
         chat_id: str | None = None,
+        on_tool: ProgressCallback | None = None,
     ) -> tuple[str, list[dict]]:
         self._found_images.clear()
         self._tools.chat_id = chat_id
@@ -449,6 +451,7 @@ class MemclawAgent:
             image_b64=image_b64,
             image_media_type=image_media_type,
             max_turns=10,
+            on_tool=on_tool,
         )
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
 

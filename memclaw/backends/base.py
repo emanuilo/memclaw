@@ -18,9 +18,12 @@ should need SDK-specific imports.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
+
+from loguru import logger
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -50,6 +53,32 @@ class TurnResult:
     # The backend's native session id for this conversation, or None when the
     # backend has no resumable sessions.
     session_id: str | None = None
+
+
+@dataclass
+class ToolStep:
+    """One tool call the agent makes during a turn, for progress messages."""
+
+    index: int    # 1-based, per turn
+    name: str     # Memclaw tool name, e.g. "memory_search"
+    summary: str  # short human-readable description
+
+
+ProgressCallback = Callable[[ToolStep], Awaitable[None]]
+
+
+async def report_tool_step(
+    on_tool: ProgressCallback | None, index: int, name: str, args: Any,
+) -> None:
+    """Call *on_tool* for a tool call; a failing callback never fails the turn."""
+    if on_tool is None:
+        return
+    from ..tools import describe_tool_call  # local import — tools imports a lot
+
+    try:
+        await on_tool(ToolStep(index, name, describe_tool_call(name, args)))
+    except Exception as exc:
+        logger.debug("Progress callback failed: {exc}", exc=exc)
 
 
 @runtime_checkable
@@ -155,6 +184,7 @@ class AgentBackend(Protocol):
         image_b64: str | None = None,
         image_media_type: str = "image/jpeg",
         max_turns: int = 10,
+        on_tool: ProgressCallback | None = None,
     ) -> TurnResult:
         """Run one full agentic turn with tool access, in the conversation
         identified by *session_key*.
@@ -165,6 +195,9 @@ class AgentBackend(Protocol):
         this message, ahead of ``user_message``. ``resume_session_id`` is
         the session to resume if the backend has to (re)connect; if it can't
         be resumed the backend starts a fresh one.
+
+        ``on_tool`` is called (via `report_tool_step`) for every tool call
+        the agent makes, for progress messages.
 
         The backend is responsible for translating ``TOOL_DEFINITIONS``
         into its SDK's tool format and routing tool calls back through

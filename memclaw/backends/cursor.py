@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from loguru import logger
 
-from .base import TurnResult
+from .base import ProgressCallback, TurnResult
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks
 from .cursor_sdk_adapter import RunUsageTracker, collect_run_result, extract_run_text
 from .mcp_bridge import HttpMcpServer, mcp_servers_for
@@ -324,6 +324,7 @@ class CursorAgentBackend:
         image_b64: str | None = None,
         image_media_type: str = "image/jpeg",
         max_turns: int = 10,
+        on_tool: ProgressCallback | None = None,
     ) -> TurnResult:
         from cursor_sdk import CursorAgentError, SendOptions
 
@@ -369,6 +370,7 @@ class CursorAgentBackend:
                     run,
                     max_turns=max_turns,
                     usage_tracker=usage_tracker,
+                    on_tool=on_tool,
                 )
             finally:
                 await agent.close()

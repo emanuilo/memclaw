@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from loguru import logger
 
-from .base import TurnResult
+from .base import ProgressCallback, TurnResult, report_tool_step
 from .mcp_tools import MCP_SERVER_NAME
 
 
@@ -279,10 +279,12 @@ async def collect_run_result(
     *,
     max_turns: int,
     usage_tracker: RunUsageTracker | None = None,
+    on_tool: ProgressCallback | None = None,
 ) -> TurnResult:
     """Drain the run stream for logging and return a normalized TurnResult."""
     last_text = ""
     pending_tools: dict[str, str] = {}
+    reported: set[str] = set()
 
     async for event in run.events():
         message = getattr(event, "sdk_message", None)
@@ -290,6 +292,16 @@ async def collect_run_result(
             turn_text = _handle_sdk_message(message, pending_tools=pending_tools)
             if turn_text:
                 last_text = turn_text
+            if getattr(message, "type", None) == "tool_call" and str(
+                getattr(message, "status", "")
+            ) == "running":
+                name, args = normalize_tool_call(
+                    getattr(message, "name", ""), getattr(message, "args", None),
+                )
+                call_id = str(getattr(message, "call_id", "") or len(reported))
+                if call_id not in reported:
+                    reported.add(call_id)
+                    await report_tool_step(on_tool, len(reported), name, args)
 
     for call_id, name in pending_tools.items():
         tool_name, _ = normalize_tool_call(name, {})

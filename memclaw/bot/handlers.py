@@ -8,16 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import time
 
 from loguru import logger
 from openai import AsyncOpenAI
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from ..agent import MemclawAgent
 from ..backends import AgentBackend
+from ..backends.base import ToolStep
 from ..config import MemclawConfig
 from ..reminders import ReminderScheduler
 from . import mask_user_id
@@ -43,6 +46,10 @@ BOT_COMMANDS = [
     ("model", "Show or change the model"),
     ("effort", "Show or change the reasoning effort"),
 ]
+
+# Minimum seconds between edits of the "Working…" status message, to stay
+# well under Telegram's rate limits.
+STATUS_EDIT_INTERVAL_S = 2.0
 
 # Telegram limits callback_data to 64 bytes.
 CALLBACK_DATA_MAX_BYTES = 64
@@ -220,15 +227,41 @@ class MessageHandlers:
         """Run the agent with a typing indicator, then send the full response."""
         chat_id = update.effective_chat.id
         typing_task = asyncio.create_task(_typing_loop(context.bot, chat_id))
+        # One silent status message, edited as the agent works and deleted
+        # once the reply is ready.
+        status = None
+        last_edit = 0.0
+
+        async def on_tool(step: ToolStep) -> None:
+            nonlocal status, last_edit
+            now = time.monotonic()
+            if now - last_edit < STATUS_EDIT_INTERVAL_S:
+                return
+            last_edit = now
+            text = f"Working… step {step.index}: {step.summary}"
+            try:
+                if status is None:
+                    status = await context.bot.send_message(
+                        chat_id, text, disable_notification=True,
+                    )
+                else:
+                    await status.edit_text(text)
+            except TelegramError as exc:
+                logger.debug("Status update failed: {exc}", exc=exc)
+
         try:
             response_text, found_images = await self.agent.handle(
                 prompt,
                 image_b64=image_b64,
                 image_media_type=image_media_type,
                 chat_id=str(chat_id),
+                on_tool=on_tool,
             )
         finally:
             typing_task.cancel()
+            if status is not None:
+                with contextlib.suppress(TelegramError):
+                    await status.delete()
         await self._send_response(update, context, response_text, found_images)
 
     # ------------------------------------------------------------------

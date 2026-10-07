@@ -482,3 +482,59 @@ class TestEffortCommand:
         await handlers.effort_command(update, context)
         assert "doesn't support 'max'" in update.message.reply_text.await_args.args[0]
         assert backend.effort == "high"
+
+
+class TestStepStatusMessage:
+    @pytest.mark.asyncio
+    async def test_status_message_is_sent_edited_and_deleted(self):
+        from memclaw.backends.base import ToolStep
+        from memclaw.bot import handlers as handlers_mod
+
+        handlers = _telegram_handlers()
+        handlers._send_response = AsyncMock()
+        status = MagicMock(edit_text=AsyncMock(), delete=AsyncMock())
+        context = MagicMock()
+        context.bot.send_message = AsyncMock(return_value=status)
+        context.bot.send_chat_action = AsyncMock()
+
+        async def handle(prompt, *, on_tool, **kwargs):
+            await on_tool(ToolStep(1, "memory_search", "Searching memories: dog"))
+            await on_tool(ToolStep(2, "memory_save", "Saving to memory"))
+            return "Bruno", []
+
+        handlers.agent.handle = handle
+        with patch.object(handlers_mod, "STATUS_EDIT_INTERVAL_S", 0):
+            await handlers._send_with_typing(_command_update(), context, "hi")
+
+        context.bot.send_message.assert_awaited_once()
+        assert context.bot.send_message.await_args.args[1] == (
+            "Working… step 1: Searching memories: dog"
+        )
+        status.edit_text.assert_awaited_once_with("Working… step 2: Saving to memory")
+        status.delete.assert_awaited_once()
+        handlers._send_response.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_status_message_without_tool_calls(self):
+        handlers = _telegram_handlers()
+        handlers._send_response = AsyncMock()
+        context = MagicMock()
+        context.bot.send_message = AsyncMock()
+        context.bot.send_chat_action = AsyncMock()
+        handlers.agent.handle = AsyncMock(return_value=("hello", []))
+
+        await handlers._send_with_typing(_command_update(), context, "hi")
+        context.bot.send_message.assert_not_awaited()
+
+
+class TestDescribeToolCall:
+    def test_labels_and_truncation(self):
+        from memclaw.tools import describe_tool_call
+
+        assert describe_tool_call("memory_search", {"query": "dog  name"}) == (
+            "Searching memories: dog name"
+        )
+        assert describe_tool_call("reminder_list", {}) == "Checking reminders"
+        assert describe_tool_call("unknown_tool", {"x": 1}) == "unknown_tool"
+        long = describe_tool_call("file_read", {"file_path": "a" * 200})
+        assert long.endswith("…") and len(long) <= len("Reading: ") + 80

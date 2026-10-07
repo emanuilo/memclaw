@@ -225,6 +225,37 @@ class TestCollectRunResult:
         assert result.text != "you."
 
     @pytest.mark.asyncio
+    async def test_collect_run_result_reports_each_tool_call_once(self):
+        def _call(call_id, status, name, args):
+            return SimpleNamespace(
+                sdk_message=SimpleNamespace(
+                    type="tool_call", status=status, name=name, args=args, call_id=call_id,
+                ),
+            )
+
+        async def _events():
+            yield _call("1", "running", "mcp", {"toolName": "memory_search",
+                                                "args": {"query": "dog"}})
+            yield _call("1", "running", "mcp", {"toolName": "memory_search",
+                                                "args": {"query": "dog"}})
+            yield _call("1", "completed", "mcp", {"toolName": "memory_search"})
+            yield _call("2", "running", "memclaw_memory_save", {"content": "x"})
+
+        mock_run = AsyncMock()
+        mock_run.events = MagicMock(return_value=_events())
+        mock_run.wait = AsyncMock(return_value=SimpleNamespace(result="ok", num_turns=1))
+        steps = []
+
+        async def on_tool(step):
+            steps.append(step)
+
+        await collect_run_result(mock_run, max_turns=10, on_tool=on_tool)
+        assert [(s.index, s.name, s.summary) for s in steps] == [
+            (1, "memory_search", "Searching memories: dog"),
+            (2, "memory_save", "Saving to memory"),
+        ]
+
+    @pytest.mark.asyncio
     async def test_collect_run_result_reads_turn_ended_usage(self):
         tracker = RunUsageTracker()
         tracker.on_delta(
