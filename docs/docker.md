@@ -123,13 +123,16 @@ docker compose up -d --build
   grows with your memory vault, so back the volume up periodically.
 - The Claude backend (`AGENT_BACKEND=claude`, the default) keeps one
   Claude Code CLI process running per active chat (closed on `/new`
-  and shutdown). The Cursor backend (`AGENT_BACKEND=cursor`) is
-  pure-Python and slightly leaner if you don't need Claude.
+  and shutdown). The Cursor backend (`AGENT_BACKEND=cursor`) runs a
+  single Cursor SDK bridge process (Node) shared by all chats.
 - Conversations resume after a restart: `sessions.json` lives in the
   data volume and Claude Code's own session files in the container's
   `~/.claude`. That directory isn't on the volume, so after a rebuild
   (`docker compose up -d --build` recreates the container) each chat
-  starts a fresh conversation. Memories are unaffected.
+  starts a fresh conversation. Memories are unaffected. The same goes
+  for the Cursor backend, whose agents are stored in the container's
+  `~/.cursor`.
 - Telegram's `/model` and `/effort` save their choice to
-  `~/.memclaw/.env`. A `CLAUDE_MODEL` / `CLAUDE_EFFORT` passed in from
-  the compose `.env` wins over that file on the next start.
+  `~/.memclaw/.env`. A `CLAUDE_MODEL` / `CLAUDE_EFFORT` (or
+  `CURSOR_MODEL` / `CURSOR_EFFORT`) passed in from the compose `.env`
+  wins over that file on the next start.

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.resources
 import os
-import shutil
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -47,6 +46,7 @@ class MemclawConfig:
     # Cursor SDK backend settings
     cursor_api_key: str = ""
     cursor_model: str = ""
+    cursor_effort: str = ""
     mcp_http_port: int = 17373
 
     # Memory consolidation
@@ -81,6 +81,8 @@ class MemclawConfig:
             self.cursor_api_key = os.environ.get("CURSOR_API_KEY", "")
         if not self.cursor_model:
             self.cursor_model = os.environ.get("CURSOR_MODEL", "")
+        if not self.cursor_effort:
+            self.cursor_effort = os.environ.get("CURSOR_EFFORT", "")
         env_mcp_port = os.environ.get("MEMCLAW_MCP_PORT", "").strip()
         if env_mcp_port:
             try:
