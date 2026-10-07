@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import os
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from loguru import logger
 
-from .base import TurnResult
+from .base import ProgressCallback, TurnResult
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks
 from .cursor_sdk_adapter import RunUsageTracker, collect_run_result, extract_run_text
 from .mcp_bridge import HttpMcpServer, mcp_servers_for
@@ -28,6 +29,12 @@ _OUTPUT_COST_PER_M = 2.5
 
 # Scrub Claude credentials when switching to Cursor so they can't shadow selection.
 _DROP_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+
+# INTERIM: the Cursor backend has no native conversation sessions yet, so it
+# keeps the last few messages per session key in memory and folds them into
+# each prompt. To be replaced by native Cursor conversation handling.
+_TRANSCRIPT_MESSAGES = 10
+_TRANSCRIPT_MESSAGE_CHARS = 1000
 
 
 def _cursor_api_key(config: "MemclawConfig") -> str:
@@ -64,18 +71,31 @@ def _build_combined_prompt(*, system_prompt: str, user_message: str) -> str:
     )
 
 
+def _format_transcript(transcript: list[tuple[str, str]]) -> str:
+    """INTERIM: render recent (role, text) messages for the prompt."""
+    if not transcript:
+        return ""
+    lines = ["=== RECENT CONVERSATION ==="]
+    for role, text in transcript:
+        lines.append(f"{'User' if role == 'user' else 'Assistant'}: {text}")
+    return "\n".join(lines)
+
+
 def _build_user_message(
     *,
     system_prompt: str,
     user_message: str,
+    context: str = "",
+    transcript: list[tuple[str, str]] | None = None,
     image_b64: str | None = None,
     image_media_type: str = "image/jpeg",
 ) -> str | Any:
     from cursor_sdk import SDKImage, UserMessage
 
+    parts = [_format_transcript(transcript or []), context, user_message]
     prompt = _build_combined_prompt(
         system_prompt=system_prompt,
-        user_message=user_message,
+        user_message="\n\n".join(p for p in parts if p),
     )
     if not image_b64:
         return prompt
@@ -117,6 +137,7 @@ class CursorAgentBackend:
 
     name: ClassVar[str] = "cursor"
     display_name: ClassVar[str] = "Cursor SDK"
+    supports_model_selection: ClassVar[bool] = False
 
     def __init__(self, config: "MemclawConfig") -> None:
         self.config = config
@@ -126,6 +147,8 @@ class CursorAgentBackend:
         os.environ["MEMCLAW_MEMORY_DIR"] = self._cwd
         self.bills_per_token = True
         self._mcp_server = HttpMcpServer()
+        # INTERIM: session key -> recent (role, text) messages.
+        self._transcripts: dict[str, deque[tuple[str, str]]] = {}
 
     @classmethod
     def is_configured(cls, config: "MemclawConfig") -> bool:
@@ -215,6 +238,38 @@ class CursorAgentBackend:
             port=self.config.mcp_http_port,
         )
 
+    async def reset_session(self, session_key: str) -> None:
+        self._transcripts.pop(session_key, None)
+
+    def _remember(self, session_key: str, role: str, text: str) -> None:
+        transcript = self._transcripts.setdefault(
+            session_key, deque(maxlen=_TRANSCRIPT_MESSAGES),
+        )
+        transcript.append((role, text[:_TRANSCRIPT_MESSAGE_CHARS]))
+
+    # Model selection isn't supported for Cursor yet (see
+    # supports_model_selection); CURSOR_MODEL picks the model.
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def effort(self) -> str | None:
+        return None
+
+    async def list_models(self) -> list[Any]:
+        raise NotImplementedError("Model selection isn't supported for Cursor yet.")
+
+    async def effort_levels(self) -> list[str] | None:
+        return None
+
+    async def set_model(self, model_id: str) -> str:
+        raise NotImplementedError("Model selection isn't supported for Cursor yet.")
+
+    async def set_effort(self, level: str) -> None:
+        raise NotImplementedError("Effort selection isn't supported for Cursor yet.")
+
     async def _launch_client(self) -> Any:
         from cursor_sdk import AsyncClient
 
@@ -261,11 +316,15 @@ class CursorAgentBackend:
         self,
         *,
         system_prompt: str,
+        context: str,
         user_message: str,
         tool_executor: "ToolExecutor",
+        session_key: str,
+        resume_session_id: str | None = None,
         image_b64: str | None = None,
         image_media_type: str = "image/jpeg",
         max_turns: int = 10,
+        on_tool: ProgressCallback | None = None,
     ) -> TurnResult:
         from cursor_sdk import CursorAgentError, SendOptions
 
@@ -276,7 +335,9 @@ class CursorAgentBackend:
 
         message = _build_user_message(
             system_prompt=system_prompt,
+            context=context,
             user_message=user_message,
+            transcript=list(self._transcripts.get(session_key, ())),
             image_b64=image_b64,
             image_media_type=image_media_type,
         )
@@ -309,6 +370,7 @@ class CursorAgentBackend:
                     run,
                     max_turns=max_turns,
                     usage_tracker=usage_tracker,
+                    on_tool=on_tool,
                 )
             finally:
                 await agent.close()
@@ -316,6 +378,8 @@ class CursorAgentBackend:
             if not result.text.strip():
                 result.text = "I couldn't generate a response."
             _apply_cost_fallback(result, bills_per_token=self.bills_per_token)
+            self._remember(session_key, "user", user_message)
+            self._remember(session_key, "assistant", result.text)
             return result
         except CursorAgentError as exc:
             logger.error("Cursor SDK turn failed: {msg}", msg=exc.message)
