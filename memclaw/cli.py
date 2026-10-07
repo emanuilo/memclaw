@@ -185,7 +185,13 @@ def _run_telegram(config: MemclawConfig) -> None:
     from openai import AsyncOpenAI
     from telegram import BotCommand
     from telegram.error import NetworkError, TelegramError, TimedOut
-    from telegram.ext import Application, CommandHandler, MessageHandler, filters
+    from telegram.ext import (
+        Application,
+        CallbackQueryHandler,
+        CommandHandler,
+        MessageHandler,
+        filters,
+    )
 
     from .bot.handlers import BOT_COMMANDS, MessageHandlers
 
@@ -242,6 +248,9 @@ def _run_telegram(config: MemclawConfig) -> None:
     async def _effort(update, context):
         await context.bot_data["handlers"].effort_command(update, context)
 
+    async def _callback(update, context):
+        await context.bot_data["handlers"].handle_callback(update, context)
+
     async def _text(update, context):
         await context.bot_data["handlers"].handle_text(update, context)
 
@@ -263,6 +272,7 @@ def _run_telegram(config: MemclawConfig) -> None:
     app.add_handler(CommandHandler("new", _new))
     app.add_handler(CommandHandler("model", _model))
     app.add_handler(CommandHandler("effort", _effort))
+    app.add_handler(CallbackQueryHandler(_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text))
     app.add_handler(MessageHandler(filters.PHOTO, _photo))
     app.add_handler(MessageHandler(filters.VOICE, _voice))
@@ -273,7 +283,7 @@ def _run_telegram(config: MemclawConfig) -> None:
         f"[green]Starting Memclaw Telegram bot...[/green]  "
         f"(allowed users: {masked})"
     )
-    app.run_polling(allowed_updates=["message"])
+    app.run_polling(allowed_updates=["message", "callback_query"])
 
 
 def _run_whatsapp(config: MemclawConfig) -> None:

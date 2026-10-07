@@ -11,8 +11,9 @@ import base64
 
 from loguru import logger
 from openai import AsyncOpenAI
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from ..agent import MemclawAgent
@@ -43,80 +44,116 @@ BOT_COMMANDS = [
     ("effort", "Show or change the reasoning effort"),
 ]
 
+# Telegram limits callback_data to 64 bytes.
+CALLBACK_DATA_MAX_BYTES = 64
 
-async def model_command_reply(backend: AgentBackend, args: list[str]) -> str:
-    """Reply for `/model` (list models) or `/model <number or id>` (switch)."""
-    if not backend.supports_model_selection:
-        return f"Switching models isn't supported for the {backend.display_name} backend yet."
+_APPLIES = "Applies from your next message; the conversation is kept."
+
+
+def model_callback_data(index: int, model_id: str) -> str:
+    """``m:<id>``, or ``mi:<index>`` if the id would exceed Telegram's limit."""
+    data = f"m:{model_id}"
+    return data if len(data.encode()) <= CALLBACK_DATA_MAX_BYTES else f"mi:{index}"
+
+
+def _unsupported(backend: AgentBackend, what: str) -> str:
+    return f"{what} isn't supported for the {backend.display_name} backend yet."
+
+
+async def _load_models(backend: AgentBackend) -> list:
     try:
-        models = await backend.list_models()
+        return await backend.list_models()
     except Exception as exc:
         logger.warning("Could not fetch the model list: {exc}", exc=exc)
-        models = []
+        return []
 
-    arg = " ".join(args).strip()
-    if arg:
-        model_id = arg
-        if arg.isdigit():
-            n = int(arg)
-            if not 1 <= n <= len(models):
-                return f"There's no model number {n}. Send /model to see the list."
-            model_id = models[n - 1].id
-        try:
-            note = await backend.set_model(model_id)
-        except ValueError as exc:
-            return f"{exc} Send /model to see the available models."
-        lines = [f"Switched to {backend.model}."]
-        if note:
-            lines.append(note)
-        lines.append(f"Effort: {backend.effort or 'model default'}")
-        lines.append("Applies from your next message; the conversation is kept.")
-        return "\n".join(lines)
 
-    lines = [
-        f"Model: {backend.model}",
-        f"Effort: {backend.effort or 'model default'}",
-        "",
-    ]
-    if models:
-        lines.append("Available models:")
-        for i, m in enumerate(models, 1):
-            current = "  (current)" if m.id == backend.model else ""
-            lines.append(f"{i}. {m.display_name} - {m.id}{current}")
-        lines += ["", "Send /model <number or id> to switch."]
+def _status_lines(backend: AgentBackend, models: list, levels: list[str] | None) -> list[str]:
+    info = next((m for m in models if m.id == backend.model), None)
+    model = f"{info.display_name} ({info.id})" if info else backend.model
+    if levels == []:
+        effort = "not supported by this model"
     else:
-        lines.append("Couldn't load the model list right now; send /model <id> to switch.")
-    return "\n".join(lines)
+        effort = backend.effort or "model default"
+    return [f"Model: {model}", f"Effort: {effort}"]
 
 
-async def effort_command_reply(backend: AgentBackend, args: list[str]) -> str:
-    """Reply for `/effort` (show levels) or `/effort <level>` (set it)."""
+async def model_menu(
+    backend: AgentBackend, note: str = "",
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """`/model` reply: current settings plus one button per model."""
     if not backend.supports_model_selection:
-        return f"Changing the effort isn't supported for the {backend.display_name} backend yet."
-    arg = " ".join(args).strip()
-    if arg:
-        try:
-            await backend.set_effort(arg)
-        except ValueError as exc:
-            return str(exc)
-        return (
-            f"Effort set to {backend.effort}.\n"
-            "Applies from your next message; the conversation is kept."
-        )
+        return _unsupported(backend, "Switching models"), None
+    models = await _load_models(backend)
+    lines = _status_lines(backend, models, await backend.effort_levels())
+    if note:
+        lines += ["", note]
+    lines.append("")
+    if not models:
+        lines.append("Couldn't load the model list right now; send /model <id> to switch.")
+        return "\n".join(lines), None
+    lines.append("Tap a model to switch, or send /model <id>.")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            ("✓ " if m.id == backend.model else "") + m.display_name,
+            callback_data=model_callback_data(i, m.id),
+        )]
+        for i, m in enumerate(models)
+    ])
+    return "\n".join(lines), keyboard
 
+
+async def effort_menu(
+    backend: AgentBackend, note: str = "",
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """`/effort` reply: current settings plus a row of level buttons."""
+    if not backend.supports_model_selection:
+        return _unsupported(backend, "Changing the effort"), None
     levels = await backend.effort_levels()
-    lines = [
-        f"Model: {backend.model}",
-        f"Effort: {backend.effort or 'model default'}",
-        "",
-    ]
+    lines = _status_lines(backend, await _load_models(backend), levels)
+    if note:
+        lines += ["", note]
+    lines.append("")
     if levels == []:
         lines.append("This model doesn't support an effort setting.")
-    else:
-        if levels:
-            lines.append(f"Levels this model supports: {', '.join(levels)}")
+        return "\n".join(lines), None
+    if levels is None:
         lines.append("Send /effort <level> to change it.")
-    return "\n".join(lines)
+        return "\n".join(lines), None
+    lines.append("Tap a level, or send /effort <level>.")
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            ("✓ " if lv == backend.effort else "") + lv, callback_data=f"e:{lv}",
+        )
+        for lv in levels
+    ]])
+    return "\n".join(lines), keyboard
+
+
+async def select_model(backend: AgentBackend, model_id: str) -> str:
+    """Switch to *model_id*. Returns a note for the user; raises ValueError
+    for an unknown model."""
+    if model_id == backend.model:
+        return f"Already using {model_id}."
+    note = await backend.set_model(model_id)
+    return " ".join(p for p in (f"Switched to {backend.model}.", note, _APPLIES) if p)
+
+
+async def select_effort(backend: AgentBackend, level: str) -> str:
+    """Set the effort level. Returns a note; raises ValueError if rejected."""
+    await backend.set_effort(level)
+    return f"Effort set to {backend.effort}. {_APPLIES}"
+
+
+async def _resolve_model_arg(backend: AgentBackend, arg: str) -> str:
+    """`/model <number or id>` → model id. Raises ValueError."""
+    if not arg.isdigit():
+        return arg
+    models = await _load_models(backend)
+    n = int(arg)
+    if not 1 <= n <= len(models):
+        raise ValueError(f"There's no model number {n}.")
+    return models[n - 1].id
 
 
 class MessageHandlers:
@@ -221,14 +258,66 @@ class MessageHandlers:
     async def model_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_user(update.effective_user.id):
             return
-        reply = await model_command_reply(self.agent.backend, list(context.args or []))
-        await update.message.reply_text(reply)
+        backend = self.agent.backend
+        arg = " ".join(context.args or []).strip()
+        note = ""
+        if arg and backend.supports_model_selection:
+            try:
+                note = await select_model(backend, await _resolve_model_arg(backend, arg))
+            except ValueError as exc:
+                note = f"{exc} Pick one below."
+        text, keyboard = await model_menu(backend, note)
+        await update.message.reply_text(text, reply_markup=keyboard)
 
     async def effort_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_user(update.effective_user.id):
             return
-        reply = await effort_command_reply(self.agent.backend, list(context.args or []))
-        await update.message.reply_text(reply)
+        backend = self.agent.backend
+        arg = " ".join(context.args or []).strip()
+        note = ""
+        if arg and backend.supports_model_selection:
+            try:
+                note = await select_effort(backend, arg)
+            except ValueError as exc:
+                note = str(exc)
+        text, keyboard = await effort_menu(backend, note)
+        await update.message.reply_text(text, reply_markup=keyboard)
+
+    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Button presses on the /model and /effort menus."""
+        query = update.callback_query
+        if query is None:
+            return
+        if not self._check_user(update.effective_user.id):
+            await query.answer("You're not allowed to use this bot.")
+            return
+        backend = self.agent.backend
+        kind, _, value = (query.data or "").partition(":")
+        if kind not in ("m", "mi", "e") or not backend.supports_model_selection:
+            await query.answer()
+            return
+        try:
+            if kind == "e":
+                note = await select_effort(backend, value)
+                await query.answer(f"Effort: {backend.effort}")
+                text, keyboard = await effort_menu(backend, note)
+            else:
+                model_id = value
+                if kind == "mi":
+                    models = await _load_models(backend)
+                    if not (value.isdigit() and int(value) < len(models)):
+                        raise ValueError("That model is no longer available; send /model again.")
+                    model_id = models[int(value)].id
+                note = await select_model(backend, model_id)
+                await query.answer(f"Model: {backend.model}")
+                text, keyboard = await model_menu(backend, note)
+        except ValueError as exc:
+            await query.answer(str(exc)[:200], show_alert=True)
+            return
+        try:
+            await query.edit_message_text(text, reply_markup=keyboard)
+        except BadRequest as exc:  # e.g. "message is not modified"
+            logger.debug("Editing the menu after a button press failed: {exc}", exc=exc)
 
     # ------------------------------------------------------------------
     # Message handlers — everything goes through the agent

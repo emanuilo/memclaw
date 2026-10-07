@@ -76,7 +76,7 @@ Each chat is one ongoing conversation that survives restarts. Send `/new` to sta
 
 The Telegram bot shows a **typing indicator** while processing so you know it's working on your request.
 
-Commands: `/new` starts a fresh conversation, `/model` lists the available models (`/model <number or id>` switches), and `/effort` shows or sets the reasoning effort. Model and effort changes are saved to `~/.memclaw/.env` and keep the current conversation. They're available with the Claude backend.
+Commands: `/new` starts a fresh conversation, `/model` shows the available models as buttons (tap one to switch, or send `/model <id>`), and `/effort` does the same for the reasoning effort. Model and effort changes are saved to `~/.memclaw/.env` and keep the current conversation. They're available with the Claude backend.
 
 #### Setup
 

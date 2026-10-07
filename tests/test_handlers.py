@@ -315,98 +315,170 @@ class TestNewCommand:
         say.assert_awaited_once()
 
 
+def _buttons(keyboard):
+    return [(b.text, b.callback_data) for row in keyboard.inline_keyboard for b in row]
+
+
+def _callback_update(data: str, *, allowed_user: int = 1):
+    update = MagicMock()
+    update.effective_user.id = allowed_user
+    update.callback_query.data = data
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+    return update
+
+
 class TestModelCommand:
     @pytest.mark.asyncio
-    async def test_lists_models_numbered(self):
-        from memclaw.bot.handlers import model_command_reply
+    async def test_menu_has_a_button_per_model(self):
+        from memclaw.bot.handlers import model_menu
 
-        reply = await model_command_reply(_SelectableBackend(), [])
-        assert "Model: claude-opus-5" in reply
-        assert "Effort: high" in reply
-        assert "1. Claude Opus 5 - claude-opus-5  (current)" in reply
-        assert "2. Claude Haiku 4.5 - claude-haiku-4-5" in reply
+        text, keyboard = await model_menu(_SelectableBackend())
+        assert "Model: Claude Opus 5 (claude-opus-5)" in text
+        assert "Effort: high" in text
+        assert _buttons(keyboard) == [
+            ("✓ Claude Opus 5", "m:claude-opus-5"),
+            ("Claude Haiku 4.5", "m:claude-haiku-4-5"),
+        ]
+
+    def test_long_model_id_falls_back_to_index(self):
+        from memclaw.bot.handlers import model_callback_data
+
+        assert model_callback_data(3, "x" * 70) == "mi:3"
+        assert model_callback_data(3, "claude-opus-5") == "m:claude-opus-5"
 
     @pytest.mark.asyncio
-    async def test_switch_by_number_reports_effort_change(self):
-        from memclaw.bot.handlers import model_command_reply
+    async def test_button_press_switches_and_edits_the_menu(self):
+        handlers = _telegram_handlers()
+        handlers.agent.backend = backend = _SelectableBackend()
+        update = _callback_update("m:claude-haiku-4-5")
 
-        backend = _SelectableBackend()
-        reply = await model_command_reply(backend, ["2"])
+        await handlers.handle_callback(update, MagicMock())
+
         assert backend.model == "claude-haiku-4-5"
-        assert "Switched to claude-haiku-4-5." in reply
-        assert "doesn't support an effort" in reply
-        assert "conversation is kept" in reply
+        update.callback_query.answer.assert_awaited_once()
+        text = update.callback_query.edit_message_text.await_args.args[0]
+        assert "Switched to claude-haiku-4-5." in text
+        assert "doesn't support an effort" in text
+        assert "conversation is kept" in text
+        keyboard = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"]
+        assert ("✓ Claude Haiku 4.5", "m:claude-haiku-4-5") in _buttons(keyboard)
 
     @pytest.mark.asyncio
-    async def test_switch_by_id(self):
-        from memclaw.bot.handlers import model_command_reply
+    async def test_index_button_press(self):
+        handlers = _telegram_handlers()
+        handlers.agent.backend = backend = _SelectableBackend()
+        await handlers.handle_callback(_callback_update("mi:1"), MagicMock())
+        assert backend.model == "claude-haiku-4-5"
 
-        backend = _SelectableBackend()
-        backend.model = "claude-haiku-4-5"
-        await model_command_reply(backend, ["claude-opus-5"])
+    @pytest.mark.asyncio
+    async def test_stale_button_alerts(self):
+        handlers = _telegram_handlers()
+        handlers.agent.backend = backend = _SelectableBackend()
+        update = _callback_update("m:claude-gone")
+        await handlers.handle_callback(update, MagicMock())
         assert backend.model == "claude-opus-5"
+        assert update.callback_query.answer.await_args.kwargs["show_alert"] is True
+        update.callback_query.edit_message_text.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_button_press_from_unknown_user_is_ignored(self):
+        handlers = _telegram_handlers(allowed=False)
+        handlers.agent.backend = backend = _SelectableBackend()
+        update = _callback_update("m:claude-haiku-4-5")
+        await handlers.handle_callback(update, MagicMock())
+        assert backend.model == "claude-opus-5"
+        update.callback_query.edit_message_text.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_command_with_number_or_id(self):
+        handlers = _telegram_handlers()
+        handlers.agent.backend = backend = _SelectableBackend()
+        update = _command_update()
+        context = MagicMock()
+
+        context.args = ["2"]
+        await handlers.model_command(update, context)
+        assert backend.model == "claude-haiku-4-5"
+
+        context.args = ["claude-opus-5"]
+        await handlers.model_command(update, context)
+        assert backend.model == "claude-opus-5"
+        assert update.message.reply_text.await_args.kwargs["reply_markup"] is not None
 
     @pytest.mark.asyncio
     async def test_bad_number_and_unknown_id(self):
-        from memclaw.bot.handlers import model_command_reply
-
-        backend = _SelectableBackend()
-        assert "no model number 9" in await model_command_reply(backend, ["9"])
-        assert "Unknown model" in await model_command_reply(backend, ["claude-nope"])
+        handlers = _telegram_handlers()
+        handlers.agent.backend = backend = _SelectableBackend()
+        update = _command_update()
+        context = MagicMock()
+        for arg, expected in (("9", "no model number 9"), ("claude-nope", "Unknown model")):
+            context.args = [arg]
+            await handlers.model_command(update, context)
+            assert expected in update.message.reply_text.await_args.args[0]
         assert backend.model == "claude-opus-5"
 
     @pytest.mark.asyncio
     async def test_unsupported_backend(self):
-        from memclaw.bot.handlers import effort_command_reply, model_command_reply
+        from memclaw.bot.handlers import effort_menu, model_menu
 
         backend = MagicMock(supports_model_selection=False, display_name="Cursor SDK")
-        assert "isn't supported for the Cursor SDK backend" in await model_command_reply(backend, [])
-        assert "isn't supported for the Cursor SDK backend" in await effort_command_reply(backend, ["low"])
-
-    @pytest.mark.asyncio
-    async def test_telegram_handler_passes_args(self):
-        handlers = _telegram_handlers()
-        handlers.agent.backend = _SelectableBackend()
-        update = _command_update()
-        context = MagicMock()
-        context.args = ["2"]
-        await handlers.model_command(update, context)
-        assert handlers.agent.backend.model == "claude-haiku-4-5"
-        update.message.reply_text.assert_awaited_once()
+        text, keyboard = await model_menu(backend)
+        assert "isn't supported for the Cursor SDK backend" in text
+        assert keyboard is None
+        text, keyboard = await effort_menu(backend)
+        assert "isn't supported for the Cursor SDK backend" in text
+        assert keyboard is None
 
 
 class TestEffortCommand:
     @pytest.mark.asyncio
-    async def test_shows_supported_levels(self):
-        from memclaw.bot.handlers import effort_command_reply
+    async def test_menu_has_a_button_per_level(self):
+        from memclaw.bot.handlers import effort_menu
 
-        reply = await effort_command_reply(_SelectableBackend(), [])
-        assert "Effort: high" in reply
-        assert "low, medium, high" in reply
+        text, keyboard = await effort_menu(_SelectableBackend())
+        assert "Effort: high" in text
+        assert _buttons(keyboard) == [
+            ("low", "e:low"), ("medium", "e:medium"), ("✓ high", "e:high"),
+        ]
 
     @pytest.mark.asyncio
-    async def test_model_without_effort(self):
-        from memclaw.bot.handlers import effort_command_reply
+    async def test_model_without_effort_has_no_buttons(self):
+        from memclaw.bot.handlers import effort_menu
 
         backend = _SelectableBackend()
         backend.model, backend.effort = "claude-haiku-4-5", None
-        reply = await effort_command_reply(backend, [])
-        assert "doesn't support an effort setting" in reply
+        text, keyboard = await effort_menu(backend)
+        assert "doesn't support an effort setting" in text
+        assert keyboard is None
 
     @pytest.mark.asyncio
-    async def test_sets_level(self):
-        from memclaw.bot.handlers import effort_command_reply
-
-        backend = _SelectableBackend()
-        reply = await effort_command_reply(backend, ["low"])
+    async def test_button_press_sets_level(self):
+        handlers = _telegram_handlers()
+        handlers.agent.backend = backend = _SelectableBackend()
+        update = _callback_update("e:low")
+        await handlers.handle_callback(update, MagicMock())
         assert backend.effort == "low"
-        assert "Effort set to low." in reply
+        text = update.callback_query.edit_message_text.await_args.args[0]
+        assert "Effort set to low." in text
+
+    @pytest.mark.asyncio
+    async def test_command_sets_level(self):
+        handlers = _telegram_handlers()
+        handlers.agent.backend = backend = _SelectableBackend()
+        update = _command_update()
+        context = MagicMock()
+        context.args = ["low"]
+        await handlers.effort_command(update, context)
+        assert backend.effort == "low"
 
     @pytest.mark.asyncio
     async def test_rejected_level(self):
-        from memclaw.bot.handlers import effort_command_reply
-
-        backend = _SelectableBackend()
-        reply = await effort_command_reply(backend, ["max"])
-        assert "doesn't support 'max'" in reply
+        handlers = _telegram_handlers()
+        handlers.agent.backend = backend = _SelectableBackend()
+        update = _command_update()
+        context = MagicMock()
+        context.args = ["max"]
+        await handlers.effort_command(update, context)
+        assert "doesn't support 'max'" in update.message.reply_text.await_args.args[0]
         assert backend.effort == "high"
