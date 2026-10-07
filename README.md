@@ -70,9 +70,13 @@ The main way to use Memclaw. Just talk to it naturally — no commands needed. S
 
 All platforms share the same agent, memories, and search index — your data is unified regardless of how you interact.
 
+Each chat is one ongoing conversation that survives restarts. Send `/new` to start a fresh one (your memories are kept). On Telegram it's a menu command; in Slack, WhatsApp and the terminal send a message that is exactly `/new`.
+
 ### Telegram Bot
 
 The Telegram bot shows a **typing indicator** while processing so you know it's working on your request.
+
+Commands: `/new` starts a fresh conversation, `/model` lists the available models (`/model <number or id>` switches), and `/effort` shows or sets the reasoning effort. Model and effort changes are saved to `~/.memclaw/.env` and keep the current conversation. They're available with the Claude backend.
 
 #### Setup
 
@@ -208,7 +212,9 @@ The wizard asks you to pick one of two auth modes:
 
 Only one of the two is set at a time.
 
-The wizard then lets you pick a model from the list Anthropic offers your credential and, if the model supports it, an effort level. Pressing Enter keeps your current choice.
+The wizard then lets you pick a model from the list Anthropic offers your credential and, if the model supports it, an effort level. Pressing Enter keeps your current choice. The default is `claude-sonnet-5-5` at `medium` effort.
+
+Each chat keeps one Claude Code process running and reuses it, so replies don't pay a start-up cost, and the conversation lives in a Claude Code session that is resumed after a restart. The CLI runs without your `~/.claude` settings, plugins or MCP servers, and with no built-in tools — only Memclaw's own.
 
 ### Cursor
 
@@ -259,7 +265,7 @@ Every memory is chunked, embedded, and indexed in SQLite. Retrieval combines two
 
 ### Agent Layer
 
-A pluggable agent SDK drives the loop — Claude or Cursor, picked during setup ([Agent Backend](#agent-backend)). The agent keeps a rolling conversation history that always covers at least the last 10 message pairs, plus any older messages from the last hour — whichever set is larger — so short bursts of chatter stay in context without dropping continuity during slower conversations. It decides when to **store** vs **search** based on your intent.
+A pluggable agent SDK drives the loop — Claude or Cursor, picked during setup ([Agent Backend](#agent-backend)). Each chat's conversation lives in the backend's own session, resumed after a restart; the system prompt (AGENTS.md + MEMORY.md) stays fixed per session so it can be prompt-cached, and per-message context — the current time and relevant memories — rides at the top of each message. It decides when to **store** vs **search** based on your intent.
 
 | Tool | What it does |
 |------|-------------|
@@ -288,6 +294,9 @@ Chat naturally:
 > Who is Alex?
 Based on your memories, Alex is someone you had coffee with recently.
 She's moving to Berlin for a new role at Stripe.
+
+> /new
+Started a new conversation.
 
 > /quit
 ```
@@ -348,8 +357,8 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 | `OPENAI_API_KEY` | Yes | Embeddings + image descriptions + voice transcription |
 | `CLAUDE_CODE_OAUTH_TOKEN` | One of these two | Claude subscription token from `claude setup-token` |
 | `ANTHROPIC_API_KEY` | One of these two | Anthropic API key (`sk-ant-…`), pay-as-you-go |
-| `CLAUDE_MODEL` | Optional | Claude model to run (defaults to `claude-sonnet-4-6`) |
-| `CLAUDE_EFFORT` | Optional | Effort level: `low`, `medium`, `high`, `xhigh`, or `max` (unset lets the model decide) |
+| `CLAUDE_MODEL` | Optional | Claude model to run (defaults to `claude-sonnet-5-5`; also set by `/model`) |
+| `CLAUDE_EFFORT` | Optional | Effort level: `low`, `medium`, `high`, `xhigh`, or `max` (defaults to `medium` on the default model, otherwise the model decides; also set by `/effort`) |
 | `AGENT_BACKEND` | Optional | Agent SDK to use (defaults to `claude`; set to `cursor` for Cursor SDK) |
 | `MEMCLAW_PLATFORM` | Optional | Front-end the bare `memclaw` launches: `telegram`, `whatsapp`, `slack`, or `terminal` (defaults to `terminal`) |
 | `CURSOR_API_KEY` | For Cursor backend | Cursor API key from Dashboard → Integrations |
@@ -369,6 +378,7 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 ├── MEMORY.md              # Permanent / curated memories
 ├── AGENTS.md              # Agent instructions + user preferences
 ├── memclaw.db             # SQLite index (embeddings + FTS5)
+├── sessions.json          # Conversation session per chat
 └── memory/
     ├── 2025-06-15.md      # Daily notes
     ├── 2025-06-16.md
@@ -384,7 +394,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **NumPy for vectors** — cosine similarity computed in-memory, no native extensions required
 - **Pluggable agent SDK** — Claude or Cursor drives the agentic loop that decides how to handle your input ([Agent Backend](#agent-backend))
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
-- **Auto-consolidation** — daily files are periodically distilled into MEMORY.md
+- **Auto-consolidation** — daily files are periodically distilled into MEMORY.md, in the background after a reply
 - **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/`
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
 

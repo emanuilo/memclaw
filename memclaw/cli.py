@@ -116,7 +116,8 @@ async def _interactive(config: MemclawConfig):
         Panel(
             "[bold]Memclaw[/bold] — Your Personal Memory Vault\n\n"
             "Type your thoughts, questions, or commands.\n"
-            "Type [bold]/quit[/bold] to exit.",
+            "Type [bold]/new[/bold] to start a fresh conversation, "
+            "[bold]/quit[/bold] to exit.",
             title="memclaw",
             border_style="bright_cyan",
         )
@@ -139,6 +140,10 @@ async def _interactive(config: MemclawConfig):
             if stripped.lower() in ("/quit", "/exit", "quit", "exit"):
                 break
             if not stripped:
+                continue
+            if stripped.lower() == "/new":
+                await agent.reset_conversation()
+                console.print("[cyan]Started a new conversation.[/cyan]\n")
                 continue
 
             try:
@@ -178,10 +183,11 @@ def _setup_bot_logging(log_file: Path) -> None:
 def _run_telegram(config: MemclawConfig) -> None:
     from loguru import logger
     from openai import AsyncOpenAI
-    from telegram.error import NetworkError, TimedOut
+    from telegram import BotCommand
+    from telegram.error import NetworkError, TelegramError, TimedOut
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-    from .bot.handlers import MessageHandlers
+    from .bot.handlers import BOT_COMMANDS, MessageHandlers
 
     if not config.telegram_bot_token:
         console.print("[red]Error:[/red] TELEGRAM_BOT_TOKEN is not set.")
@@ -200,6 +206,13 @@ def _run_telegram(config: MemclawConfig) -> None:
 
         handlers.attach_bot(application.bot)
         handlers.scheduler.start()
+
+        try:
+            await application.bot.set_my_commands(
+                [BotCommand(name, description) for name, description in BOT_COMMANDS]
+            )
+        except TelegramError as exc:
+            logger.warning(f"Could not register the bot command menu: {exc}")
 
         logger.info("Memclaw bot initialized")
 
@@ -220,6 +233,15 @@ def _run_telegram(config: MemclawConfig) -> None:
     async def _start(update, context):
         await context.bot_data["handlers"].start_command(update, context)
 
+    async def _new(update, context):
+        await context.bot_data["handlers"].new_command(update, context)
+
+    async def _model(update, context):
+        await context.bot_data["handlers"].model_command(update, context)
+
+    async def _effort(update, context):
+        await context.bot_data["handlers"].effort_command(update, context)
+
     async def _text(update, context):
         await context.bot_data["handlers"].handle_text(update, context)
 
@@ -238,6 +260,9 @@ def _run_telegram(config: MemclawConfig) -> None:
 
     app.add_error_handler(_on_error)
     app.add_handler(CommandHandler("start", _start))
+    app.add_handler(CommandHandler("new", _new))
+    app.add_handler(CommandHandler("model", _model))
+    app.add_handler(CommandHandler("effort", _effort))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text))
     app.add_handler(MessageHandler(filters.PHOTO, _photo))
     app.add_handler(MessageHandler(filters.VOICE, _voice))

@@ -16,6 +16,7 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from ..agent import MemclawAgent
+from ..backends import AgentBackend
 from ..config import MemclawConfig
 from ..reminders import ReminderScheduler
 from . import mask_user_id
@@ -33,6 +34,89 @@ async def _typing_loop(bot, chat_id: int):
             await asyncio.sleep(4)
     except asyncio.CancelledError:
         pass
+
+
+# Shown in Telegram's command menu (registered in cli._run_telegram).
+BOT_COMMANDS = [
+    ("new", "Start a fresh conversation"),
+    ("model", "Show or change the model"),
+    ("effort", "Show or change the reasoning effort"),
+]
+
+
+async def model_command_reply(backend: AgentBackend, args: list[str]) -> str:
+    """Reply for `/model` (list models) or `/model <number or id>` (switch)."""
+    if not backend.supports_model_selection:
+        return f"Switching models isn't supported for the {backend.display_name} backend yet."
+    try:
+        models = await backend.list_models()
+    except Exception as exc:
+        logger.warning("Could not fetch the model list: {exc}", exc=exc)
+        models = []
+
+    arg = " ".join(args).strip()
+    if arg:
+        model_id = arg
+        if arg.isdigit():
+            n = int(arg)
+            if not 1 <= n <= len(models):
+                return f"There's no model number {n}. Send /model to see the list."
+            model_id = models[n - 1].id
+        try:
+            note = await backend.set_model(model_id)
+        except ValueError as exc:
+            return f"{exc} Send /model to see the available models."
+        lines = [f"Switched to {backend.model}."]
+        if note:
+            lines.append(note)
+        lines.append(f"Effort: {backend.effort or 'model default'}")
+        lines.append("Applies from your next message; the conversation is kept.")
+        return "\n".join(lines)
+
+    lines = [
+        f"Model: {backend.model}",
+        f"Effort: {backend.effort or 'model default'}",
+        "",
+    ]
+    if models:
+        lines.append("Available models:")
+        for i, m in enumerate(models, 1):
+            current = "  (current)" if m.id == backend.model else ""
+            lines.append(f"{i}. {m.display_name} - {m.id}{current}")
+        lines += ["", "Send /model <number or id> to switch."]
+    else:
+        lines.append("Couldn't load the model list right now; send /model <id> to switch.")
+    return "\n".join(lines)
+
+
+async def effort_command_reply(backend: AgentBackend, args: list[str]) -> str:
+    """Reply for `/effort` (show levels) or `/effort <level>` (set it)."""
+    if not backend.supports_model_selection:
+        return f"Changing the effort isn't supported for the {backend.display_name} backend yet."
+    arg = " ".join(args).strip()
+    if arg:
+        try:
+            await backend.set_effort(arg)
+        except ValueError as exc:
+            return str(exc)
+        return (
+            f"Effort set to {backend.effort}.\n"
+            "Applies from your next message; the conversation is kept."
+        )
+
+    levels = await backend.effort_levels()
+    lines = [
+        f"Model: {backend.model}",
+        f"Effort: {backend.effort or 'model default'}",
+        "",
+    ]
+    if levels == []:
+        lines.append("This model doesn't support an effort setting.")
+    else:
+        if levels:
+            lines.append(f"Levels this model supports: {', '.join(levels)}")
+        lines.append("Send /effort <level> to change it.")
+    return "\n".join(lines)
 
 
 class MessageHandlers:
@@ -55,7 +139,7 @@ class MessageHandlers:
         if self._bot is None:
             return
         await self._bot.send_message(chat_id=int(chat_id), text=text)
-        self.agent.record_reminder_fired(text)
+        self.agent.record_reminder_fired(text, chat_id)
 
     def _check_user(self, user_id: int) -> bool:
         return user_id in self.config.allowed_user_ids_list
@@ -111,7 +195,7 @@ class MessageHandlers:
         await self._send_response(update, context, response_text, found_images)
 
     # ------------------------------------------------------------------
-    # /start — the only command
+    # Commands
     # ------------------------------------------------------------------
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,8 +206,29 @@ class MessageHandlers:
             "Hi! I'm your personal memory assistant powered by Memclaw.\n\n"
             "Just send me anything — text, photos, or voice messages.\n\n"
             "I'll automatically decide whether to remember it, search your "
-            "memories, or retrieve images. No commands needed, just talk to me."
+            "memories, or retrieve images. No commands needed, just talk to me.\n\n"
+            "/new - start a fresh conversation (your memories are kept)\n"
+            "/model - show or change the model\n"
+            "/effort - show or change the reasoning effort"
         )
+
+    async def new_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._check_user(update.effective_user.id):
+            return
+        await self.agent.reset_conversation(str(update.effective_chat.id))
+        await update.message.reply_text("Started a new conversation.")
+
+    async def model_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._check_user(update.effective_user.id):
+            return
+        reply = await model_command_reply(self.agent.backend, list(context.args or []))
+        await update.message.reply_text(reply)
+
+    async def effort_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._check_user(update.effective_user.id):
+            return
+        reply = await effort_command_reply(self.agent.backend, list(context.args or []))
+        await update.message.reply_text(reply)
 
     # ------------------------------------------------------------------
     # Message handlers — everything goes through the agent

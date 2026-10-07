@@ -2,8 +2,12 @@
 
 Wraps `claude-agent-sdk` (which itself shells out to the Claude CLI) into the
 neutral `AgentBackend` protocol. All Claude-specific glue — env scrubbing,
-MCP server wrapping for tools, stream-json image protocol, response parsing
-— lives in this file.
+MCP server wrapping for tools, stream-json image protocol, response parsing,
+per-chat CLI sessions — lives in this file.
+
+Each chat keeps one connected `ClaudeSDKClient` (one Claude CLI process)
+that is reused across turns, so the conversation lives in the CLI's own
+session instead of being re-sent with every message.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar
 
@@ -30,7 +35,6 @@ from ..tools import TOOL_DEFINITIONS
 from .base import TurnResult
 from .claude_models import SDK_EFFORT_LEVELS, ModelInfo, fetch_models
 from .mcp_tools import MCP_SERVER_NAME
-from .tool_policy import BUILTIN_TOOLS_DISALLOW
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -39,11 +43,11 @@ if TYPE_CHECKING:
     from ..tools import ToolExecutor
 
 
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+_DEFAULT_MODEL = "claude-sonnet-5-5"
 
-# Preselected in the wizard for any model that supports effort at all.
-# Every model that reports effort support accepts this level.
-_DEFAULT_EFFORT = "high"
+# Used when CLAUDE_EFFORT is unset and the default model runs, and
+# preselected in the wizard for any model that supports effort at all.
+_DEFAULT_EFFORT = "medium"
 
 # Anthropic list prices, (input, output) USD per 1M tokens. Only used as a
 # fallback when the SDK doesn't return total_cost_usd for an API-key turn.
@@ -105,16 +109,40 @@ def _prices_per_m(model: str) -> tuple[float, float]:
 def _resolve_effort(config: "MemclawConfig") -> str | None:
     """The configured effort level, or None to let the model decide.
 
-    None makes the SDK omit the flag entirely, so an unset level costs
-    nothing. Anything the SDK does not recognise is treated as unset:
-    ~/.memclaw/.env is a plain text file, and a typo there should not reach
-    the CLI as an argument it will reject.
+    Anything the SDK does not recognise is treated as unset: ~/.memclaw/.env
+    is a plain text file, and a typo there should not reach the CLI as an
+    argument it will reject. An unset level means `_DEFAULT_EFFORT` on the
+    default model and None (the SDK omits the flag) on any other model.
 
     Whether the chosen *model* accepts an effort level is a separate question,
-    settled in the wizard — it stores no level for a model that reports none.
+    settled in the wizard and by /model — they store no level for a model
+    that reports none.
     """
     effort = (config.claude_effort or "").strip().lower()
-    return effort if effort in SDK_EFFORT_LEVELS else None
+    if effort in SDK_EFFORT_LEVELS:
+        return effort
+    return _DEFAULT_EFFORT if _resolve_model(config) == _DEFAULT_MODEL else None
+
+
+def _fit_effort(levels: list[str], preferred: str) -> str | None:
+    """The level to use on a model supporting *levels* when *preferred* is
+    wanted: *preferred* itself, else the nearest supported level below it
+    (else the lowest). None when the model takes no effort at all."""
+    if not levels:
+        return None
+    if preferred in levels:
+        return preferred
+    order = list(SDK_EFFORT_LEVELS)
+    rank = order.index(preferred) if preferred in order else len(order)
+    below = [lv for lv in levels if lv in order and order.index(lv) < rank]
+    return below[-1] if below else levels[0]
+
+
+def _credential(config: "MemclawConfig") -> str:
+    """The credential matching `_claude_auth_mode`."""
+    if _claude_auth_mode(config) == "subscription":
+        return config.claude_code_oauth_token
+    return config.anthropic_api_key
 
 
 def _build_env(config: "MemclawConfig") -> dict[str, str]:
@@ -174,6 +202,12 @@ def _build_mcp_server(executor: "ToolExecutor"):
 
 # ── Image-input streaming protocol ──────────────────────────────────
 
+def _compose_prompt(context: str, user_message: str) -> str:
+    """The per-turn context block goes at the top of the user message, so
+    the session's system prompt stays static and cacheable."""
+    return f"{context}\n\n{user_message}" if context else user_message
+
+
 async def _image_prompt_stream(
     message: str, image_b64: str, image_media_type: str,
 ) -> AsyncIterator[dict[str, Any]]:
@@ -205,11 +239,24 @@ async def _image_prompt_stream(
 
 # ── Backend ─────────────────────────────────────────────────────────
 
+@dataclass
+class _Session:
+    """One chat's live Claude CLI connection."""
+
+    # Serializes turns (and /new) within one chat.
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    client: ClaudeSDKClient | None = None
+    # (model, effort) the client was started with. After /model or /effort
+    # the next turn reconnects, resuming the same session with the new ones.
+    options_key: tuple[str, str | None] | None = None
+
+
 class ClaudeAgentBackend:
     """Claude Agent SDK implementation of the AgentBackend protocol."""
 
     name: ClassVar[str] = "claude"
     display_name: ClassVar[str] = "Claude Agent SDK"
+    supports_model_selection: ClassVar[bool] = True
 
     def __init__(self, config: "MemclawConfig") -> None:
         self.config = config
@@ -217,6 +264,11 @@ class ClaudeAgentBackend:
         self._model = _resolve_model(config)
         self._effort = _resolve_effort(config)
         self._mcp_server: Any = None  # built lazily, needs a ToolExecutor
+        self._sessions: dict[str, _Session] = {}
+        self._models: list[ModelInfo] = []  # filled by list_models()
+        # Last total_cost_usd seen per session id. The CLI reports a running
+        # total for the session (carried over on resume), not a per-turn cost.
+        self._session_costs: dict[str, float] = {}
         # Subscription billing → no per-message dollar figure in logs.
         self.bills_per_token = _claude_auth_mode(config) == "api_key"
 
@@ -399,7 +451,7 @@ class ClaudeAgentBackend:
         """Show the effort picker for a model that supports one.
 
         *levels* only ever holds levels this model accepts, so the preselected
-        value falls back to the first one when the model has no `high`.
+        value falls back to the first one when the model has no `medium`.
         """
         preferred = current_effort if current_effort in levels else _DEFAULT_EFFORT
         index = choose(
@@ -421,7 +473,164 @@ class ClaudeAgentBackend:
         pass
 
     async def on_agent_shutdown(self) -> None:
-        pass
+        for session in self._sessions.values():
+            await self._disconnect(session)
+        self._sessions.clear()
+
+    # -- Sessions ----------------------------------------------------------
+
+    def _session_options(
+        self, *, system_prompt: str, resume: str | None, max_turns: int,
+    ) -> ClaudeAgentOptions:
+        return ClaudeAgentOptions(
+            env=self._env,
+            model=self._model,
+            effort=self._effort,
+            system_prompt=system_prompt,
+            # Claude Code stores sessions per working directory; a fixed one
+            # lets a restarted process find (and resume) them.
+            cwd=str(self.config.memory_dir),
+            # Don't load ~/.claude settings, plugins, CLAUDE.md or the user's
+            # MCP servers: faster startup and nothing outside our control.
+            setting_sources=[],
+            strict_mcp_config=True,
+            mcp_servers={MCP_SERVER_NAME: self._mcp_server},
+            # No built-in tools at all; only our in-process mcp__memclaw__*.
+            tools=[],
+            allowed_tools=_ALLOWED_TOOLS,
+            # Anything not in allowed_tools is denied, never prompted for.
+            permission_mode="dontAsk",
+            # No @file expansion / slash commands from chat text.
+            verbatim_prompts=True,
+            max_turns=max_turns,
+            resume=resume,
+            stderr=lambda line: logger.debug("claude-cli: {line}", line=line.rstrip()),
+        )
+
+    async def _connect(
+        self, *, system_prompt: str, resume: str | None, max_turns: int,
+    ) -> ClaudeSDKClient:
+        """Start a CLI for one chat, resuming *resume* when given. A session
+        that can't be resumed (deleted, from another machine, ...) is
+        replaced by a fresh one rather than failing the turn."""
+        if resume:
+            client = ClaudeSDKClient(options=self._session_options(
+                system_prompt=system_prompt, resume=resume, max_turns=max_turns,
+            ))
+            try:
+                await client.connect()
+                return client
+            except Exception as exc:
+                logger.warning(
+                    "Could not resume Claude session {id} ({exc}); starting a fresh one",
+                    id=resume, exc=exc,
+                )
+        client = ClaudeSDKClient(options=self._session_options(
+            system_prompt=system_prompt, resume=None, max_turns=max_turns,
+        ))
+        await client.connect()
+        return client
+
+    @staticmethod
+    async def _disconnect(session: _Session) -> None:
+        client, session.client = session.client, None
+        if client is None:
+            return
+        try:
+            await client.disconnect()
+        except Exception as exc:
+            logger.warning("Error while disconnecting Claude CLI: {exc}", exc=exc)
+
+    async def reset_session(self, session_key: str) -> None:
+        session = self._sessions.get(session_key)
+        if session is None:
+            return
+        async with session.lock:
+            await self._disconnect(session)
+
+    # -- Model selection ---------------------------------------------------
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def effort(self) -> str | None:
+        return self._effort
+
+    async def list_models(self) -> list[ModelInfo]:
+        self._models = await fetch_models(_claude_auth_mode(self.config), _credential(self.config))
+        return self._models
+
+    async def _model_info(self, model_id: str) -> ModelInfo | None:
+        """*model_id*'s entry in the model list, or None if it isn't listed
+        or the list can't be fetched."""
+        if not self._models:
+            try:
+                await self.list_models()
+            except Exception as exc:
+                logger.warning("Could not fetch the Claude model list: {exc}", exc=exc)
+                return None
+        return next((m for m in self._models if m.id == model_id), None)
+
+    async def effort_levels(self) -> list[str] | None:
+        info = await self._model_info(self._model)
+        return list(info.effort_levels) if info else None
+
+    async def set_model(self, model_id: str) -> str:
+        model_id = model_id.strip()
+        info = await self._model_info(model_id)
+        if info is None and self._models:
+            raise ValueError(f"Unknown model '{model_id}'.")
+        effort = self._effort
+        note = ""
+        if info is not None:
+            # Keep the effort if the new model takes it, otherwise the nearest
+            # level it does take (or none at all).
+            effort = _fit_effort(info.effort_levels, self._effort or _DEFAULT_EFFORT)
+            if self._effort and effort is None:
+                note = f"{info.display_name} doesn't support an effort setting, so none is used."
+            elif self._effort and effort != self._effort:
+                note = (
+                    f"{info.display_name} doesn't support '{self._effort}' effort; "
+                    f"using '{effort}' instead."
+                )
+        self._apply_model(model_id, effort)
+        return note
+
+    async def set_effort(self, level: str) -> None:
+        level = level.strip().lower()
+        if level not in SDK_EFFORT_LEVELS:
+            raise ValueError(
+                f"Unknown effort '{level}'. Levels: {', '.join(SDK_EFFORT_LEVELS)}."
+            )
+        levels = await self.effort_levels()
+        if levels == []:
+            raise ValueError("The current model doesn't support an effort setting.")
+        if levels is not None and level not in levels:
+            raise ValueError(
+                f"The current model doesn't support '{level}'. "
+                f"Supported: {', '.join(levels)}."
+            )
+        self._apply_model(self._model, level)
+
+    def _apply_model(self, model: str, effort: str | None) -> None:
+        """Use *model* / *effort* from the next turn on and save them to
+        ~/.memclaw/.env. Live chats reconnect on their next turn, resuming
+        their session (Claude Code resumes fine under a different model)."""
+        from ..setup import update_env_file  # local import — setup imports backends
+
+        logger.info(
+            "Claude model: {m} effort: {e} -> {m2} effort: {e2}",
+            m=self._model, e=self._effort, m2=model, e2=effort,
+        )
+        self._model, self._effort = model, effort
+        self.config.claude_model = model
+        self.config.claude_effort = effort or ""
+        if effort:
+            update_env_file({"CLAUDE_MODEL": model, "CLAUDE_EFFORT": effort})
+        else:
+            update_env_file({"CLAUDE_MODEL": model}, drop_keys=["CLAUDE_EFFORT"])
 
     # -- Runtime ---------------------------------------------------------
 
@@ -436,8 +645,10 @@ class ClaudeAgentBackend:
             model=self._model,
             effort=self._effort,
             system_prompt=system_prompt,
-            setting_sources=None,
-            disallowed_tools=BUILTIN_TOOLS_DISALLOW,
+            setting_sources=[],
+            strict_mcp_config=True,
+            tools=[],
+            verbatim_prompts=True,
             max_turns=1,
         )
 
@@ -458,8 +669,11 @@ class ClaudeAgentBackend:
         self,
         *,
         system_prompt: str,
+        context: str,
         user_message: str,
         tool_executor: "ToolExecutor",
+        session_key: str,
+        resume_session_id: str | None = None,
         image_b64: str | None = None,
         image_media_type: str = "image/jpeg",
         max_turns: int = 10,
@@ -467,64 +681,41 @@ class ClaudeAgentBackend:
         if self._mcp_server is None:
             self._mcp_server = _build_mcp_server(tool_executor)
 
-        options = ClaudeAgentOptions(
-            env=self._env,
-            model=self._model,
-            effort=self._effort,
-            system_prompt=system_prompt,
-            setting_sources=None,
-            mcp_servers={MCP_SERVER_NAME: self._mcp_server},
-            allowed_tools=_ALLOWED_TOOLS,
-            disallowed_tools=BUILTIN_TOOLS_DISALLOW,
-            # SAFETY: bypassPermissions is only safe because allowed_tools
-            # restricts execution to mcp__memclaw__* (our in-process server)
-            # and BUILTIN_TOOLS_DISALLOW blocks Claude Code's built-ins.
-            # If either guardrail is loosened, revisit this — bypass mode
-            # would otherwise turn any future broad tool into an RCE vector.
-            permission_mode="bypassPermissions",
-            max_turns=max_turns,
-        )
+        session = self._sessions.setdefault(session_key, _Session())
+        async with session.lock:
+            options_key = (self._model, self._effort)
+            if session.client is not None and session.options_key != options_key:
+                await self._disconnect(session)
+            if session.client is None:
+                session.client = await self._connect(
+                    system_prompt=system_prompt,
+                    resume=resume_session_id,
+                    max_turns=max_turns,
+                )
+                session.options_key = options_key
+            try:
+                result = await self._query(
+                    session.client,
+                    _compose_prompt(context, user_message),
+                    image_b64=image_b64,
+                    image_media_type=image_media_type,
+                )
+            except BaseException:
+                # The CLI may be dead or mid-turn; reconnect (resuming) next time.
+                await self._disconnect(session)
+                raise
 
-        last_text = ""
-        result = TurnResult(text="")
+        # Turn the session's running total into this turn's cost. Without a
+        # baseline (first turn after a restart resumed it) estimate instead.
+        total = result.cost_usd
+        result.cost_usd = None
+        if total is not None and result.session_id:
+            previous = self._session_costs.get(result.session_id)
+            self._session_costs[result.session_id] = total
+            if previous is not None or resume_session_id != result.session_id:
+                result.cost_usd = max(total - (previous or 0.0), 0.0)
 
-        async with ClaudeSDKClient(options=options) as client:
-            if image_b64:
-                await client.query(_image_prompt_stream(
-                    user_message, image_b64, image_media_type,
-                ))
-            else:
-                await client.query(user_message)
-
-            async for msg in client.receive_response():
-                if isinstance(msg, AssistantMessage):
-                    turn_text = ""
-                    for block in msg.content:
-                        if isinstance(block, TextBlock):
-                            turn_text += block.text
-                        elif isinstance(block, ToolUseBlock):
-                            args_str = json.dumps(block.input, ensure_ascii=False)
-                            if len(args_str) > 300:
-                                args_str = args_str[:300] + "..."
-                            tool_name = block.name
-                            prefix = f"mcp__{MCP_SERVER_NAME}__"
-                            if tool_name.startswith(prefix):
-                                tool_name = tool_name[len(prefix):]
-                            logger.info("Tool call: {name}({args})", name=tool_name, args=args_str)
-                    if turn_text:
-                        last_text = turn_text
-                elif isinstance(msg, ResultMessage):
-                    result.num_turns = msg.num_turns
-                    result.cost_usd = msg.total_cost_usd
-                    if msg.usage:
-                        result.input_tokens = msg.usage.get("input_tokens", 0) or 0
-                        result.output_tokens = msg.usage.get("output_tokens", 0) or 0
-                        result.cache_read_tokens = msg.usage.get("cache_read_input_tokens", 0) or 0
-                        result.cache_creation_tokens = msg.usage.get("cache_creation_input_tokens", 0) or 0
-                    if msg.result and not last_text:
-                        last_text = msg.result
-
-        # Fallback cost estimate when the SDK didn't supply one.
+        # Fallback cost estimate when the SDK didn't supply a usable one.
         if result.cost_usd is None and self.bills_per_token:
             input_per_m, output_per_m = _prices_per_m(self._model)
             result.cost_usd = (
@@ -532,6 +723,52 @@ class ClaudeAgentBackend:
                 + result.output_tokens * output_per_m
                 + result.cache_read_tokens * input_per_m * _CACHE_READ_MULTIPLIER
             ) / 1_000_000
+        return result
+
+    @staticmethod
+    async def _query(
+        client: ClaudeSDKClient,
+        prompt: str,
+        *,
+        image_b64: str | None,
+        image_media_type: str,
+    ) -> TurnResult:
+        """Send one user message on a connected client and collect the reply."""
+        if image_b64:
+            await client.query(_image_prompt_stream(prompt, image_b64, image_media_type))
+        else:
+            await client.query(prompt)
+
+        last_text = ""
+        result = TurnResult(text="")
+        async for msg in client.receive_response():
+            if isinstance(msg, AssistantMessage):
+                turn_text = ""
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        turn_text += block.text
+                    elif isinstance(block, ToolUseBlock):
+                        args_str = json.dumps(block.input, ensure_ascii=False)
+                        if len(args_str) > 300:
+                            args_str = args_str[:300] + "..."
+                        tool_name = block.name
+                        prefix = f"mcp__{MCP_SERVER_NAME}__"
+                        if tool_name.startswith(prefix):
+                            tool_name = tool_name[len(prefix):]
+                        logger.info("Tool call: {name}({args})", name=tool_name, args=args_str)
+                if turn_text:
+                    last_text = turn_text
+            elif isinstance(msg, ResultMessage):
+                result.session_id = msg.session_id or None
+                result.num_turns = msg.num_turns
+                result.cost_usd = msg.total_cost_usd
+                if msg.usage:
+                    result.input_tokens = msg.usage.get("input_tokens", 0) or 0
+                    result.output_tokens = msg.usage.get("output_tokens", 0) or 0
+                    result.cache_read_tokens = msg.usage.get("cache_read_input_tokens", 0) or 0
+                    result.cache_creation_tokens = msg.usage.get("cache_creation_input_tokens", 0) or 0
+                if msg.result and not last_text:
+                    last_text = msg.result
 
         result.text = last_text
         return result

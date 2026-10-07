@@ -49,10 +49,6 @@ class MemclawConfig:
     cursor_model: str = ""
     mcp_http_port: int = 17373
 
-    # Conversation continuity
-    conversation_history_limit: int = 10
-    conversation_history_window_minutes: int = 60
-
     # Memory consolidation
     consolidation_threshold: int = 7
 

@@ -210,3 +210,203 @@ class TestWhatsAppSelfChatOnly:
         assert check(None, out_to_friend) is False, "outgoing DM to friend must be ignored"
         assert check(None, in_from_friend) is False
         assert check(None, group) is False
+
+
+# ────────────────────────────────────────────────────────────────────
+# /new, /model, /effort
+# ────────────────────────────────────────────────────────────────────
+
+def _telegram_handlers(*, allowed: bool = True):
+    from memclaw.bot.handlers import MessageHandlers
+
+    with patch.object(MessageHandlers, "__init__", lambda self, *a, **kw: None):
+        handlers = MessageHandlers.__new__(MessageHandlers)
+    handlers.agent = MagicMock()
+    handlers.agent.reset_conversation = AsyncMock()
+    handlers.config = MagicMock()
+    handlers.config.allowed_user_ids_list = [1] if allowed else []
+    return handlers
+
+
+def _command_update(chat_id: int = 99):
+    update = MagicMock()
+    update.effective_user.id = 1
+    update.effective_chat.id = chat_id
+    update.message.reply_text = AsyncMock()
+    return update
+
+
+class _SelectableBackend:
+    """Minimal backend exposing the model-selection surface."""
+
+    display_name = "Fake"
+    supports_model_selection = True
+
+    def __init__(self):
+        from memclaw.backends.claude_models import ModelInfo
+
+        self.models = [
+            ModelInfo("claude-opus-5", "Claude Opus 5", "", ["low", "medium", "high"]),
+            ModelInfo("claude-haiku-4-5", "Claude Haiku 4.5", "", []),
+        ]
+        self.model = "claude-opus-5"
+        self.effort = "high"
+
+    async def list_models(self):
+        return self.models
+
+    async def effort_levels(self):
+        info = next((m for m in self.models if m.id == self.model), None)
+        return info.effort_levels if info else None
+
+    async def set_model(self, model_id):
+        if model_id not in [m.id for m in self.models]:
+            raise ValueError(f"Unknown model '{model_id}'.")
+        self.model = model_id
+        if model_id == "claude-haiku-4-5":
+            self.effort = None
+            return "Claude Haiku 4.5 doesn't support an effort setting, so none is used."
+        return ""
+
+    async def set_effort(self, level):
+        if level not in await self.effort_levels():
+            raise ValueError(f"The current model doesn't support '{level}'.")
+        self.effort = level
+
+
+class TestNewCommand:
+    @pytest.mark.asyncio
+    async def test_resets_the_chat(self):
+        handlers = _telegram_handlers()
+        update = _command_update(chat_id=99)
+        await handlers.new_command(update, MagicMock())
+        handlers.agent.reset_conversation.assert_awaited_once_with("99")
+        update.message.reply_text.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ignores_unknown_users(self):
+        handlers = _telegram_handlers(allowed=False)
+        update = _command_update()
+        await handlers.new_command(update, MagicMock())
+        handlers.agent.reset_conversation.assert_not_awaited()
+        update.message.reply_text.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_slack_new_message_resets_the_channel(self):
+        from memclaw.bot.slack_handlers import SlackHandlers
+
+        with patch.object(SlackHandlers, "__init__", lambda self, *a, **kw: None):
+            handlers = SlackHandlers.__new__(SlackHandlers)
+        handlers.config = MagicMock()
+        handlers.config.slack_allowed_channels_list = []
+        handlers.config.slack_allowed_users_list = []
+        handlers.agent = MagicMock()
+        handlers.agent.reset_conversation = AsyncMock()
+        handlers.agent.handle = AsyncMock()
+        say = AsyncMock()
+
+        await handlers._route_event(
+            {"channel": "C1", "user": "U1", "text": "<@UBOT> /new", "ts": "1.0"},
+            say, MagicMock(),
+        )
+
+        handlers.agent.reset_conversation.assert_awaited_once_with("C1")
+        handlers.agent.handle.assert_not_awaited()
+        say.assert_awaited_once()
+
+
+class TestModelCommand:
+    @pytest.mark.asyncio
+    async def test_lists_models_numbered(self):
+        from memclaw.bot.handlers import model_command_reply
+
+        reply = await model_command_reply(_SelectableBackend(), [])
+        assert "Model: claude-opus-5" in reply
+        assert "Effort: high" in reply
+        assert "1. Claude Opus 5 - claude-opus-5  (current)" in reply
+        assert "2. Claude Haiku 4.5 - claude-haiku-4-5" in reply
+
+    @pytest.mark.asyncio
+    async def test_switch_by_number_reports_effort_change(self):
+        from memclaw.bot.handlers import model_command_reply
+
+        backend = _SelectableBackend()
+        reply = await model_command_reply(backend, ["2"])
+        assert backend.model == "claude-haiku-4-5"
+        assert "Switched to claude-haiku-4-5." in reply
+        assert "doesn't support an effort" in reply
+        assert "conversation is kept" in reply
+
+    @pytest.mark.asyncio
+    async def test_switch_by_id(self):
+        from memclaw.bot.handlers import model_command_reply
+
+        backend = _SelectableBackend()
+        backend.model = "claude-haiku-4-5"
+        await model_command_reply(backend, ["claude-opus-5"])
+        assert backend.model == "claude-opus-5"
+
+    @pytest.mark.asyncio
+    async def test_bad_number_and_unknown_id(self):
+        from memclaw.bot.handlers import model_command_reply
+
+        backend = _SelectableBackend()
+        assert "no model number 9" in await model_command_reply(backend, ["9"])
+        assert "Unknown model" in await model_command_reply(backend, ["claude-nope"])
+        assert backend.model == "claude-opus-5"
+
+    @pytest.mark.asyncio
+    async def test_unsupported_backend(self):
+        from memclaw.bot.handlers import effort_command_reply, model_command_reply
+
+        backend = MagicMock(supports_model_selection=False, display_name="Cursor SDK")
+        assert "isn't supported for the Cursor SDK backend" in await model_command_reply(backend, [])
+        assert "isn't supported for the Cursor SDK backend" in await effort_command_reply(backend, ["low"])
+
+    @pytest.mark.asyncio
+    async def test_telegram_handler_passes_args(self):
+        handlers = _telegram_handlers()
+        handlers.agent.backend = _SelectableBackend()
+        update = _command_update()
+        context = MagicMock()
+        context.args = ["2"]
+        await handlers.model_command(update, context)
+        assert handlers.agent.backend.model == "claude-haiku-4-5"
+        update.message.reply_text.assert_awaited_once()
+
+
+class TestEffortCommand:
+    @pytest.mark.asyncio
+    async def test_shows_supported_levels(self):
+        from memclaw.bot.handlers import effort_command_reply
+
+        reply = await effort_command_reply(_SelectableBackend(), [])
+        assert "Effort: high" in reply
+        assert "low, medium, high" in reply
+
+    @pytest.mark.asyncio
+    async def test_model_without_effort(self):
+        from memclaw.bot.handlers import effort_command_reply
+
+        backend = _SelectableBackend()
+        backend.model, backend.effort = "claude-haiku-4-5", None
+        reply = await effort_command_reply(backend, [])
+        assert "doesn't support an effort setting" in reply
+
+    @pytest.mark.asyncio
+    async def test_sets_level(self):
+        from memclaw.bot.handlers import effort_command_reply
+
+        backend = _SelectableBackend()
+        reply = await effort_command_reply(backend, ["low"])
+        assert backend.effort == "low"
+        assert "Effort set to low." in reply
+
+    @pytest.mark.asyncio
+    async def test_rejected_level(self):
+        from memclaw.bot.handlers import effort_command_reply
+
+        backend = _SelectableBackend()
+        reply = await effort_command_reply(backend, ["max"])
+        assert "doesn't support 'max'" in reply
+        assert backend.effort == "high"

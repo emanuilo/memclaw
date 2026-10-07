@@ -323,8 +323,10 @@ class TestCursorAgentBackendRuns:
 
             result = await backend.run_turn(
                 system_prompt="System",
+                context="<context>ctx</context>",
                 user_message="User",
                 tool_executor=MagicMock(),
+                session_key="cli",
                 max_turns=5,
             )
 
@@ -383,8 +385,10 @@ class TestCursorAgentBackendRuns:
 
             result = await backend.run_turn(
                 system_prompt="System",
+                context="<context>ctx</context>",
                 user_message="User",
                 tool_executor=MagicMock(),
+                session_key="cli",
                 max_turns=5,
             )
 
@@ -406,9 +410,67 @@ class TestCursorAgentBackendRuns:
             with pytest.raises(RuntimeError, match="MCP server failed to start"):
                 await backend.run_turn(
                     system_prompt="System",
+                    context="",
                     user_message="User",
                     tool_executor=MagicMock(),
+                    session_key="cli",
                 )
+
+    @pytest.mark.asyncio
+    async def test_interim_transcript_is_folded_into_later_prompts(self, tmp_path):
+        cfg = _make_config(tmp_path, cursor_api_key="crsr_test_key")
+        backend = CursorAgentBackend(cfg)
+
+        sent: list[str] = []
+
+        def _make_run(reply):
+            run = AsyncMock()
+            run.events = MagicMock(return_value=_empty_events())
+            run.wait = AsyncMock(return_value=SimpleNamespace(result=reply, num_turns=1))
+            return run
+
+        replies = iter(["First reply", "Second reply", "Third reply"])
+
+        async def _send(message, options):
+            sent.append(message)
+            return _make_run(next(replies))
+
+        mock_agent = AsyncMock()
+        mock_agent.send = AsyncMock(side_effect=_send)
+        mock_agent.close = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.agents.create = AsyncMock(return_value=mock_agent)
+        mock_mcp = HttpMcpServerConfig(url="http://127.0.0.1:8765/mcp", type="http")
+
+        async def _turn(key, text):
+            return await backend.run_turn(
+                system_prompt="System", context="<context>ctx</context>",
+                user_message=text, tool_executor=MagicMock(), session_key=key,
+            )
+
+        with patch("cursor_sdk.AsyncClient") as mock_client_cls, patch.object(
+            backend, "_ensure_mcp_server", new_callable=AsyncMock
+        ), patch.object(
+            HttpMcpServer, "config", new_callable=PropertyMock, return_value=mock_mcp
+        ):
+            mock_client_cls.launch_bridge = AsyncMock(return_value=mock_client)
+            await _turn("cli", "My name is Ana")
+            await _turn("cli", "What's my name?")
+            await backend.reset_session("cli")
+            await _turn("cli", "Fresh start")
+
+        assert "RECENT CONVERSATION" not in sent[0]
+        assert "<context>ctx</context>" in sent[0]
+        assert "User: My name is Ana" in sent[1]
+        assert "Assistant: First reply" in sent[1]
+        # The context block itself isn't kept in the transcript.
+        assert sent[1].count("<context>ctx</context>") == 1
+        assert "RECENT CONVERSATION" not in sent[2]
+
+    def test_model_selection_is_not_supported_yet(self, tmp_path):
+        backend = CursorAgentBackend(_make_config(tmp_path, cursor_api_key="k"))
+        assert backend.supports_model_selection is False
+        assert backend.model == "composer-2.5"
 
     @pytest.mark.asyncio
     async def test_agent_start_starts_mcp_server(self, tmp_path, monkeypatch):
