@@ -76,7 +76,7 @@ Each chat is one ongoing conversation that survives restarts. Send `/new` to sta
 
 The Telegram bot shows a **typing indicator** while processing, plus a silent "Working… step N" message that follows the agent's tool calls (searching, saving, reminders) and disappears once the reply arrives.
 
-Commands: `/new` starts a fresh conversation, `/model` shows the available models as buttons (tap one to switch, or send `/model <id>`), and `/effort` does the same for the reasoning effort. Model and effort changes are saved to `~/.memclaw/.env` and keep the current conversation. They're available with the Claude backend.
+Commands: `/new` starts a fresh conversation, `/model` shows the available models as buttons (tap one to switch, or send `/model <id>`), and `/effort` does the same for the reasoning effort. Model and effort changes are saved to `~/.memclaw/.env` and keep the current conversation. With Cursor, `/effort` only applies to models that expose a reasoning setting.
 
 #### Setup
 
@@ -222,6 +222,7 @@ Each chat keeps one Claude Code process running and reuses it, so replies don't 
 - The wizard prompts for `CURSOR_API_KEY` and an optional `CURSOR_MODEL` (defaults to `composer-2.5`).
 - Memclaw tools are exposed to the Cursor agent via a long-lived local HTTP MCP server on `127.0.0.1` (default port `17373`, override with `MEMCLAW_MCP_PORT`).
 - Requests bill per token against your Cursor plan (or pay-as-you-go overage rates once your plan limit is reached), and the cost is logged with each turn.
+- One Cursor SDK bridge process serves all chats, and each chat keeps one local Cursor agent open across turns. The agent stores its conversation under `~/.cursor` and is resumed after a restart.
 
 
 ## How It Works
@@ -362,7 +363,8 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 | `AGENT_BACKEND` | Optional | Agent SDK to use (defaults to `claude`; set to `cursor` for Cursor SDK) |
 | `MEMCLAW_PLATFORM` | Optional | Front-end the bare `memclaw` launches: `telegram`, `whatsapp`, `slack`, or `terminal` (defaults to `terminal`) |
 | `CURSOR_API_KEY` | For Cursor backend | Cursor API key from Dashboard → Integrations |
-| `CURSOR_MODEL` | For Cursor backend | Cursor model name (defaults to `composer-2.5`) |
+| `CURSOR_MODEL` | For Cursor backend | Cursor model name (defaults to `composer-2.5`; also set by `/model`) |
+| `CURSOR_EFFORT` | Optional | Cursor reasoning level, for models that have one (set by `/effort`) |
 | `MEMCLAW_MCP_PORT` | For Cursor backend | Local MCP HTTP port (defaults to `17373`) |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
 | `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
