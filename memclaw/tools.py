@@ -204,6 +204,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+_MAX_SEARCH_RESULTS = 25
+
 # Progress-message wording per tool: (label, argument shown after it).
 _STEP_LABELS: dict[str, tuple[str, str | None]] = {
     "memory_save": ("Saving to memory", None),
@@ -241,16 +243,36 @@ def _format_results(results: list[SearchResult]) -> str:
     return "\n\n---\n\n".join(parts) if parts else "No matching memories found."
 
 
+# Memclaw's own state inside the memory dir. The agent may not read or
+# write it: the database, the session store and the consolidation marker
+# would be corrupted by a write, .env holds the API keys, and the WhatsApp /
+# Slack dirs hold the pairing session and downloaded media. Hidden
+# directories (e.g. .cursor/, holding the Cursor tool-restriction hooks) are
+# covered by the dot-prefix rule.
+_INTERNAL_NAMES = frozenset({"sessions.json", "sessions.tmp", "meta.json"})
+_INTERNAL_DIRS = frozenset({"whatsapp", "slack"})
+
+
 def _resolve_safe(raw_path: str, memory_dir: Path) -> Path | None:
-    """Resolve *raw_path* and return it only if under *memory_dir*."""
+    """Resolve *raw_path* and return it only if under *memory_dir* and not
+    one of Memclaw's internal files."""
     safe_root = memory_dir.resolve()
-    p = Path(raw_path)
+    p = Path(raw_path).expanduser()
     if not p.is_absolute():
-        p = memory_dir / raw_path
-    resolved = p.expanduser().resolve()
+        p = memory_dir / p
+    resolved = p.resolve()
     try:
-        resolved.relative_to(safe_root)
+        rel = resolved.relative_to(safe_root)
     except ValueError:
+        return None
+    parts = rel.parts
+    if not parts:
+        return None
+    if any(part.startswith(".") for part in parts):
+        return None
+    if parts[0] in _INTERNAL_DIRS or rel.name in _INTERNAL_NAMES:
+        return None
+    if rel.name.startswith("memclaw.db") or rel.suffix == ".log":
         return None
     return resolved
 
@@ -314,12 +336,26 @@ class ToolExecutor:
         entry_type: str = args.get("entry_type", "note")
         tags = args.get("tags")
         file_path = self.store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
-        await self.index.index_file(file_path)
         logger.info("  → memory_save result: saved to {file}", file=file_path.name)
-        return f"Memory saved to {file_path.name}"
+        return f"Memory saved to {file_path.name}" + await self._index(file_path)
+
+    async def _index(self, path: Path) -> str:
+        """Index a just-written file. The write already succeeded, so an
+        indexing failure (e.g. OpenAI unreachable) is reported, not raised:
+        the next index sync picks the file up."""
+        try:
+            await self.index.index_file(path)
+        except Exception as exc:
+            logger.warning("Indexing {p} failed, will retry on next sync: {exc}", p=path, exc=exc)
+            return " (search indexing is delayed; it will be searchable soon)"
+        return ""
 
     async def _memory_search(self, args: dict) -> str:
-        results = await self.search.search(args["query"], limit=args.get("limit", 10))
+        try:
+            limit = max(1, min(int(args.get("limit") or 10), _MAX_SEARCH_RESULTS))
+        except (TypeError, ValueError):
+            limit = 10
+        results = await self.search.search(args["query"], limit=limit)
         formatted = _format_results(results)
         logger.info("  → memory_search result: {n} hits", n=len(results))
         for i, r in enumerate(results, 1):
@@ -340,7 +376,7 @@ class ToolExecutor:
         if caption:
             combined += f" Caption: {caption}"
         store_path = self.store.save(combined, entry_type="image")
-        await self.index.index_file(store_path)
+        await self._index(store_path)
         await self.index.store_platform_image(
             platform=platform,
             media_ref=media_ref,
@@ -354,8 +390,12 @@ class ToolExecutor:
         return f"Image saved: {description[:100]}"
 
     async def _image_search(self, args: dict) -> str:
-        query_emb = await self.index.get_embedding(args["query"])
-        candidates = self.index.search_platform_images(query_emb, limit=5)
+        # Only images saved on this platform can be sent back on it (a
+        # Telegram file_id means nothing to Slack). The terminal has no
+        # platform and can describe images from anywhere.
+        candidates = await self.search.search_images(
+            args["query"], limit=5, platform=self.platform,
+        )
         if candidates:
             best_score = candidates[0]["score"]
             threshold = best_score * 0.9
@@ -392,19 +432,23 @@ class ToolExecutor:
         resolved = _resolve_safe(args["file_path"], self.config.memory_dir)
         if resolved is None:
             safe_root = self.config.memory_dir.resolve()
-            msg = f"Blocked: path is outside {safe_root}. Files must be under ~/.memclaw/"
+            msg = (
+                f"Blocked: path is outside {safe_root} or is one of Memclaw's "
+                "internal files. Files must be under ~/.memclaw/"
+            )
             logger.warning(msg)
             return msg
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(args["content"])
         logger.info("  → file_write: wrote {path}", path=resolved)
-        return f"File written: {resolved}"
+        note = await self._index(resolved) if self.index.is_indexable(resolved) else ""
+        return f"File written: {resolved}{note}"
 
     async def _file_read(self, args: dict) -> str:
         resolved = _resolve_safe(args["file_path"], self.config.memory_dir)
         if resolved is None:
             safe_root = self.config.memory_dir.resolve()
-            return f"Blocked: path is outside {safe_root}."
+            return f"Blocked: path is outside {safe_root} or is one of Memclaw's internal files."
         if not resolved.exists():
             return f"File not found: {resolved}"
         text = resolved.read_text()

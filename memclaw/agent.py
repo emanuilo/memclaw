@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import re
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -82,6 +83,12 @@ _CONTEXT_SNIPPET_CHARS = 500
 # Session key for the interactive terminal (no chat id).
 _CLI_SESSION_KEY = "cli"
 
+# Daily-file text sent to one consolidation call.
+_CONSOLIDATION_BUDGET_CHARS = 30000
+
+# A reply wrapped in a ```markdown fence despite the instructions.
+_FENCED_RE = re.compile(r"^```[\w-]*\n(.*?)\n?```$", re.DOTALL)
+
 
 def _load_agent_instructions(config: MemclawConfig) -> str:
     agent_file = config.agent_file
@@ -97,6 +104,12 @@ def _load_permanent_memory(config: MemclawConfig) -> str:
     if len(memory) > _MEMORY_PROMPT_CHARS:
         return memory[:_MEMORY_PROMPT_CHARS] + "\n\n[... truncated; use memory_search for more]"
     return memory
+
+
+def _strip_fence(text: str) -> str:
+    text = text.strip()
+    m = _FENCED_RE.match(text)
+    return m.group(1).strip() if m else text
 
 
 def _hash(text: str) -> str:
@@ -193,6 +206,9 @@ class MemclawAgent:
         # Bumped whenever consolidation rewrites MEMORY.md, so a turn can tell
         # its own MEMORY.md writes from a rewrite it hasn't seen.
         self._memory_rewrites = 0
+        # The tool executor holds per-turn state (chat id, found images), so
+        # turns run one at a time, even across chats.
+        self._turn_lock = asyncio.Lock()
 
     # ── Sessions ─────────────────────────────────────────────────────
 
@@ -218,7 +234,12 @@ class MemclawAgent:
     # ── Startup / sync ───────────────────────────────────────────────
 
     async def start(self, *, include_backend: bool = True):
-        await self.index.sync()
+        try:
+            await self.index.sync()
+        except Exception as exc:
+            # E.g. OpenAI unreachable. The bot still works; the background
+            # sync (or the next start) indexes what's missing.
+            logger.warning("Index sync at startup failed: {exc}", exc=exc)
         if include_backend:
             await self.backend.on_agent_start(self._tools)
             self._backend_started = True
@@ -244,8 +265,8 @@ class MemclawAgent:
                 await asyncio.sleep(interval)
                 try:
                     await index.sync()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Background index sync failed: {exc}", exc=exc)
 
         self._sync_task = asyncio.create_task(_sync_loop())
 
@@ -271,30 +292,41 @@ class MemclawAgent:
             except (json.JSONDecodeError, ValueError):
                 pass
 
-        unconsolidated = self.store.list_unconsolidated_files(consolidated_through)
+        # Today's file is still being written to; it's consolidated once the
+        # day is over, so nothing saved later today is skipped.
+        today = date.today()
+        unconsolidated = [
+            path for path in self.store.list_unconsolidated_files(consolidated_through)
+            if date.fromisoformat(path.stem) < today
+        ]
         if not unconsolidated:
             return False
         if len(unconsolidated) < self.config.consolidation_threshold and not force:
             return False
 
+        # Whole files only, oldest first, up to the budget; the rest wait for
+        # the next run. A single file over the budget is sent truncated, or
+        # it would block consolidation forever.
         daily_content_parts: list[str] = []
+        included: list[Path] = []
         total_chars = 0
         for path in unconsolidated:
             content = self.store.read_file(path)
-            if not content.strip():
-                continue
-            header = f"\n### {path.stem}\n\n"
-            chunk = header + content
-            if total_chars + len(chunk) > 30000:
-                remaining = 30000 - total_chars
-                if remaining > 0:
-                    daily_content_parts.append(chunk[:remaining])
+            chunk = f"\n### {path.stem}\n\n{content}" if content.strip() else ""
+            if total_chars + len(chunk) > _CONSOLIDATION_BUDGET_CHARS:
+                if not included:
+                    daily_content_parts.append(chunk[:_CONSOLIDATION_BUDGET_CHARS])
+                    included.append(path)
                 break
-            daily_content_parts.append(chunk)
-            total_chars += len(chunk)
+            if chunk:
+                daily_content_parts.append(chunk)
+                total_chars += len(chunk)
+            included.append(path)
 
         daily_text = "\n".join(daily_content_parts)
+        new_consolidated_through = date.fromisoformat(included[-1].stem)
         if not daily_text.strip():
+            self._write_consolidated_through(meta_path, new_consolidated_through)
             return False
 
         existing_memory = self.store.read_file(self.config.memory_file)
@@ -306,35 +338,51 @@ class MemclawAgent:
             system_prompt=_CONSOLIDATION_PROMPT,
             user_message=user_message,
         )
-
-        if not result_text.strip():
+        result_text = _strip_fence(result_text)
+        if not result_text:
             return False
 
-        self.config.memory_file.write_text(result_text)
+        # memory_save(permanent=true) may have appended to MEMORY.md while
+        # the backend was working: carry those entries over instead of
+        # overwriting them. Anything else (a manual edit) — try again later.
+        current_memory = self.store.read_file(self.config.memory_file)
+        if not current_memory.startswith(existing_memory):
+            logger.warning("MEMORY.md changed during consolidation; will retry later")
+            return False
+        added_since = current_memory[len(existing_memory):]
+
+        if existing_memory.strip():
+            backup = self.config.memory_file.with_name("MEMORY.md.bak")
+            backup.write_text(existing_memory)
+        self.config.memory_file.write_text(result_text.rstrip("\n") + "\n" + added_since)
         self._memory_rewrites += 1
+        self._write_consolidated_through(meta_path, new_consolidated_through)
 
-        last_date_str = unconsolidated[-1].stem
         try:
-            new_consolidated_through = date.fromisoformat(last_date_str)
-        except ValueError:
-            new_consolidated_through = date.today()
+            await self.index.index_file(self.config.memory_file)
+        except Exception as exc:
+            logger.warning("Indexing MEMORY.md after consolidation failed: {exc}", exc=exc)
+        remaining = len(unconsolidated) - len(included)
+        logger.info(
+            "Consolidation complete: {n} files → MEMORY.md (through {d}){more}",
+            n=len(included),
+            d=new_consolidated_through.isoformat(),
+            more=f", {remaining} left for the next run" if remaining else "",
+        )
+        return True
 
+    @staticmethod
+    def _write_consolidated_through(meta_path: Path, through: date) -> None:
         meta: dict = {}
         if meta_path.exists():
             try:
                 meta = json.loads(meta_path.read_text())
             except (json.JSONDecodeError, ValueError):
                 pass
-        meta["consolidated_through"] = new_consolidated_through.isoformat()
-        meta_path.write_text(json.dumps(meta, indent=2))
-
-        await self.index.index_file(self.config.memory_file)
-        logger.info(
-            "Consolidation complete: {n} files → MEMORY.md (through {d})",
-            n=len(unconsolidated),
-            d=new_consolidated_through.isoformat(),
-        )
-        return True
+        meta["consolidated_through"] = through.isoformat()
+        tmp = meta_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(meta, indent=2))
+        tmp.replace(meta_path)
 
     def _schedule_consolidation(self) -> None:
         """Run the consolidation check in the background, after the reply,
@@ -380,7 +428,13 @@ class MemclawAgent:
             parts.append("Updated permanent memory, MEMORY.md (supersedes the earlier version):")
             parts.append(memory_update)
 
-        results = await self.search.search(message, limit=_CONTEXT_RESULTS + 2)
+        try:
+            results = await self.search.search(message, limit=_CONTEXT_RESULTS + 2)
+        except Exception as exc:
+            # E.g. OpenAI unreachable: answer without memories rather than
+            # failing the message. memory_search reports its own errors.
+            logger.warning("Context memory search failed: {exc}", exc=exc)
+            results = []
         results = [
             r for r in results if Path(r.file_path).name != self.config.memory_file.name
         ][:_CONTEXT_RESULTS]
@@ -405,6 +459,24 @@ class MemclawAgent:
         image_media_type: str = "image/jpeg",
         chat_id: str | None = None,
         on_tool: ProgressCallback | None = None,
+    ) -> tuple[str, list[dict]]:
+        async with self._turn_lock:
+            return await self._handle(
+                message,
+                image_b64=image_b64,
+                image_media_type=image_media_type,
+                chat_id=chat_id,
+                on_tool=on_tool,
+            )
+
+    async def _handle(
+        self,
+        message: str,
+        *,
+        image_b64: str | None,
+        image_media_type: str,
+        chat_id: str | None,
+        on_tool: ProgressCallback | None,
     ) -> tuple[str, list[dict]]:
         self._found_images.clear()
         self._tools.chat_id = chat_id

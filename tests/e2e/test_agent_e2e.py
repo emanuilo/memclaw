@@ -1,0 +1,145 @@
+"""Agent end-to-end: real Claude backend + real embeddings, temp vault.
+
+Each test drives MemclawAgent the way a bot does (handle / reset /
+restart) and checks what ends up on disk and in the replies.
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from memclaw.agent import MemclawAgent
+
+from .conftest import days_ago, write_daily
+
+pytestmark = pytest.mark.asyncio
+
+
+async def _agent(config) -> MemclawAgent:
+    agent = MemclawAgent(config, platform="e2e")
+    await agent.start()
+    return agent
+
+
+def _vault_text(config) -> str:
+    files = [config.memory_file, *sorted(config.memory_subdir.glob("*.md"))]
+    return "\n".join(p.read_text() for p in files if p.exists())
+
+
+async def test_save_then_recall_in_a_fresh_conversation(agent_vault):
+    agent = await _agent(agent_vault)
+    try:
+        await agent.handle(
+            "Please remember this: my beagle Max sees the vet, Dr. Petrovic, "
+            "every six months.",
+            chat_id="1",
+        )
+        assert "Petrovic" in _vault_text(agent_vault)
+
+        # /new: the conversation is gone, so the answer has to come from memory.
+        await agent.reset_conversation("1")
+        reply, _ = await agent.handle("What's the name of my dog's vet?", chat_id="1")
+        assert "Petrovic" in reply
+    finally:
+        await agent.aclose()
+
+
+async def test_permanent_fact_goes_to_memory_md(agent_vault):
+    agent = await _agent(agent_vault)
+    try:
+        await agent.handle(
+            "Save this permanently to your long-term memory: I am allergic to penicillin.",
+            chat_id="1",
+        )
+        assert "penicillin" in agent_vault.memory_file.read_text().lower()
+    finally:
+        await agent.aclose()
+
+
+async def test_conversation_resumes_after_restart(agent_vault):
+    agent = await _agent(agent_vault)
+    try:
+        await agent.handle(
+            "Let's play a game. The secret word is 'tangerine'. Don't save it "
+            "to memory, just keep it in this conversation. Reply 'ok'.",
+            chat_id="7",
+        )
+        first = agent.sessions.get("e2e:7", agent._fingerprint)
+    finally:
+        await agent.aclose()
+    assert first is not None
+
+    agent = await _agent(agent_vault)  # a restart: new process state
+    try:
+        reply, _ = await agent.handle("What was the secret word?", chat_id="7")
+        assert "tangerine" in reply.lower()
+        assert agent.sessions.get("e2e:7", agent._fingerprint)["session_id"] == first["session_id"]
+    finally:
+        await agent.aclose()
+
+
+async def test_instruction_is_saved_and_followed(agent_vault):
+    agent = await _agent(agent_vault)
+    try:
+        await agent.handle(
+            "From now on, always end every reply with the exact word 'Ciao'.",
+            chat_id="1",
+        )
+        assert "Ciao" in agent_vault.agent_file.read_text()
+        reply, _ = await agent.handle("What's 2 + 2?", chat_id="1")
+        assert reply.rstrip(" .!*_").endswith("Ciao")
+    finally:
+        await agent.aclose()
+
+
+async def test_turn_survives_openai_outage(agent_vault):
+    """Context search failing (bad OpenAI key) must not fail the message."""
+    agent = await _agent(agent_vault)
+    agent.index.openai.api_key = "sk-invalid"
+    try:
+        reply, _ = await agent.handle("Just say hi.", chat_id="1")
+        assert reply and reply != "I couldn't generate a response."
+    finally:
+        await agent.aclose()
+
+
+async def test_consolidation_with_real_llm(agent_vault):
+    """Old daily files are distilled into MEMORY.md; today's file — still
+    being written to — is left for a later run, and a permanent memory
+    saved while consolidation runs is not overwritten."""
+    write_daily(agent_vault, days_ago(9), [("10:00", "My sister Ana's birthday is March 3rd.")])
+    write_daily(agent_vault, days_ago(8), [("10:00", "Hi.")])
+    write_daily(agent_vault, days_ago(7), [("10:00", "I switched from coffee to green tea for good.")])
+    write_daily(agent_vault, days_ago(6), [("10:00", "Started a new job at Northwind as a data engineer.")])
+    write_daily(agent_vault, days_ago(5), [("10:00", "Ok thanks.")])
+    write_daily(agent_vault, days_ago(4), [("10:00", "Decided to sell the old Golf and buy an e-bike.")])
+    write_daily(agent_vault, days_ago(3), [("10:00", "Bought the e-bike, a Riese & Muller.")])
+    write_daily(agent_vault, days_ago(0), [("10:00", "Today: dentist at 15:00.")])
+
+    agent = MemclawAgent(agent_vault)
+    original = agent.backend.run_one_shot
+
+    async def run_one_shot_with_concurrent_save(**kwargs):
+        result = await original(**kwargs)
+        # The user saves a permanent memory while consolidation is running.
+        agent.store.save("Blood type: 0 negative.", permanent=True)
+        return result
+
+    agent.backend.run_one_shot = run_one_shot_with_concurrent_save
+    try:
+        await agent.start(include_backend=False)
+        assert await agent._maybe_consolidate(force=True)
+    finally:
+        await agent.aclose()
+
+    memory = agent_vault.memory_file.read_text()
+    assert "Ana" in memory and "March 3" in memory
+    assert "Northwind" in memory
+    assert "green tea" in memory.lower()
+    assert "0 negative" in memory, "a save made during consolidation was lost"
+    assert not memory.lstrip().startswith("```"), "code fence leaked into MEMORY.md"
+
+    meta = json.loads((agent_vault.memory_dir / "meta.json").read_text())
+    assert meta["consolidated_through"] == days_ago(3).isoformat()
+    assert agent.store.list_unconsolidated_files(days_ago(3)) == [agent_vault.daily_file()]

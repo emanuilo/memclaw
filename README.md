@@ -376,6 +376,7 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 ```
 ~/.memclaw/
 ├── MEMORY.md              # Permanent / curated memories
+├── MEMORY.md.bak          # MEMORY.md before the last consolidation
 ├── AGENTS.md              # Agent instructions + user preferences
 ├── memclaw.db             # SQLite index (embeddings + FTS5)
 ├── sessions.json          # Conversation session per chat
@@ -394,8 +395,8 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **NumPy for vectors** — cosine similarity computed in-memory, no native extensions required
 - **Pluggable agent SDK** — Claude or Cursor drives the agentic loop that decides how to handle your input ([Agent Backend](#agent-backend))
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
-- **Auto-consolidation** — daily files are periodically distilled into MEMORY.md, in the background after a reply
-- **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/`
+- **Auto-consolidation** — past daily files are periodically distilled into MEMORY.md, in the background after a reply (the previous version is kept as `MEMORY.md.bak`)
+- **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/` and Memclaw's own files inside it (the database, `.env`, sessions, hidden dirs)
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
 
 For a deep dive into how memory storage, search, consolidation, and context injection work, see the [Memory Architecture](docs/memory-architecture.md) doc.
@@ -432,6 +433,12 @@ asyncio.run(main())
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+`pytest` runs the unit tests offline. To validate the memory system end to end against the real OpenAI and Claude APIs (in a throwaway vault; needs `OPENAI_API_KEY` plus a Claude credential):
+
+```bash
+MEMCLAW_E2E=1 pytest tests/e2e -v
+```
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)

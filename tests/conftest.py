@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
+import re
 from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,6 +16,34 @@ from memclaw.config import MemclawConfig
 from memclaw.index import MemoryIndex
 from memclaw.search import HybridSearch, SearchResult
 from memclaw.store import MemoryStore
+
+
+class _FakeEmbeddings:
+    """Offline stand-in for the OpenAI embeddings API: a hashed
+    bag-of-words vector, so texts sharing words are similar."""
+
+    async def create(self, *, model: str, input: list[str]):
+        data = []
+        for text in input:
+            vec = np.zeros(1536, dtype=np.float32)
+            for word in re.findall(r"\w+", text.lower()):
+                vec[int(hashlib.md5(word.encode()).hexdigest(), 16) % 1536] += 1.0
+            vec /= np.linalg.norm(vec) or 1.0
+            data.append(MagicMock(embedding=vec.tolist()))
+        return MagicMock(data=data)
+
+
+class _FakeOpenAI:
+    def __init__(self, *args, **kwargs):
+        self.embeddings = _FakeEmbeddings()
+
+
+@pytest.fixture(autouse=True)
+def _offline_embeddings(request, monkeypatch):
+    """Unit tests never call OpenAI; tests/e2e uses the real API."""
+    if f"{os.sep}e2e{os.sep}" in str(request.node.fspath):
+        return
+    monkeypatch.setattr("memclaw.index.AsyncOpenAI", _FakeOpenAI)
 
 
 @pytest.fixture

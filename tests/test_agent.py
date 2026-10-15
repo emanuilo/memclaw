@@ -724,3 +724,203 @@ class TestSandboxedFileTools:
         }
         assert set(names) == expected
         assert len(names) == len(expected)
+
+
+# ────────────────────────────────────────────────────────────────────
+# Consolidation edge cases
+# ────────────────────────────────────────────────────────────────────
+
+def _daily(cfg: MemclawConfig, d: date, text: str) -> Path:
+    path = cfg.daily_file(d)
+    path.write_text(text)
+    return path
+
+
+def _consolidated_through(cfg: MemclawConfig) -> str:
+    return json.loads((cfg.memory_dir / "meta.json").read_text())["consolidated_through"]
+
+
+class TestConsolidationSafety:
+    @pytest.mark.asyncio
+    async def test_todays_file_is_left_for_later(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        from datetime import timedelta
+
+        fake_backend.one_shot_response = "## Facts\n- x"
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date.today() - timedelta(days=1), "yesterday's note")
+        _daily(cfg, date.today(), "today's note")
+
+        assert await agent._maybe_consolidate(force=True)
+        assert "today's note" not in fake_backend.one_shot_calls[0]["user"]
+        assert _consolidated_through(cfg) == (date.today() - timedelta(days=1)).isoformat()
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_only_today_means_nothing_to_do(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date.today(), "today's note")
+        assert await agent._maybe_consolidate(force=True) is False
+        assert fake_backend.one_shot_calls == []
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_files_past_the_budget_stay_unconsolidated(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        fake_backend.one_shot_response = "## Facts\n- x"
+        agent = _make_agent(cfg, fake_backend)
+        for day in range(1, 6):
+            _daily(cfg, date(2025, 3, day), f"day {day} " + "x" * 10000)
+
+        assert await agent._maybe_consolidate(force=True)
+        user_msg = fake_backend.one_shot_calls[0]["user"]
+        assert "day 2 " in user_msg and "day 3 " not in user_msg
+        assert _consolidated_through(cfg) == "2025-03-02"
+
+        # The next run picks up where this one stopped.
+        assert await agent._maybe_consolidate(force=True)
+        assert "day 3 " in fake_backend.one_shot_calls[1]["user"]
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_single_oversized_file_is_truncated_not_stuck(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        fake_backend.one_shot_response = "## Facts\n- x"
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date(2025, 3, 1), "y" * 50000)
+        assert await agent._maybe_consolidate(force=True)
+        assert _consolidated_through(cfg) == "2025-03-01"
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_save_during_consolidation_is_kept(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date(2025, 3, 1), "note")
+
+        async def one_shot(**kwargs):
+            agent.store.save("Blood type 0 negative", permanent=True)
+            return "## Facts\n- consolidated"
+
+        fake_backend.run_one_shot = one_shot
+        assert await agent._maybe_consolidate(force=True)
+        memory = cfg.memory_file.read_text()
+        assert memory.startswith("## Facts\n- consolidated")
+        assert "Blood type 0 negative" in memory
+        assert (cfg.memory_dir / "MEMORY.md.bak").read_text() == "# Personal Memory\n"
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_manual_edit_during_consolidation_aborts(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date(2025, 3, 1), "note")
+
+        async def one_shot(**kwargs):
+            cfg.memory_file.write_text("# Edited by hand\n")
+            return "## Facts\n- consolidated"
+
+        fake_backend.run_one_shot = one_shot
+        assert await agent._maybe_consolidate(force=True) is False
+        assert cfg.memory_file.read_text() == "# Edited by hand\n"
+        assert not (cfg.memory_dir / "meta.json").exists()
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_code_fence_is_stripped(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        fake_backend.one_shot_response = "```markdown\n## Facts\n- x\n```"
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date(2025, 3, 1), "note")
+        assert await agent._maybe_consolidate(force=True)
+        assert cfg.memory_file.read_text() == "## Facts\n- x\n"
+        agent.close()
+
+
+# ────────────────────────────────────────────────────────────────────
+# Resilience and concurrency
+# ────────────────────────────────────────────────────────────────────
+
+class TestResilience:
+    @pytest.mark.asyncio
+    async def test_context_search_failure_does_not_fail_the_turn(
+        self, cfg: MemclawConfig, fake_backend: FakeBackend,
+    ):
+        fake_backend.turn_response = TurnResult(text="hi")
+        agent = _make_agent(cfg, fake_backend)
+        agent._maybe_consolidate = AsyncMock(return_value=False)
+        agent.search.search = AsyncMock(side_effect=RuntimeError("OpenAI down"))
+        reply, _ = await agent.handle("hello")
+        assert reply == "hi"
+        assert fake_backend.turn_calls[0]["context"].endswith("</context>")
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_start_survives_index_sync_failure(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend)
+        agent.index.sync = AsyncMock(side_effect=RuntimeError("OpenAI down"))
+        await agent.start()
+        await agent.aclose()
+
+    @pytest.mark.asyncio
+    async def test_memory_save_reports_success_when_indexing_fails(
+        self, cfg: MemclawConfig, fake_backend: FakeBackend,
+    ):
+        agent = _make_agent(cfg, fake_backend)
+        agent.index.index_file = AsyncMock(side_effect=RuntimeError("OpenAI down"))
+        out = await agent._tools.execute("memory_save", {"content": "Max is a beagle"})
+        assert out.startswith("Memory saved to")
+        assert "Max is a beagle" in cfg.daily_file().read_text()
+        agent.close()
+
+
+class TestConcurrentChats:
+    @pytest.mark.asyncio
+    async def test_tool_calls_see_their_own_chat(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        """Two chats' turns overlapping must not mix up per-turn tool state."""
+        seen: dict[str, str | None] = {}
+        agent = _chat_agent(cfg, fake_backend, platform="slack")
+
+        async def run_turn(**kwargs):
+            key = kwargs["session_key"]
+            await asyncio.sleep(0.05)  # the other chat's message arrives meanwhile
+            seen[key] = kwargs["tool_executor"].chat_id
+            return TurnResult(text="ok", session_id=f"s-{key}")
+
+        fake_backend.run_turn = run_turn
+        await asyncio.gather(
+            agent.handle("a", chat_id="A"),
+            agent.handle("b", chat_id="B"),
+        )
+        assert seen == {"slack:A": "A", "slack:B": "B"}
+        agent.close()
+
+
+class TestInternalFilesGuardrail:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", [
+        "memclaw.db", "memclaw.db-wal", ".env", "sessions.json", "meta.json",
+        ".cursor/hooks/hook_policy.json", "whatsapp/session.db", "bot.log",
+    ])
+    async def test_internal_files_are_off_limits(self, cfg: MemclawConfig, fake_backend: FakeBackend, target):
+        agent = _make_agent(cfg, fake_backend)
+        for tool, args in (
+            ("file_write", {"file_path": target, "content": "x"}),
+            ("file_read", {"file_path": target}),
+        ):
+            out = await agent._tools.execute(tool, args)
+            assert out.startswith("Blocked"), (tool, target, out)
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_written_markdown_is_indexed(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend)
+        await agent._tools.execute("file_write", {"file_path": "todos.md", "content": "- renew passport"})
+        results = await agent.search.search("renew passport", limit=3)
+        assert results and "passport" in results[0].content
+        agent.close()
+
+
+class TestImageSearchPlatform:
+    @pytest.mark.asyncio
+    async def test_only_this_platforms_images_are_returned(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend, platform="telegram")
+        await agent.index.store_platform_image("whatsapp", "wa-1", "sprint planning whiteboard")
+        await agent.index.store_platform_image("telegram", "tg-1", "sprint planning whiteboard")
+        await agent._tools.execute("image_search", {"query": "sprint planning whiteboard"})
+        assert [img["media_ref"] for img in agent._found_images] == ["tg-1"]
+        agent.close()
