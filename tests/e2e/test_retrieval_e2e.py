@@ -193,7 +193,9 @@ async def test_image_search_is_scoped_to_platform(vault):
     await index.store_platform_image("telegram", "tg-file-1", "A whiteboard with sprint planning sticky notes")
     found: list[dict] = []
     tools = ToolExecutor(vault, MemoryStore(vault), index, search, found, platform="telegram")
-    await tools.execute("image_search", {"query": "sprint planning whiteboard"})
+    out = await tools.execute("image_search", {"query": "sprint planning whiteboard"})
+    assert "id 2 " in out and "id 1 " not in out
+    await tools.execute("image_send", {"ids": [1, 2]})
     assert found and {img["platform"] for img in found} == {"telegram"}
     assert index.get_stats()["images"] == 2
     index.close()

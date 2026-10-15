@@ -80,9 +80,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "image_search",
         "description": (
-            "Search for previously stored images to send to the user. "
-            "Use when the user asks to retrieve, show, or send an image. "
-            "The image will be sent automatically."
+            "Find previously stored images when the user asks to retrieve, show, "
+            "or send one. Returns the closest matches with their ids and "
+            "descriptions; nothing is sent. Then call image_send with the ids of "
+            "the images that are what the user asked for."
         ),
         "input_schema": {
             "type": "object",
@@ -90,6 +91,25 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "query": {"type": "string", "description": "Search query for images"},
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "image_send",
+        "description": (
+            "Send stored images to the user, by the ids image_search returned. "
+            "Pass only the images that match the request (e.g. just the passport "
+            "when the user asks for their passport)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Image ids from image_search",
+                },
+            },
+            "required": ["ids"],
         },
     },
     {
@@ -206,12 +226,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 _MAX_SEARCH_RESULTS = 25
 
+# image_search: how many candidates the agent chooses from, and how much of
+# each description it sees.
+_IMAGE_CANDIDATES = 5
+_IMAGE_DESCRIPTION_CHARS = 300
+
 # Progress-message wording per tool: (label, argument shown after it).
 _STEP_LABELS: dict[str, tuple[str, str | None]] = {
     "memory_save": ("Saving to memory", None),
     "memory_search": ("Searching memories", "query"),
     "image_save": ("Saving the image", None),
     "image_search": ("Searching images", "query"),
+    "image_send": ("Sending images", None),
     "update_instructions": ("Updating my instructions", None),
     "file_write": ("Writing", "file_path"),
     "file_read": ("Reading", "file_path"),
@@ -311,6 +337,7 @@ class ToolExecutor:
             "memory_search": self._memory_search,
             "image_save": self._image_save,
             "image_search": self._image_search,
+            "image_send": self._image_send,
             "update_instructions": self._update_instructions,
             "file_write": self._file_write,
             "file_read": self._file_read,
@@ -397,30 +424,35 @@ class ToolExecutor:
         # Telegram file_id means nothing to Slack). The terminal has no
         # platform and can describe images from anywhere.
         candidates = await self.search.search_images(
-            args["query"], limit=5, platform=self.platform,
+            args["query"], limit=_IMAGE_CANDIDATES, platform=self.platform,
         )
-        if candidates:
-            best_score = candidates[0]["score"]
-            threshold = best_score * 0.9
-            results = [r for r in candidates if r["score"] >= threshold]
-        else:
-            results = []
-        self.found_images.extend(results)
-        if results:
-            lines = []
-            for r in results:
-                line = f"- {r['description']}"
-                if r.get("caption"):
-                    line += f" (caption: {r['caption']})"
-                lines.append(line)
-            logger.info("  → image_search result: {n} image(s) found", n=len(results))
-            return (
-                f"Found {len(results)} image(s):\n"
-                + "\n".join(lines)
-                + "\nImages will be sent automatically."
-            )
-        logger.info("  → image_search result: no matching images")
-        return "No matching images found."
+        logger.info("  → image_search result: {n} candidate(s)", n=len(candidates))
+        if not candidates:
+            return "No matching images found."
+        lines = []
+        for r in candidates:
+            description = " ".join(r["description"].split())
+            if len(description) > _IMAGE_DESCRIPTION_CHARS:
+                description = description[:_IMAGE_DESCRIPTION_CHARS] + "…"
+            lines.append(f"- id {r['id']} (match {r['score']:.2f}): {description}")
+        return (
+            "Closest stored images, best first (nothing sent yet):\n"
+            + "\n".join(lines)
+            + "\nCall image_send with the ids of the ones the user asked for."
+        )
+
+    async def _image_send(self, args: dict) -> str:
+        ids = [int(i) for i in args.get("ids") or []]
+        images = self.index.get_platform_images(ids, platform=self.platform)
+        queued = {img["id"] for img in self.found_images}
+        new = [img for img in images if img["id"] not in queued]
+        self.found_images.extend(new)
+        logger.info("  → image_send: {n} image(s) queued", n=len(new))
+        missing = sorted(set(ids) - {img["id"] for img in images})
+        note = f" No stored image with id {', '.join(map(str, missing))}." if missing else ""
+        if not images:
+            return "Nothing to send." + note
+        return f"Sending {len(images)} image(s) with your reply." + note
 
     async def _update_instructions(self, args: dict) -> str:
         instruction: str = args["instruction"].strip()

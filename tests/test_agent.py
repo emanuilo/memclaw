@@ -717,7 +717,7 @@ class TestSandboxedFileTools:
         names = [t["name"] for t in TOOL_DEFINITIONS]
         expected = {
             "memory_save", "memory_search",
-            "image_save", "image_search",
+            "image_save", "image_search", "image_send",
             "update_instructions", "file_write", "file_read",
             "reminder_create", "reminder_list", "reminder_cancel",
         }
@@ -926,8 +926,30 @@ class TestImageSearchPlatform:
         agent = _make_agent(cfg, fake_backend, platform="telegram")
         await agent.index.store_platform_image("whatsapp", "wa-1", "sprint planning whiteboard")
         await agent.index.store_platform_image("telegram", "tg-1", "sprint planning whiteboard")
-        await agent._tools.execute("image_search", {"query": "sprint planning whiteboard"})
+        out = await agent._tools.execute("image_search", {"query": "sprint planning whiteboard"})
+        assert "id 2 " in out and "id 1 " not in out
+        assert agent._found_images == []  # searching sends nothing
+        out = await agent._tools.execute("image_send", {"ids": [1, 2]})
         assert [img["media_ref"] for img in agent._found_images] == ["tg-1"]
+        assert "No stored image with id 1" in out
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_an_image_is_sent_once_per_reply(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend, platform="telegram")
+        await agent.index.store_platform_image("telegram", "tg-passport", "passport")
+        await agent.index.store_platform_image("telegram", "tg-id", "ID card printout")
+        await agent._tools.execute("image_send", {"ids": [1, 1]})
+        await agent._tools.execute("image_send", {"ids": [1, 2]})  # e.g. after a second search
+        assert [img["media_ref"] for img in agent._found_images] == ["tg-passport", "tg-id"]
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_unknown_ids_send_nothing(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend, platform="telegram")
+        out = await agent._tools.execute("image_send", {"ids": [99]})
+        assert out == "Nothing to send. No stored image with id 99."
+        assert agent._found_images == []
         agent.close()
 
 

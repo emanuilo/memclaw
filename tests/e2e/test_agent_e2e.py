@@ -218,3 +218,40 @@ async def test_agent_follows_a_reference_for_an_exact_value(agent_vault):
         assert "-6ANtobEtBwi4s3mKHlqSPbM1VSbXlQdXkAo7tXNQoU" in reply
     finally:
         await agent.aclose()
+
+
+async def test_asking_for_the_passport_sends_only_the_passport(agent_vault):
+    """The case from production: the Serbian and the English search each
+    surface the passport, and the English one ranks an ID card printout
+    first. Only the passport may be sent, once. The vault keeps the AGENTS.md
+    wording older installs have ("sent automatically"): the tools alone must
+    get the agent to call image_send."""
+    agents = agent_vault.agent_file.read_text().replace(
+        "use image_search, then image_send with only the ids of the images that "
+        "are what they asked for.",
+        "use image_search. The image will be sent automatically.",
+    )
+    assert "sent automatically" in agents
+    agent_vault.agent_file.write_text(agents)
+    with open(agent_vault.agent_file, "a") as f:
+        f.write(
+            "\n- When using the memory_search or image_search tool, always try both "
+            "English and Serbian versions of the query.\n"
+        )
+    agent = await _agent(agent_vault)
+    try:
+        await agent.index.store_platform_image(
+            "e2e", "passport-ref",
+            "Image: Pasoš Republika Srbija — Emanuilo Jovanović. Broj pasoša: 015605261. "
+            "Važi do: 02.04.2031. Caption: Pasoš Emanuilo Jovanović",
+        )
+        await agent.index.store_platform_image(
+            "e2e", "id-printout-ref",
+            "Image: Electronic ID card reader printout for Emanuilo Jovanović: surname, "
+            "name, date of birth, JMBG, residence, document number 010234030. "
+            "Caption: Očitana lična karta",
+        )
+        _, images = await agent.handle("Daj mi sliku pasosa", chat_id="1")
+        assert [img["media_ref"] for img in images] == ["passport-ref"]
+    finally:
+        await agent.aclose()

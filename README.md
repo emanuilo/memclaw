@@ -272,7 +272,7 @@ A pluggable agent SDK drives the loop — Claude or Cursor, picked during setup 
 | `memory_save` | Writes a new entry to today's daily file (MEMORY.md is written only by consolidation) |
 | `memory_search` | Hybrid search across all indexed memories |
 | `image_save` | Generates an AI description of an image and stores it |
-| `image_search` | Retrieves previously stored images by description |
+| `image_search` / `image_send` | Finds stored images by description; the agent then sends the ones you asked for (each at most once per reply) |
 | `file_write` / `file_read` | Sandboxed file operations within `~/.memclaw/` |
 | `update_instructions` | Appends user preferences to AGENTS.md |
 | `reminder_create` / `reminder_list` / `reminder_cancel` | Schedules one-shot or recurring reminders, delivered back to the originating chat |

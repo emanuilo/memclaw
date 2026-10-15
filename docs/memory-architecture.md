@@ -247,7 +247,7 @@ For local images (CLI mode), the file path and any caption are saved the same wa
 
 ### Retrieval
 
-When you ask "show me that photo of the sunset," the agent runs a vector search over the `platform_images` table using the query's embedding. Only images saved on the platform you're talking on are returned — a Telegram `file_id` can't be sent through Slack — and they're sent back automatically. The terminal searches images from every platform.
+When you ask "show me that photo of the sunset," the agent runs `image_search`: a vector search over the `platform_images` table using the query's embedding, limited to images saved on the platform you're talking on (a Telegram `file_id` can't be sent through Slack; the terminal searches every platform). It returns the 5 closest images with their ids and descriptions and sends nothing. The agent reads the descriptions and calls `image_send` with the ids of the images that are what you asked for — a similarity score alone can't tell your passport from your ID card when both descriptions mention your name — and each image goes out at most once per reply, even after several searches.
 
 ---
 
@@ -303,7 +303,8 @@ User Message (chat → session key)
 │           ├─ memory_save   → write to daily file or MEMORY.md → index
 │           ├─ memory_search → run full search pipeline
 │           ├─ image_save    → store image metadata
-│           └─ image_search  → vector search over image descriptions
+│           ├─ image_search  → vector search over image descriptions (candidates)
+│           └─ image_send    → send the chosen images with the reply
 ├─ 4. Save the session id + AGENTS.md / MEMORY.md hashes
 ├─ 5. Schedule consolidation in the background (if threshold reached)
 │

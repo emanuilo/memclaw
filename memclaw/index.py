@@ -404,13 +404,13 @@ class MemoryIndex:
         """Vector search over stored images. Optionally filter by platform."""
         if platform:
             rows = self.db.execute(
-                "SELECT id, platform, media_ref, description, caption, embedding, created_at "
+                "SELECT id, platform, media_ref, description, caption, created_at, embedding "
                 "FROM platform_images WHERE embedding IS NOT NULL AND platform = ?",
                 (platform,),
             ).fetchall()
         else:
             rows = self.db.execute(
-                "SELECT id, platform, media_ref, description, caption, embedding, created_at "
+                "SELECT id, platform, media_ref, description, caption, created_at, embedding "
                 "FROM platform_images WHERE embedding IS NOT NULL"
             ).fetchall()
 
@@ -419,24 +419,44 @@ class MemoryIndex:
 
         results = []
         for row in rows:
-            stored_emb = self.deserialize_embedding(row[5])
+            stored_emb = self.deserialize_embedding(row[6])
             similarity = float(
                 np.dot(query_embedding, stored_emb)
                 / (np.linalg.norm(query_embedding) * np.linalg.norm(stored_emb) + 1e-8)
             )
-            results.append({
-                "id": row[0],
-                "platform": row[1],
-                "media_ref": row[2],
-                "file_id": row[2],  # backward compat alias
-                "description": row[3],
-                "caption": row[4],
-                "created_at": row[6],
-                "score": similarity,
-            })
+            results.append(self._image_dict(row, score=similarity))
 
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
+
+    def get_platform_images(self, ids: list[int], platform: str | None = None) -> list[dict]:
+        """Stored images by id, in the order given; ids that don't exist
+        (or belong to another platform) are left out."""
+        found = {}
+        for image_id in ids:
+            row = self.db.execute(
+                "SELECT id, platform, media_ref, description, caption, created_at "
+                "FROM platform_images WHERE id = ? AND (? IS NULL OR platform = ?)",
+                (image_id, platform, platform),
+            ).fetchone()
+            if row is not None:
+                found[row[0]] = self._image_dict(row)
+        return list(found.values())
+
+    @staticmethod
+    def _image_dict(row: tuple, score: float | None = None) -> dict:
+        """(id, platform, media_ref, description, caption, created_at, ...)
+        as the dict the bots send images from."""
+        return {
+            "id": row[0],
+            "platform": row[1],
+            "media_ref": row[2],
+            "file_id": row[2],  # backward compat alias
+            "description": row[3],
+            "caption": row[4],
+            "created_at": row[5],
+            "score": score,
+        }
 
     # ------------------------------------------------------------------
     # Stats
