@@ -1016,3 +1016,59 @@ class TestConsolidationReferences:
         from memclaw.agent import _SYSTEM_PROMPT_TEMPLATE
 
         assert "file_read" in _SYSTEM_PROMPT_TEMPLATE and "→ memory/" in _SYSTEM_PROMPT_TEMPLATE
+
+
+class TestReviewFixes:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", ["MEMORY.md", "memory/2026-10-15.md"])
+    async def test_file_write_cannot_replace_memory_or_daily_notes(
+        self, cfg: MemclawConfig, fake_backend: FakeBackend, target,
+    ):
+        agent = _make_agent(cfg, fake_backend)
+        before = cfg.memory_file.read_text()
+        out = await agent._tools.execute("file_write", {"file_path": target, "content": "x"})
+        assert out.startswith("Blocked")
+        assert cfg.memory_file.read_text() == before
+        assert not (cfg.memory_dir / "memory" / "2026-10-15.md").exists()
+        read = await agent._tools.execute("file_read", {"file_path": "MEMORY.md"})
+        assert read == before
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_failed_consolidation_is_not_retried_after_every_reply(
+        self, cfg: MemclawConfig, fake_backend: FakeBackend,
+    ):
+        agent = _chat_agent(cfg, fake_backend)
+        agent._maybe_consolidate = AsyncMock(side_effect=RuntimeError("bad model"))
+        await agent.handle("one")
+        await agent._consolidation_task
+        await agent.handle("two")
+        await agent._consolidation_task
+        assert agent._maybe_consolidate.await_count == 1
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_image_save_writes_nothing_when_the_embedding_fails(
+        self, cfg: MemclawConfig, fake_backend: FakeBackend,
+    ):
+        agent = _make_agent(cfg, fake_backend, platform="telegram")
+        agent.index.get_embedding = AsyncMock(side_effect=RuntimeError("OpenAI down"))
+        out = await agent._tools.execute(
+            "image_save", {"description": "a whiteboard", "media_ref": "tg-1"},
+        )
+        assert out.startswith("Error")
+        assert not cfg.daily_file().exists()
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_file_write_indexes_the_path_sync_uses(self, tmp_path: Path, fake_backend: FakeBackend):
+        (tmp_path / "real").mkdir()
+        (tmp_path / "link").symlink_to(tmp_path / "real")
+        cfg = MemclawConfig(memory_dir=tmp_path / "link", openai_api_key="k", anthropic_api_key="k")
+        agent = _make_agent(cfg, fake_backend)
+        await agent.index.sync()
+        await agent._tools.execute("file_write", {"file_path": "todos.md", "content": "- milk"})
+        assert not await agent.index.sync()  # nothing left to re-index or remove
+        paths = {r[0] for r in agent.index.db.execute("SELECT DISTINCT file_path FROM chunks")}
+        assert str(cfg.memory_dir / "todos.md") in paths
+        agent.close()

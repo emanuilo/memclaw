@@ -90,6 +90,10 @@ _CONTEXT_SNIPPET_CHARS = 500
 # Session key for the interactive terminal (no chat id).
 _CLI_SESSION_KEY = "cli"
 
+# After a failed consolidation, wait this long before trying again rather
+# than retrying after every reply.
+_CONSOLIDATION_RETRY_S = 3600
+
 # Dated copies of MEMORY.md kept from before each consolidation.
 _HISTORY_DIR = ".history"
 _HISTORY_KEEP = 60
@@ -253,6 +257,7 @@ class MemclawAgent:
         # session it just reset.
         self._generations: dict[str, int] = {}
         self._consolidation_task: asyncio.Task | None = None
+        self._consolidation_retry_at = 0.0  # monotonic time
         # The tool executor holds per-turn state (chat id, found images), so
         # turns run one at a time, even across chats.
         self._turn_lock = asyncio.Lock()
@@ -468,13 +473,19 @@ class MemclawAgent:
         so it never delays one. At most one runs at a time."""
         if self._consolidation_task is not None and not self._consolidation_task.done():
             return
+        if time.monotonic() < self._consolidation_retry_at:
+            return
         self._consolidation_task = asyncio.create_task(self._consolidate_in_background())
 
     async def _consolidate_in_background(self) -> None:
         try:
             await self._maybe_consolidate()
         except Exception as exc:
-            logger.exception("Background consolidation failed: {exc}", exc=exc)
+            self._consolidation_retry_at = time.monotonic() + _CONSOLIDATION_RETRY_S
+            logger.exception(
+                "Background consolidation failed, retrying in {m} min: {exc}",
+                m=_CONSOLIDATION_RETRY_S // 60, exc=exc,
+            )
 
     # ── Context builder ──────────────────────────────────────────────
 

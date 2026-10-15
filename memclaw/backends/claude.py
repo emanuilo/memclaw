@@ -130,13 +130,17 @@ def _resolve_effort(config: "MemclawConfig") -> str | None:
 
 def _resolve_consolidation(config: "MemclawConfig") -> tuple[str, str | None]:
     """(model, effort) for consolidation: CLAUDE_CONSOLIDATION_MODEL /
-    CLAUDE_CONSOLIDATION_EFFORT, else Opus 5.5 at medium. An unknown effort
-    level counts as unset, as in `_resolve_effort`."""
+    CLAUDE_CONSOLIDATION_EFFORT, else Opus 5.5 at medium. As in
+    `_resolve_effort`, an unknown level counts as unset, and an unset level
+    means the default effort only on the default model (another model may
+    not take an effort at all)."""
     model = (config.claude_consolidation_model or "").strip() or _DEFAULT_CONSOLIDATION_MODEL
     effort = (config.claude_consolidation_effort or "").strip().lower()
-    if effort not in SDK_EFFORT_LEVELS:
-        effort = _DEFAULT_CONSOLIDATION_EFFORT
-    return model, effort
+    if effort in SDK_EFFORT_LEVELS:
+        return model, effort
+    if model == _DEFAULT_CONSOLIDATION_MODEL:
+        return model, _DEFAULT_CONSOLIDATION_EFFORT
+    return model, None
 
 
 def _fit_effort(levels: list[str], preferred: str) -> str | None:
@@ -309,7 +313,7 @@ class ClaudeAgentBackend:
         return [
             ("Model", _resolve_model(config)),
             ("Effort", _resolve_effort(config) or "default"),
-            ("Consolidation", f"{consolidation_model} ({consolidation_effort})"),
+            ("Consolidation", f"{consolidation_model} ({consolidation_effort or 'default'})"),
         ]
 
     @classmethod

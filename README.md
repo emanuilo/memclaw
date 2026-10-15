@@ -398,7 +398,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **Pluggable agent SDK** — Claude or Cursor drives the agentic loop that decides how to handle your input ([Agent Backend](#agent-backend))
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
 - **Auto-consolidation** — each finished day's notes are distilled into MEMORY.md — a profile plus references to the notes holding the details — in the background after your next reply; MEMORY.md has no other writer (the previous version is kept as `MEMORY.md.bak`)
-- **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/` and Memclaw's own files inside it (the database, `.env`, sessions, hidden dirs)
+- **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/` and Memclaw's own files inside it (the database, `.env`, sessions, hidden dirs); MEMORY.md and the daily notes are read-only to it
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
 
 For a deep dive into how memory storage, search, consolidation, and context injection work, see the [Memory Architecture](docs/memory-architecture.md) doc.

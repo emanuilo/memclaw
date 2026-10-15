@@ -376,14 +376,16 @@ class ToolExecutor:
         combined = f"Image: {description}"
         if caption:
             combined += f" Caption: {caption}"
-        store_path = self.store.save(combined, entry_type="image")
-        await self._index(store_path)
+        # Register the image first: it needs an embedding, and if that fails
+        # nothing has been written yet, so a retry doesn't save the note twice.
         await self.index.store_platform_image(
             platform=platform,
             media_ref=media_ref,
             description=combined,
             caption=caption,
         )
+        store_path = self.store.save(combined, entry_type="image")
+        await self._index(store_path)
         logger.info(
             "  → image_save({platform}) result: {desc}",
             platform=platform, desc=description[:100],
@@ -439,10 +441,20 @@ class ToolExecutor:
             )
             logger.warning(msg)
             return msg
+        rel = resolved.relative_to(self.config.memory_dir.resolve())
+        if rel == Path(self.config.memory_file.name) or rel.parts[0] == self.config.memory_subdir.name:
+            # MEMORY.md is written only by consolidation, and the daily notes
+            # are the append-only record it is rebuilt from.
+            return (
+                "Blocked: MEMORY.md and the daily notes in memory/ are maintained "
+                "by Memclaw. Use memory_save to add a memory."
+            )
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(args["content"])
         logger.info("  → file_write: wrote {path}", path=resolved)
-        note = await self._index(resolved) if self.index.is_indexable(resolved) else ""
+        # Index under the same (unresolved) path the index sync uses.
+        path = self.config.memory_dir / rel
+        note = await self._index(path) if self.index.is_indexable(path) else ""
         return f"File written: {resolved}{note}"
 
     async def _file_read(self, args: dict) -> str:

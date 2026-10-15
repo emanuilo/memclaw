@@ -88,7 +88,7 @@ Long-term memory is everything that survives between sessions. It lives on disk 
 - Lion8 prod login and SSH commands → memory/2026-05-12.md, memory/2026-06-13.md
 ```
 
-Details — credentials, document numbers, instructions, receipts — stay in the daily files and other notes, which are never deleted. MEMORY.md summarizes and points; it doesn't copy. It has a single writer, consolidation: the agent never writes it directly (`memory_save` has no "permanent" option). So the daily files are the complete, append-only record, and whatever a consolidation does to MEMORY.md, it can be rebuilt from them.
+Details — credentials, document numbers, instructions, receipts — stay in the daily files and other notes, which are never deleted. MEMORY.md summarizes and points; it doesn't copy. It has a single writer, consolidation: the agent never writes it directly (`memory_save` has no "permanent" option, and `file_write` refuses MEMORY.md and the daily notes, which it may still read). So the daily files are the complete, append-only record, and whatever a consolidation does to MEMORY.md, it can be rebuilt from them.
 
 ### How Memories Get Saved
 
@@ -106,7 +106,7 @@ Daily files accumulate over time. Consolidation is a periodic process that disti
 
 **When it runs:**
 
-- Automatically, in the background after a reply, once a past day has notes that aren't consolidated yet — in practice after your first message of the next day you wrote in (days without notes cost nothing; after a few quiet days it catches up in one call). `consolidation_threshold` (default 1) raises the number of pending days to wait for. At most one consolidation runs at a time; failures are logged and retried after a later message.
+- Automatically, in the background after a reply, once a past day has notes that aren't consolidated yet — in practice after your first message of the next day you wrote in (days without notes cost nothing; after a few quiet days it catches up in one call). `consolidation_threshold` (default 1) raises the number of pending days to wait for. At most one consolidation runs at a time; a failure is logged and retried after a reply an hour or more later.
 - Manually, via the `memclaw consolidate` CLI command (which forces it regardless of count).
 
 Today's file is never consolidated: it is still being written to, and marking it done would skip everything saved later that day. It is picked up once the day is over.
@@ -115,7 +115,7 @@ Today's file is never consolidated: it is still being written to, and marking it
 
 1. Collects unconsolidated daily files from before today, oldest first, as whole files up to 80,000 characters (~20k tokens). Files that don't fit wait for the next run (a single file larger than the budget is sent truncated, so it can't block consolidation).
 2. Reads the current MEMORY.md.
-3. Sends them, with today's date and a list of the vault's other notes (name, size, first line), to the agent backend (a short-lived, tool-free call). With Claude it runs on its own model, Opus 5.5 at medium effort by default (`CLAUDE_CONSOLIDATION_MODEL` / `CLAUDE_CONSOLIDATION_EFFORT`), independent of the chat model. The prompt asks for the profile + index described above, and:
+3. Sends them, with today's date and a list of the vault's other notes (name, size, first line), to the agent backend (a short-lived, tool-free call). With Claude it runs on its own model, Opus 5.5 at medium effort by default (`CLAUDE_CONSOLIDATION_MODEL` / `CLAUDE_CONSOLIDATION_EFFORT`; another model gets no effort setting unless one is configured), independent of the chat model. The prompt asks for the profile + index described above, and:
    - details are referenced, never copied — written exactly as `→ memory/YYYY-MM-DD.md` (or `→ todos.md` for another note), pointing to the latest entry when a detail was updated; the one exception is a value that exists only in the current MEMORY.md with no note behind it, which is kept as is (never replaced by a placeholder);
    - only what the sources say; each fact stays with the right person;
    - later entries win, and an explicit correction ("ISPRAVKA", "correction") overrides what it corrects;

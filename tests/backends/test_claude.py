@@ -611,6 +611,19 @@ class TestResolveEffort:
         assert claude_backend._resolve_effort(cfg) is None
 
 
+class TestConsolidationEffort:
+    def test_other_model_without_effort_gets_none(self, claude_config):
+        cfg = claude_config(oauth="x")
+        cfg.claude_consolidation_model = "claude-haiku-4-5"
+        assert claude_backend._resolve_consolidation(cfg) == ("claude-haiku-4-5", None)
+
+    def test_configured_effort_is_used_on_any_model(self, claude_config):
+        cfg = claude_config(oauth="x")
+        cfg.claude_consolidation_model = "claude-sonnet-5-5"
+        cfg.claude_consolidation_effort = "high"
+        assert claude_backend._resolve_consolidation(cfg) == ("claude-sonnet-5-5", "high")
+
+
 class TestStatusRows:
     def test_configured_values_are_shown(self, claude_config):
         cfg = claude_config(api_key="k")
