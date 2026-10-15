@@ -89,9 +89,10 @@ def test_save_creates_daily_file(tmp_path: Path):
     assert "Hello world" in content
 
 
-def test_save_permanent(tmp_path: Path):
+def test_save_never_writes_memory_md(tmp_path: Path):
     store, cfg = _make_store(tmp_path)
-    path = store.save("Permanent fact", permanent=True)
-    assert path == cfg.memory_file
-    assert "Permanent fact" in path.read_text()
-    assert "Permanent fact" in cfg.daily_file().read_text()
+    before = cfg.memory_file.read_text()
+    path = store.save("Durable fact")
+    assert path == cfg.daily_file()
+    assert "Durable fact" in path.read_text()
+    assert cfg.memory_file.read_text() == before

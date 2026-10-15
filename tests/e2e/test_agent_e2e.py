@@ -46,13 +46,22 @@ async def test_save_then_recall_in_a_fresh_conversation(agent_vault):
         await agent.aclose()
 
 
-async def test_permanent_fact_goes_to_memory_md(agent_vault):
+async def test_durable_fact_reaches_memory_md_after_the_day(agent_vault):
+    """The agent only writes today's notes; the next day's consolidation
+    (default settings, not forced) puts the fact into MEMORY.md."""
     agent = await _agent(agent_vault)
     try:
+        before = agent_vault.memory_file.read_text()
         await agent.handle(
             "Save this permanently to your long-term memory: I am allergic to penicillin.",
             chat_id="1",
         )
+        assert agent_vault.memory_file.read_text() == before
+        assert "penicillin" in agent_vault.daily_file().read_text().lower()
+
+        # The day is over.
+        agent_vault.daily_file().rename(agent_vault.daily_file(days_ago(1)))
+        assert await agent._maybe_consolidate()
         assert "penicillin" in agent_vault.memory_file.read_text().lower()
     finally:
         await agent.aclose()
@@ -107,8 +116,8 @@ async def test_turn_survives_openai_outage(agent_vault):
 
 async def test_consolidation_with_real_llm(agent_vault):
     """Old daily files are distilled into MEMORY.md; today's file — still
-    being written to — is left for a later run, and a permanent memory
-    saved while consolidation runs is not overwritten."""
+    being written to — is left for a later run, and a line appended to
+    MEMORY.md by hand while consolidation runs is not overwritten."""
     write_daily(agent_vault, days_ago(9), [("10:00", "My sister Ana's birthday is March 3rd.")])
     write_daily(agent_vault, days_ago(8), [("10:00", "Hi.")])
     write_daily(agent_vault, days_ago(7), [("10:00", "I switched from coffee to green tea for good.")])
@@ -123,8 +132,9 @@ async def test_consolidation_with_real_llm(agent_vault):
 
     async def run_one_shot_with_concurrent_save(**kwargs):
         result = await original(**kwargs)
-        # The user saves a permanent memory while consolidation is running.
-        agent.store.save("Blood type: 0 negative.", permanent=True)
+        # The user appends to MEMORY.md by hand while consolidation is running.
+        with open(agent_vault.memory_file, "a") as f:
+            f.write("- Blood type: 0 negative.\n")
         return result
 
     agent.backend.run_one_shot = run_one_shot_with_concurrent_save

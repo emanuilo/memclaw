@@ -90,6 +90,10 @@ _CONTEXT_SNIPPET_CHARS = 500
 # Session key for the interactive terminal (no chat id).
 _CLI_SESSION_KEY = "cli"
 
+# Dated copies of MEMORY.md kept from before each consolidation.
+_HISTORY_DIR = ".history"
+_HISTORY_KEEP = 60
+
 # Daily-file text sent to one consolidation call (~20k tokens).
 _CONSOLIDATION_BUDGET_CHARS = 80000
 
@@ -249,9 +253,6 @@ class MemclawAgent:
         # session it just reset.
         self._generations: dict[str, int] = {}
         self._consolidation_task: asyncio.Task | None = None
-        # Bumped whenever consolidation rewrites MEMORY.md, so a turn can tell
-        # its own MEMORY.md writes from a rewrite it hasn't seen.
-        self._memory_rewrites = 0
         # The tool executor holds per-turn state (chat id, found images), so
         # turns run one at a time, even across chats.
         self._turn_lock = asyncio.Lock()
@@ -399,9 +400,9 @@ class MemclawAgent:
         for ref in refs.unconfirmed:
             logger.warning("Consolidation reference not confirmed by its note: {r}", r=ref)
 
-        # memory_save(permanent=true) may have appended to MEMORY.md while
-        # the backend was working: carry those entries over instead of
-        # overwriting them. Anything else (a manual edit) — try again later.
+        # Someone may have appended to MEMORY.md by hand while the backend
+        # was working: carry that over instead of overwriting it. Any other
+        # change (an edit) — try again later.
         current_memory = self.store.read_file(self.config.memory_file)
         if not current_memory.startswith(existing_memory):
             logger.warning("MEMORY.md changed during consolidation; will retry later")
@@ -409,10 +410,8 @@ class MemclawAgent:
         added_since = current_memory[len(existing_memory):]
 
         if existing_memory.strip():
-            backup = self.config.memory_file.with_name("MEMORY.md.bak")
-            backup.write_text(existing_memory)
+            self._save_history(existing_memory)
         self.config.memory_file.write_text(result_text.rstrip("\n") + "\n" + added_since)
-        self._memory_rewrites += 1
         self._write_consolidated_through(meta_path, new_consolidated_through)
 
         try:
@@ -427,6 +426,16 @@ class MemclawAgent:
             more=f", {remaining} left for the next run" if remaining else "",
         )
         return True
+
+    def _save_history(self, memory: str) -> None:
+        """Keep a dated copy of MEMORY.md as it was before a consolidation,
+        in a hidden directory (not indexed, not reachable by the file
+        tools), pruned to the last `_HISTORY_KEEP`."""
+        history = self.config.memory_dir / _HISTORY_DIR
+        history.mkdir(exist_ok=True)
+        (history / f"MEMORY-{datetime.now():%Y-%m-%d-%H%M%S}.md").write_text(memory)
+        for old in sorted(history.glob("MEMORY-*.md"))[:-_HISTORY_KEEP]:
+            old.unlink()
 
     def _other_notes_overview(self) -> str:
         """The vault's notes besides MEMORY.md and the daily files — name,
@@ -552,7 +561,6 @@ class MemclawAgent:
         self._tools.chat_id = chat_id
         key = self._session_key(chat_id)
         generation = self._generations.get(key, 0)
-        memory_rewrites = self._memory_rewrites
 
         agent_instructions = _load_agent_instructions(self.config)
         permanent_memory = _load_permanent_memory(self.config)
@@ -616,12 +624,11 @@ class MemclawAgent:
             )
 
         # The session has now seen these notes and these file versions. Its
-        # own writes during the turn (memory_save permanent=true,
-        # update_instructions) count as seen too, so they aren't sent back
-        # next turn; a consolidation rewrite during the turn doesn't.
+        # own AGENTS.md writes during the turn (update_instructions) count as
+        # seen too, so they aren't sent back next turn. It never writes
+        # MEMORY.md, so a change to it during the turn (a consolidation) is
+        # still unseen and goes into the next message.
         agents_hash = _hash(_load_agent_instructions(self.config))
-        if self._memory_rewrites == memory_rewrites:
-            memory_hash = _hash(_load_permanent_memory(self.config))
         pending = self._pending_notes.get(key)
         if pending:
             del pending[:len(notes)]

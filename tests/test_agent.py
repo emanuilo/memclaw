@@ -288,18 +288,16 @@ class TestSystemPromptAndContext:
         agent = _chat_agent(cfg, fake_backend)
 
         async def turn_that_saves(**kwargs):
-            # memory_save(permanent=true) / update_instructions mid-turn.
-            cfg.memory_file.write_text("## Key Facts\n- Old fact\n- Dog is Bruno")
+            # update_instructions mid-turn.
             cfg.agent_file.write_text("Be terse.")
             return TurnResult(text="saved", session_id="sess-1")
 
         agent.backend.run_turn = turn_that_saves
-        await agent.handle("my dog is Bruno")
+        await agent.handle("be terse")
         agent.backend.run_turn = FakeBackend.run_turn.__get__(fake_backend)
         await agent.handle("next")
 
         context = fake_backend.turn_calls[-1]["context"]
-        assert "Updated permanent memory" not in context
         assert "Updated AGENTS.md" not in context
         agent.close()
 
@@ -312,7 +310,6 @@ class TestSystemPromptAndContext:
 
         async def turn_racing_consolidation(**kwargs):
             cfg.memory_file.write_text("## Key Facts\n- Consolidated")
-            agent._memory_rewrites += 1
             return TurnResult(text="ok", session_id="sess-1")
 
         agent.backend.run_turn = turn_racing_consolidation
@@ -801,7 +798,8 @@ class TestConsolidationSafety:
         _daily(cfg, date(2025, 3, 1), "note")
 
         async def one_shot(**kwargs):
-            agent.store.save("Blood type 0 negative", permanent=True)
+            with open(cfg.memory_file, "a") as f:  # appended by hand meanwhile
+                f.write("- Blood type 0 negative\n")
             return "## Facts\n- consolidated"
 
         fake_backend.run_one_shot = one_shot
@@ -809,7 +807,8 @@ class TestConsolidationSafety:
         memory = cfg.memory_file.read_text()
         assert memory.startswith("## Facts\n- consolidated")
         assert "Blood type 0 negative" in memory
-        assert (cfg.memory_dir / "MEMORY.md.bak").read_text() == "# Personal Memory\n"
+        history = list((cfg.memory_dir / ".history").glob("MEMORY-*.md"))
+        assert [h.read_text() for h in history] == ["# Personal Memory\n"]
         agent.close()
 
     @pytest.mark.asyncio
@@ -932,16 +931,49 @@ class TestImageSearchPlatform:
         agent.close()
 
 
-class TestPermanentSavesAreLoggedDaily:
+class TestMemoryMdIsWrittenOnlyByConsolidation:
+    def test_memory_save_has_no_permanent_option(self):
+        from memclaw.tools import TOOL_DEFINITIONS
+
+        schema = next(t for t in TOOL_DEFINITIONS if t["name"] == "memory_save")["input_schema"]
+        assert "permanent" not in schema["properties"]
+
     @pytest.mark.asyncio
-    async def test_permanent_save_also_goes_to_the_daily_file(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+    async def test_a_permanent_flag_from_an_old_session_is_ignored(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         agent = _make_agent(cfg, fake_backend)
+        before = cfg.memory_file.read_text()
         out = await agent._tools.execute(
             "memory_save", {"content": "Daisy Disk serial ABC-123", "permanent": True},
         )
-        assert out.startswith("Memory saved to MEMORY.md")
-        assert "Daisy Disk serial ABC-123" in cfg.memory_file.read_text()
+        assert out.startswith(f"Memory saved to {cfg.daily_file().name}")
+        assert cfg.memory_file.read_text() == before
         assert "Daisy Disk serial ABC-123" in cfg.daily_file().read_text()
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_by_default_consolidation_runs_once_a_day_has_passed(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        from datetime import timedelta
+
+        fake_backend.one_shot_response = "# Personal Memory\n- x"
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date.today(), "today")
+        assert await agent._maybe_consolidate() is False  # today isn't over
+        _daily(cfg, date.today() - timedelta(days=1), "yesterday")
+        assert await agent._maybe_consolidate() is True
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_history_keeps_the_last_60(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        history = cfg.memory_dir / ".history"
+        history.mkdir()
+        for i in range(65):
+            (history / f"MEMORY-2025-01-01-{i:06d}.md").write_text(str(i))
+        agent = _make_agent(cfg, fake_backend)
+        agent._save_history("latest")
+        kept = sorted(history.glob("MEMORY-*.md"))
+        assert len(kept) == 60
+        assert kept[-1].read_text() == "latest"
+        assert not (history / "MEMORY-2025-01-01-000000.md").exists()
         agent.close()
 
     @pytest.mark.asyncio

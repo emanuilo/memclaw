@@ -269,7 +269,7 @@ A pluggable agent SDK drives the loop — Claude or Cursor, picked during setup 
 
 | Tool | What it does |
 |------|-------------|
-| `memory_save` | Writes a new entry to today's daily file (and MEMORY.md when permanent) |
+| `memory_save` | Writes a new entry to today's daily file (MEMORY.md is written only by consolidation) |
 | `memory_search` | Hybrid search across all indexed memories |
 | `image_save` | Generates an AI description of an image and stores it |
 | `image_search` | Retrieves previously stored images by description |
@@ -378,7 +378,7 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 ```
 ~/.memclaw/
 ├── MEMORY.md              # Permanent / curated memories
-├── MEMORY.md.bak          # MEMORY.md before the last consolidation
+├── .history/              # MEMORY.md before each consolidation (last 60)
 ├── AGENTS.md              # Agent instructions + user preferences
 ├── memclaw.db             # SQLite index (embeddings + FTS5)
 ├── sessions.json          # Conversation session per chat
@@ -397,7 +397,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **NumPy for vectors** — cosine similarity computed in-memory, no native extensions required
 - **Pluggable agent SDK** — Claude or Cursor drives the agentic loop that decides how to handle your input ([Agent Backend](#agent-backend))
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
-- **Auto-consolidation** — past daily files are periodically distilled into MEMORY.md — a profile plus references to the notes holding the details — in the background after a reply (the previous version is kept as `MEMORY.md.bak`)
+- **Auto-consolidation** — each finished day's notes are distilled into MEMORY.md — a profile plus references to the notes holding the details — in the background after your next reply; MEMORY.md has no other writer (the previous version is kept as `MEMORY.md.bak`)
 - **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/` and Memclaw's own files inside it (the database, `.env`, sessions, hidden dirs)
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
 

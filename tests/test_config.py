@@ -6,7 +6,7 @@ from memclaw.config import MemclawConfig
 
 def test_default_consolidation_threshold(tmp_path: Path):
     cfg = MemclawConfig(memory_dir=tmp_path / "m", openai_api_key="k", anthropic_api_key="k")
-    assert cfg.consolidation_threshold == 7
+    assert cfg.consolidation_threshold == 1
 
 
 def test_default_decay_half_life_days(tmp_path: Path):

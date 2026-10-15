@@ -19,18 +19,15 @@ from .store import MemoryStore
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "memory_save",
-        "description": "Save a new memory, thought, or note",
+        "description": (
+            "Save a new memory, thought, or note — durable facts and preferences "
+            "included — to today's notes. MEMORY.md (permanent memory) is "
+            "distilled from the notes automatically once a day."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The content to save"},
-                "permanent": {
-                    "type": "boolean",
-                    "description": (
-                        "If true, also save to MEMORY.md (permanent memory). "
-                        "Every memory is always logged in today's daily file too."
-                    ),
-                },
                 "entry_type": {
                     "type": "string",
                     "description": "Type of entry: note, image, link, voice",
@@ -335,17 +332,13 @@ class ToolExecutor:
 
     async def _memory_save(self, args: dict) -> str:
         content: str = args["content"]
-        permanent: bool = args.get("permanent", False)
         entry_type: str = args.get("entry_type", "note")
         tags = args.get("tags")
-        file_path = self.store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
+        # A "permanent" flag from an older session is ignored: MEMORY.md is
+        # written only by consolidation.
+        file_path = self.store.save(content, entry_type=entry_type, tags=tags)
         logger.info("  → memory_save result: saved to {file}", file=file_path.name)
-        note = await self._index(file_path)
-        if permanent:
-            # Also logged in today's daily file.
-            note = note or await self._index(self.config.daily_file())
-            return f"Memory saved to {file_path.name} and today's log" + note
-        return f"Memory saved to {file_path.name}" + note
+        return f"Memory saved to {file_path.name}" + await self._index(file_path)
 
     async def _index(self, path: Path) -> str:
         """Index a just-written file. The write already succeeded, so an

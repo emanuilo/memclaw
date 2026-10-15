@@ -52,8 +52,9 @@ class MemclawConfig:
     cursor_model: str = ""
     mcp_http_port: int = 17373
 
-    # Memory consolidation
-    consolidation_threshold: int = 7
+    # Memory consolidation: runs (after a reply) once this many past days
+    # have notes that aren't in MEMORY.md yet. 1 = after each day.
+    consolidation_threshold: int = 1
 
     # Telegram bot settings
     telegram_bot_token: str = ""

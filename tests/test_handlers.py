@@ -127,8 +127,9 @@ class TestAgentsFile:
 
     def test_mentions_permanent_memory(self, tmp_config):
         content = self._read_agents(tmp_config)
-        assert "permanent" in content.lower()
+        assert "MEMORY.md" in content
         assert "memory_save" in content
+        assert "permanent=true" not in content
 
     def test_mentions_not_saved_yet(self, tmp_config):
         content = self._read_agents(tmp_config)

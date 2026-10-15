@@ -54,7 +54,7 @@ The block stays in the session transcript, which is why it is kept small.
 
 ### Keeping AGENTS.md and MEMORY.md Current
 
-The session stores a hash of the AGENTS.md and MEMORY.md content it has seen (persisted in `sessions.json`). Before each message the files are hashed again; if either changed (an `update_instructions` call, a consolidation, a manual edit), its new content is included **once** in that message's context block, labelled as superseding the earlier version, and the stored hash is updated. The conversation continues without a reset. Changes the session makes itself during a turn (`memory_save` with `permanent=true`, `update_instructions`) count as seen and aren't sent back; a consolidation that rewrites MEMORY.md during a turn is.
+The session stores a hash of the AGENTS.md and MEMORY.md content it has seen (persisted in `sessions.json`). Before each message the files are hashed again; if either changed (an `update_instructions` call, a consolidation, a manual edit), its new content is included **once** in that message's context block, labelled as superseding the earlier version, and the stored hash is updated. The conversation continues without a reset. AGENTS.md changes the session makes itself during a turn (`update_instructions`) count as seen and aren't sent back. The session never writes MEMORY.md, so any change to it during a turn (a consolidation) is sent with the next message.
 
 Because Claude Code keeps a resumed session's original system prompt, the stored hashes always describe what the session has actually seen, including across restarts.
 
@@ -66,8 +66,8 @@ Long-term memory is everything that survives between sessions. It lives on disk 
 
 ```
 ~/.memclaw/
-├── MEMORY.md                  # Curated permanent knowledge base
-├── MEMORY.md.bak              # MEMORY.md before the last consolidation
+├── MEMORY.md                  # Profile + index, written only by consolidation
+├── .history/                  # MEMORY.md before each consolidation (last 60)
 ├── memclaw.db                 # SQLite: chunks, embeddings, FTS index, cache
 ├── meta.json                  # Consolidation tracking metadata
 ├── sessions.json              # Per-chat conversation session ids + hashes
@@ -88,9 +88,7 @@ Long-term memory is everything that survives between sessions. It lives on disk 
 - Lion8 prod login and SSH commands → memory/2026-05-12.md, memory/2026-06-13.md
 ```
 
-Details — credentials, document numbers, instructions, receipts — stay in the daily files and other notes, which are never deleted. MEMORY.md summarizes and points; it doesn't copy. It is populated by consolidation, and between consolidations `permanent=true` saves are appended to it as-is.
-
-A `permanent=true` save is also logged in today's daily file, so the daily files are the complete, append-only record: whatever a consolidation does to MEMORY.md, it can be rebuilt from them.
+Details — credentials, document numbers, instructions, receipts — stay in the daily files and other notes, which are never deleted. MEMORY.md summarizes and points; it doesn't copy. It has a single writer, consolidation: the agent never writes it directly (`memory_save` has no "permanent" option). So the daily files are the complete, append-only record, and whatever a consolidation does to MEMORY.md, it can be rebuilt from them.
 
 ### How Memories Get Saved
 
@@ -100,7 +98,7 @@ The agent — not the handler, not a pre-processing step — decides what to sav
 - **Rephrase it** if the verbatim text is messy but the information matters.
 - **Skip it** if it's trivial ("hey", "ok", "thanks").
 
-For durable facts like your name, preferences, or major decisions, the agent saves directly to MEMORY.md using `permanent=true`. Everything else goes to the daily file.
+Everything goes to today's daily file — durable facts like your name, preferences or major decisions included. They reach MEMORY.md at the next consolidation, after the day is over; until then they're in today's notes, indexed right away, so search (and the per-message context) finds them.
 
 ### Consolidation
 
@@ -108,7 +106,7 @@ Daily files accumulate over time. Consolidation is a periodic process that disti
 
 **When it runs:**
 
-- Automatically, in the background after each reply, if 7 or more past daily files haven't been consolidated yet. At most one consolidation runs at a time; failures are logged and retried after a later message.
+- Automatically, in the background after a reply, once a past day has notes that aren't consolidated yet — in practice after your first message of the next day you wrote in (days without notes cost nothing; after a few quiet days it catches up in one call). `consolidation_threshold` (default 1) raises the number of pending days to wait for. At most one consolidation runs at a time; failures are logged and retried after a later message.
 - Manually, via the `memclaw consolidate` CLI command (which forces it regardless of count).
 
 Today's file is never consolidated: it is still being written to, and marking it done would skip everything saved later that day. It is picked up once the day is over.
@@ -125,7 +123,7 @@ Today's file is never consolidated: it is still being written to, and marking it
    - left out entirely: expired one-offs (verification codes, past events, finished trips' bookings), links saved to read later (they stay searchable), instructions for the assistant (they belong in AGENTS.md), small talk.
 
    A wrapping ```` ``` ```` fence in the reply is stripped, and every reference is checked: one to a note that doesn't exist is dropped, one whose note shares no word with the line is logged as unconfirmed.
-4. Copies the previous MEMORY.md to `MEMORY.md.bak`, then overwrites MEMORY.md with the result. Entries appended while the backend was working (`memory_save` with `permanent=true`) are carried over below the result; if MEMORY.md was otherwise changed meanwhile (a manual edit), nothing is written and consolidation retries later.
+4. Saves a dated copy of the previous MEMORY.md in `.history/` (the last 60 are kept; the hidden directory isn't indexed or reachable by the file tools), then overwrites MEMORY.md with the result. Lines appended by hand while the backend was working are carried over below the result; if MEMORY.md was otherwise edited meanwhile, nothing is written and consolidation retries later.
 5. Records the date of the last file it included in `meta.json` so those files aren't processed again.
 
 The result aims for about 6,000 characters, with absolute dates, in the language MEMORY.md already uses (English when it starts empty).
@@ -268,7 +266,7 @@ All memory-related settings live in `MemclawConfig`:
 | `text_weight` | `0.3` | Weight for keyword search in hybrid merge |
 | `decay_half_life_days` | `30` | Days until a daily memory's score halves (0 = disabled) |
 | `mmr_lambda` | `0.7` | Relevance vs. diversity trade-off in MMR (1.0 = pure relevance) |
-| `consolidation_threshold` | `7` | Number of unconsolidated daily files before auto-consolidation |
+| `consolidation_threshold` | `1` | Past days with unconsolidated notes before auto-consolidation (1 = after each day) |
 | `claude_consolidation_model` | `claude-opus-5-5` | Claude model for consolidation (`CLAUDE_CONSOLIDATION_MODEL`) |
 | `claude_consolidation_effort` | `medium` | Effort for consolidation (`CLAUDE_CONSOLIDATION_EFFORT`) |
 
@@ -284,7 +282,7 @@ The end-to-end suite in `tests/e2e/` exercises the real stack — OpenAI embeddi
 MEMCLAW_E2E=1 pytest tests/e2e -v
 ```
 
-It covers retrieval (recall on a seeded vault, keyword search on natural-language questions and identifiers, index freshness after rewrites, what gets indexed, image scoping, file guardrails) and the agent (save then recall after `/new`, permanent facts, resuming after a restart, saved instructions, an OpenAI outage, consolidation with a concurrent save, the consolidation prompt's promises — details referenced not copied, every reference resolving, a value with no note behind it kept, corrections applied, facts kept with the right person, links, expired one-offs and assistant instructions left out — and the agent following a reference to answer with an exact value when search is down). `MEMCLAW_E2E_MODEL` picks the Claude model and `MEMCLAW_E2E_CONSOLIDATION_MODEL` the consolidation model (both default to `claude-haiku-5-5`; production consolidation uses Opus 5.5).
+It covers retrieval (recall on a seeded vault, keyword search on natural-language questions and identifiers, index freshness after rewrites, what gets indexed, image scoping, file guardrails) and the agent (save then recall after `/new`, a durable fact reaching MEMORY.md through the next day's consolidation, resuming after a restart, saved instructions, an OpenAI outage, consolidation with a concurrent save, the consolidation prompt's promises — details referenced not copied, every reference resolving, a value with no note behind it kept, corrections applied, facts kept with the right person, links, expired one-offs and assistant instructions left out — and the agent following a reference to answer with an exact value when search is down). `MEMCLAW_E2E_MODEL` picks the Claude model and `MEMCLAW_E2E_CONSOLIDATION_MODEL` the consolidation model (both default to `claude-haiku-5-5`; production consolidation uses Opus 5.5).
 
 ---
 
