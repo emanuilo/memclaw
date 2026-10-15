@@ -79,7 +79,16 @@ Long-term memory is everything that survives between sessions. It lives on disk 
 
 **Daily files** (`memory/YYYY-MM-DD.md`) are append-only logs. Every time the agent decides something is worth saving during a conversation, it appends a timestamped entry to today's file. Entries include the content, a type label (note, image, link, voice), and optional tags.
 
-**MEMORY.md** is the permanent knowledge base. It holds curated, structured facts about you — preferences, people, projects, decisions. It is populated either manually (when the agent saves with `permanent=true`) or automatically through consolidation.
+**MEMORY.md** is the overview of you: a holistic **profile** (who you are, the people and pets in your life, work and projects, health, finances in broad strokes, preferences, open threads) plus an **index** that points to the notes holding the details:
+
+```
+- Bekele (dog; also Izi, Beka) → memory/2026-04-18.md
+## Index
+### Credentials
+- Lion8 prod login and SSH commands → memory/2026-05-12.md, memory/2026-06-13.md
+```
+
+Details — credentials, document numbers, instructions, receipts — stay in the daily files and other notes, which are never deleted. MEMORY.md summarizes and points; it doesn't copy. It is populated by consolidation, and between consolidations `permanent=true` saves are appended to it as-is.
 
 A `permanent=true` save is also logged in today's daily file, so the daily files are the complete, append-only record: whatever a consolidation does to MEMORY.md, it can be rebuilt from them.
 
@@ -108,22 +117,22 @@ Today's file is never consolidated: it is still being written to, and marking it
 
 1. Collects unconsolidated daily files from before today, oldest first, as whole files up to 80,000 characters (~20k tokens). Files that don't fit wait for the next run (a single file larger than the budget is sent truncated, so it can't block consolidation).
 2. Reads the current MEMORY.md.
-3. Sends both, with today's date, to the agent backend (a short-lived, tool-free call). The prompt asks it to merge durable facts into MEMORY.md and, above all, to stay exact:
-   - saved values (credentials, keys, document and account numbers, addresses, codes) are copied character for character — never replaced by a placeholder like "see backup";
+3. Sends them, with today's date and a list of the vault's other notes (name, size, first line), to the agent backend (a short-lived, tool-free call). The prompt asks for the profile + index described above, and:
+   - details are referenced, never copied — written exactly as `→ memory/YYYY-MM-DD.md` (or `→ todos.md` for another note), pointing to the latest entry when a detail was updated; the one exception is a value that exists only in the current MEMORY.md with no note behind it, which is kept as is (never replaced by a placeholder);
    - only what the sources say; each fact stays with the right person;
    - later entries win, and an explicit correction ("ISPRAVKA", "correction") overrides what it corrects;
-   - existing facts stay unless updated or expired, never dropped to save space;
-   - left out: expired one-offs (verification codes, past events, finished trips' bookings), links saved to read later (they stay searchable in the daily files), receipt details, small talk.
+   - existing facts and references stay unless updated or expired;
+   - left out entirely: expired one-offs (verification codes, past events, finished trips' bookings), links saved to read later (they stay searchable), instructions for the assistant (they belong in AGENTS.md), small talk.
 
-   A wrapping ```` ``` ```` fence in the reply is stripped.
+   A wrapping ```` ``` ```` fence in the reply is stripped, and every reference is checked: one to a note that doesn't exist is dropped, one whose note shares no word with the line is logged as unconfirmed.
 4. Copies the previous MEMORY.md to `MEMORY.md.bak`, then overwrites MEMORY.md with the result. Entries appended while the backend was working (`memory_save` with `permanent=true`) are carried over below the result; if MEMORY.md was otherwise changed meanwhile (a manual edit), nothing is written and consolidation retries later.
 5. Records the date of the last file it included in `meta.json` so those files aren't processed again.
 
-The result is a MEMORY.md organized into sections like Identity, People, Work, Projects, Health, Preferences, How-tos and Credentials — short bullets with absolute dates, aiming for under ~10,000 characters, in the language MEMORY.md already uses (English when it starts empty).
+The result aims for about 6,000 characters, with absolute dates, in the language MEMORY.md already uses (English when it starts empty).
 
 ### Permanent Memory in the Prompt
 
-MEMORY.md goes into the session's system prompt in full (consolidation keeps it under ~5,000 characters; anything past 20,000 characters is cut with a note pointing the agent to `memory_search`). Since the system prompt is cached, carrying the whole file costs little. When consolidation rewrites MEMORY.md mid-conversation, the new version reaches the session through the context block as described above.
+MEMORY.md goes into the session's system prompt in full (consolidation aims for ~6,000 characters; anything past 20,000 characters is cut with a note pointing the agent to `memory_search`). The system prompt tells the agent that `→ file` lines are references: when you need a detail — an exact value, a number, instructions — it opens the note with `file_read` and answers from it rather than from the summary. Secrets and document numbers therefore aren't sent with every message, only when asked for. Since the system prompt is cached, carrying the whole file costs little. When consolidation rewrites MEMORY.md mid-conversation, the new version reaches the session through the context block as described above.
 
 ---
 
@@ -273,7 +282,7 @@ The end-to-end suite in `tests/e2e/` exercises the real stack — OpenAI embeddi
 MEMCLAW_E2E=1 pytest tests/e2e -v
 ```
 
-It covers retrieval (recall on a seeded vault, keyword search on natural-language questions and identifiers, index freshness after rewrites, what gets indexed, image scoping, file guardrails) and the agent (save then recall after `/new`, permanent facts, resuming after a restart, saved instructions, an OpenAI outage, consolidation with a concurrent save, and the consolidation prompt's promises: exact values kept, corrections applied, facts kept with the right person, links and expired one-offs left out). `MEMCLAW_E2E_MODEL` picks the Claude model (default `claude-haiku-5-5`).
+It covers retrieval (recall on a seeded vault, keyword search on natural-language questions and identifiers, index freshness after rewrites, what gets indexed, image scoping, file guardrails) and the agent (save then recall after `/new`, permanent facts, resuming after a restart, saved instructions, an OpenAI outage, consolidation with a concurrent save, the consolidation prompt's promises — details referenced not copied, every reference resolving, a value with no note behind it kept, corrections applied, facts kept with the right person, links, expired one-offs and assistant instructions left out — and the agent following a reference to answer with an exact value when search is down). `MEMCLAW_E2E_MODEL` picks the Claude model (default `claude-haiku-5-5`).
 
 ---
 

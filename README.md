@@ -249,7 +249,7 @@ All memories are plain Markdown — human-readable, editable, and git-friendly.
 
 | File | Purpose |
 |------|---------|
-| `~/.memclaw/MEMORY.md` | Curated long-term facts and preferences |
+| `~/.memclaw/MEMORY.md` | Overview of you — a profile plus an index pointing to the notes with the details |
 | `~/.memclaw/AGENTS.md` | Customizable agent instructions and user preferences |
 | `~/.memclaw/memory/YYYY-MM-DD.md` | Timestamped daily entries |
 | `~/.memclaw/memclaw.db` | SQLite index (vector embeddings + FTS5) |
@@ -395,7 +395,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **NumPy for vectors** — cosine similarity computed in-memory, no native extensions required
 - **Pluggable agent SDK** — Claude or Cursor drives the agentic loop that decides how to handle your input ([Agent Backend](#agent-backend))
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
-- **Auto-consolidation** — past daily files are periodically distilled into MEMORY.md, in the background after a reply (the previous version is kept as `MEMORY.md.bak`)
+- **Auto-consolidation** — past daily files are periodically distilled into MEMORY.md — a profile plus references to the notes holding the details — in the background after a reply (the previous version is kept as `MEMORY.md.bak`)
 - **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/` and Memclaw's own files inside it (the database, `.env`, sessions, hidden dirs)
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
 

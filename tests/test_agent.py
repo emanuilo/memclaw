@@ -952,3 +952,35 @@ class TestPermanentSavesAreLoggedDaily:
         await agent._maybe_consolidate(force=True)
         assert f"Today's date: {date.today().isoformat()}" in fake_backend.one_shot_calls[0]["user"]
         agent.close()
+
+
+class TestConsolidationReferences:
+    @pytest.mark.asyncio
+    async def test_other_notes_are_listed_for_the_index(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        fake_backend.one_shot_response = "# Personal Memory"
+        agent = _make_agent(cfg, fake_backend)
+        (cfg.memory_dir / "todos.md").write_text("# Todos\n- renew passport")
+        _daily(cfg, date(2025, 3, 1), "note")
+        await agent._maybe_consolidate(force=True)
+        user_msg = fake_backend.one_shot_calls[0]["user"]
+        assert "## Other Notes" in user_msg
+        assert "- todos.md (" in user_msg and "Todos" in user_msg
+        assert "AGENTS.md" not in user_msg.split("## Other Notes")[1]
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_references_to_missing_notes_are_dropped(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        fake_backend.one_shot_response = (
+            "# Personal Memory\n\n## Index\n"
+            "- Lion8 login → memory/2025-03-01.md, memory/2024-01-01.md\n"
+        )
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date(2025, 3, 1), "Lion8 login: admin")
+        await agent._maybe_consolidate(force=True)
+        assert "- Lion8 login → memory/2025-03-01.md\n" in cfg.memory_file.read_text()
+        agent.close()
+
+    def test_system_prompt_explains_references(self):
+        from memclaw.agent import _SYSTEM_PROMPT_TEMPLATE
+
+        assert "file_read" in _SYSTEM_PROMPT_TEMPLATE and "→ memory/" in _SYSTEM_PROMPT_TEMPLATE
