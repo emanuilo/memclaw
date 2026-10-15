@@ -269,7 +269,7 @@ A pluggable agent SDK drives the loop — Claude or Cursor, picked during setup 
 
 | Tool | What it does |
 |------|-------------|
-| `memory_save` | Writes a new entry to today's daily file or MEMORY.md |
+| `memory_save` | Writes a new entry to today's daily file (and MEMORY.md when permanent) |
 | `memory_search` | Hybrid search across all indexed memories |
 | `image_save` | Generates an AI description of an image and stores it |
 | `image_search` | Retrieves previously stored images by description |

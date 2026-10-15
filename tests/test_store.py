@@ -94,3 +94,4 @@ def test_save_permanent(tmp_path: Path):
     path = store.save("Permanent fact", permanent=True)
     assert path == cfg.memory_file
     assert "Permanent fact" in path.read_text()
+    assert "Permanent fact" in cfg.daily_file().read_text()

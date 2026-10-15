@@ -353,7 +353,7 @@ def _run_slack(config: MemclawConfig) -> None:
 
 @cli.command()
 @click.argument("content")
-@click.option("--permanent", is_flag=True, help="Save to MEMORY.md instead of today's daily file")
+@click.option("--permanent", is_flag=True, help="Also save to MEMORY.md (always logged in today's daily file)")
 @click.pass_context
 def save(ctx, content, permanent):
     """Save a memory directly (no agent needed)."""
@@ -362,7 +362,13 @@ def save(ctx, content, permanent):
     index = MemoryIndex(config)
 
     file_path = store.save(content, permanent=permanent)
-    asyncio.run(index.index_file(file_path))
+
+    async def _index():
+        await index.index_file(file_path)
+        if permanent:
+            await index.index_file(config.daily_file())
+
+    asyncio.run(_index())
     index.close()
 
     console.print(f"[green]✓[/green] Memory saved to [bold]{file_path.name}[/bold]")

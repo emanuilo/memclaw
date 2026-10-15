@@ -26,7 +26,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "content": {"type": "string", "description": "The content to save"},
                 "permanent": {
                     "type": "boolean",
-                    "description": "If true, save to MEMORY.md instead of daily file",
+                    "description": (
+                        "If true, also save to MEMORY.md (permanent memory). "
+                        "Every memory is always logged in today's daily file too."
+                    ),
                 },
                 "entry_type": {
                     "type": "string",
@@ -337,7 +340,12 @@ class ToolExecutor:
         tags = args.get("tags")
         file_path = self.store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
         logger.info("  → memory_save result: saved to {file}", file=file_path.name)
-        return f"Memory saved to {file_path.name}" + await self._index(file_path)
+        note = await self._index(file_path)
+        if permanent:
+            # Also logged in today's daily file.
+            note = note or await self._index(self.config.daily_file())
+            return f"Memory saved to {file_path.name} and today's log" + note
+        return f"Memory saved to {file_path.name}" + note
 
     async def _index(self, path: Path) -> str:
         """Index a just-written file. The write already succeeded, so an

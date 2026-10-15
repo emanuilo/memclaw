@@ -143,3 +143,40 @@ async def test_consolidation_with_real_llm(agent_vault):
     meta = json.loads((agent_vault.memory_dir / "meta.json").read_text())
     assert meta["consolidated_through"] == days_ago(3).isoformat()
     assert agent.store.list_unconsolidated_files(days_ago(3)) == [agent_vault.daily_file()]
+
+
+async def test_consolidation_prompt_quality(agent_vault):
+    """What the consolidation prompt promises, checked against a real model:
+    exact values survive, corrections win, facts stay with the right person,
+    links and expired one-offs are left out."""
+    agent_vault.memory_file.write_text(
+        "# Personal Memory\n\n## Credentials\n- Daisy Disk serial: WM4P-E4ED-ZXT6-YKJ8\n"
+    )
+    write_daily(agent_vault, days_ago(30), [
+        ("09:00", "Bekele is my cat; feed her two spoons of kibble in the evening."),
+        ("10:00", "Login verification code: 719823693"),
+    ])
+    write_daily(agent_vault, days_ago(29), [
+        ("11:00", "ISPRAVKA: Bekele is a DOG, not a cat."),
+        ("12:00", "HERE API key: -6ANtobEtBwi4s3mKHlqSPbM1VSbXlQdXkAo7tXNQoU"),
+    ])
+    write_daily(agent_vault, days_ago(20), [
+        ("13:00", "Poster Karolina made for my 31st birthday (01.06.2026). I was born 01.06.1995."),
+        ("14:00", "Karolina's passport: born 17.01.1995."),
+        ("15:00", "Link: https://example.com/rag-fails — article about why RAG fails in production"),
+    ])
+
+    agent = MemclawAgent(agent_vault)
+    try:
+        assert await agent._maybe_consolidate(force=True)
+    finally:
+        await agent.aclose()
+
+    memory = agent_vault.memory_file.read_text()
+    assert "WM4P-E4ED-ZXT6-YKJ8" in memory
+    assert "-6ANtobEtBwi4s3mKHlqSPbM1VSbXlQdXkAo7tXNQoU" in memory
+    assert "dog" in memory.lower()
+    assert "719823693" not in memory
+    assert "example.com/rag-fails" not in memory
+    karolina = [line for line in memory.splitlines() if "Karolina" in line]
+    assert not any("01.06.1995" in line or "1995-06-01" in line for line in karolina), karolina

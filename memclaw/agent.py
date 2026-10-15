@@ -83,8 +83,8 @@ _CONTEXT_SNIPPET_CHARS = 500
 # Session key for the interactive terminal (no chat id).
 _CLI_SESSION_KEY = "cli"
 
-# Daily-file text sent to one consolidation call.
-_CONSOLIDATION_BUDGET_CHARS = 30000
+# Daily-file text sent to one consolidation call (~20k tokens).
+_CONSOLIDATION_BUDGET_CHARS = 80000
 
 # A reply wrapped in a ```markdown fence despite the instructions.
 _FENCED_RE = re.compile(r"^```[\w-]*\n(.*?)\n?```$", re.DOTALL)
@@ -128,36 +128,59 @@ def instructions_fingerprint(backend_name: str) -> str:
 
 
 _CONSOLIDATION_PROMPT = """\
-You are a memory consolidation assistant. Your job is to distill daily memory \
-logs into a curated, permanent knowledge base.
+You maintain MEMORY.md, the user's permanent memory. It is loaded in full \
+into the assistant's system prompt in every conversation, so it holds what \
+the assistant should know about the user at a glance — and it must be exact.
 
-You will receive:
-1. The content of several daily memory files (chronological notes, thoughts, \
-saved links, voice transcriptions, etc.)
-2. The current content of MEMORY.md (the permanent memory file), which may be \
-empty if this is the first consolidation.
+You will receive today's date, the user's daily memory files (timestamped \
+notes, image descriptions, links and voice transcriptions, oldest first) and \
+the current MEMORY.md, which may be empty. Write the complete new MEMORY.md.
 
-Your task:
-- Extract durable facts, preferences, decisions, and important events from the \
-daily files.
-- Ignore transient entries: one-off reminders that have passed, trivial \
-greetings, temporary notes, etc.
-- Merge the extracted information with the existing MEMORY.md content. Update \
-existing entries if new information supersedes them. Remove outdated entries.
-- Output the complete updated MEMORY.md content in structured markdown with \
-sections such as:
-  ## Preferences
-  ## Projects
-  ## People
-  ## Key Facts
-  ## Decisions
-  ## Important Events
-- Only include sections that have content. You may add other sections if \
-appropriate.
-- Place the most important and frequently referenced information at the top.
-- Keep the output concise — target under 5,000 characters.
-- Output ONLY the markdown content for MEMORY.md. Do not include any \
-explanation or preamble.
+Keep, merged with the current MEMORY.md:
+- Durable facts about the user and the people, pets, places and things in \
+their life: identity and documents, family and relationships, work, projects, \
+health, home, vehicles, routines, preferences, recurring arrangements.
+- Open decisions, plans and goals, and instructions or how-tos the user saved \
+to use again (care instructions, recipes, commands).
+- Values the user saved to look up later: credentials, API keys, license \
+keys, account, document and phone numbers, addresses, codes. Copy each value \
+exactly, character for character. Never replace a value with a placeholder \
+or a pointer such as "see backup" or "unchanged" — if it is worth listing, \
+list the value.
+- For things that change (balances, weight, who has paid what), the latest \
+value with its date ("as of 2026-09-27").
+
+Leave out:
+- Moments that have passed: one-off verification codes, past events and \
+deadlines, bookings for finished trips, statuses a later entry superseded.
+- Links, articles and posts saved to read later — they stay searchable in \
+the daily files. Keep one only if it is about the user's own work.
+- Receipt details, unless they record something the user may need again \
+(a warranty, a ticket, a large purchase).
+- Small talk.
+
+Accuracy:
+- Use only what the sources say; never guess or fill gaps.
+- Keep every fact with the right person: one person's birthday, document or \
+preference must never end up under someone else.
+- When entries conflict, the later one wins, and an explicit correction \
+("ISPRAVKA", "correction", "actually") always overrides what it corrects.
+- A fact in the current MEMORY.md stays unless a daily entry updates it or it \
+has clearly expired. Never drop a fact just to save space.
+
+Format:
+- Markdown starting with "# Personal Memory", then ## sections such as \
+Identity, People, Work, Projects, Health, Home, Finances, Preferences, Pets, \
+Vehicles, How-tos, Credentials — only those with content; add others if \
+they fit better.
+- Short bullets, absolute dates (YYYY-MM-DD), the most important first.
+- One language: the one the current MEMORY.md is written in, or English if \
+it is empty. Keep names, places, quotes and exact values as written.
+- Fold any loose "## HH:MM - Note" entries in the current MEMORY.md into the \
+right sections.
+- Aim for under 10,000 characters; exact values and durable facts come \
+before brevity.
+- Output only the MEMORY.md content: no preamble, no code fences.
 """
 
 
@@ -330,7 +353,9 @@ class MemclawAgent:
             return False
 
         existing_memory = self.store.read_file(self.config.memory_file)
-        user_message = "## Daily Memory Files\n\n" + daily_text
+        user_message = (
+            f"Today's date: {today.isoformat()}\n\n## Daily Memory Files\n\n" + daily_text
+        )
         if existing_memory.strip():
             user_message += "\n\n## Current MEMORY.md\n\n" + existing_memory
 

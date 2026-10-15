@@ -513,22 +513,24 @@ class TestConsolidation:
         agent.close()
 
     @pytest.mark.asyncio
-    async def test_content_limit_30000_chars(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        """Content gathering should stop at 30000 chars."""
+    async def test_content_limit(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        """Content gathering should stop at the consolidation budget."""
+        from memclaw.agent import _CONSOLIDATION_BUDGET_CHARS as budget
+
         fake_backend.one_shot_response = "## Consolidated"
         agent = _make_agent(cfg, fake_backend)
 
         for i in range(1, 6):
             d = date(2025, 3, i)
             path = cfg.memory_subdir / f"{d.isoformat()}.md"
-            path.write_text("x" * 10000)
+            path.write_text("x" * (budget // 3))
 
         agent.index.index_file = AsyncMock()
 
         await agent._maybe_consolidate(force=True)
 
         user_msg = fake_backend.one_shot_calls[-1]["user"]
-        assert len(user_msg) < 35000
+        assert len(user_msg) < budget + 5000
 
         agent.close()
 
@@ -767,8 +769,10 @@ class TestConsolidationSafety:
     async def test_files_past_the_budget_stay_unconsolidated(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         fake_backend.one_shot_response = "## Facts\n- x"
         agent = _make_agent(cfg, fake_backend)
+        from memclaw.agent import _CONSOLIDATION_BUDGET_CHARS as budget
+
         for day in range(1, 6):
-            _daily(cfg, date(2025, 3, day), f"day {day} " + "x" * 10000)
+            _daily(cfg, date(2025, 3, day), f"day {day} " + "x" * (budget // 3))
 
         assert await agent._maybe_consolidate(force=True)
         user_msg = fake_backend.one_shot_calls[0]["user"]
@@ -782,9 +786,11 @@ class TestConsolidationSafety:
 
     @pytest.mark.asyncio
     async def test_single_oversized_file_is_truncated_not_stuck(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        from memclaw.agent import _CONSOLIDATION_BUDGET_CHARS as budget
+
         fake_backend.one_shot_response = "## Facts\n- x"
         agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date(2025, 3, 1), "y" * 50000)
+        _daily(cfg, date(2025, 3, 1), "y" * (budget + 20000))
         assert await agent._maybe_consolidate(force=True)
         assert _consolidated_through(cfg) == "2025-03-01"
         agent.close()
@@ -923,4 +929,26 @@ class TestImageSearchPlatform:
         await agent.index.store_platform_image("telegram", "tg-1", "sprint planning whiteboard")
         await agent._tools.execute("image_search", {"query": "sprint planning whiteboard"})
         assert [img["media_ref"] for img in agent._found_images] == ["tg-1"]
+        agent.close()
+
+
+class TestPermanentSavesAreLoggedDaily:
+    @pytest.mark.asyncio
+    async def test_permanent_save_also_goes_to_the_daily_file(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        agent = _make_agent(cfg, fake_backend)
+        out = await agent._tools.execute(
+            "memory_save", {"content": "Daisy Disk serial ABC-123", "permanent": True},
+        )
+        assert out.startswith("Memory saved to MEMORY.md")
+        assert "Daisy Disk serial ABC-123" in cfg.memory_file.read_text()
+        assert "Daisy Disk serial ABC-123" in cfg.daily_file().read_text()
+        agent.close()
+
+    @pytest.mark.asyncio
+    async def test_consolidation_is_told_todays_date(self, cfg: MemclawConfig, fake_backend: FakeBackend):
+        fake_backend.one_shot_response = "# Personal Memory"
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date(2025, 3, 1), "note")
+        await agent._maybe_consolidate(force=True)
+        assert f"Today's date: {date.today().isoformat()}" in fake_backend.one_shot_calls[0]["user"]
         agent.close()
