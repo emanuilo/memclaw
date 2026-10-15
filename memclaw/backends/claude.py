@@ -45,6 +45,10 @@ if TYPE_CHECKING:
 
 _DEFAULT_MODEL = "claude-sonnet-5-5"
 
+# Memory consolidation: rare and one-shot, so a stronger model is worth it.
+_DEFAULT_CONSOLIDATION_MODEL = "claude-opus-5-5"
+_DEFAULT_CONSOLIDATION_EFFORT = "medium"
+
 # Used when CLAUDE_EFFORT is unset and the default model runs, and
 # preselected in the wizard for any model that supports effort at all.
 _DEFAULT_EFFORT = "medium"
@@ -122,6 +126,17 @@ def _resolve_effort(config: "MemclawConfig") -> str | None:
     if effort in SDK_EFFORT_LEVELS:
         return effort
     return _DEFAULT_EFFORT if _resolve_model(config) == _DEFAULT_MODEL else None
+
+
+def _resolve_consolidation(config: "MemclawConfig") -> tuple[str, str | None]:
+    """(model, effort) for consolidation: CLAUDE_CONSOLIDATION_MODEL /
+    CLAUDE_CONSOLIDATION_EFFORT, else Opus 5.5 at medium. An unknown effort
+    level counts as unset, as in `_resolve_effort`."""
+    model = (config.claude_consolidation_model or "").strip() or _DEFAULT_CONSOLIDATION_MODEL
+    effort = (config.claude_consolidation_effort or "").strip().lower()
+    if effort not in SDK_EFFORT_LEVELS:
+        effort = _DEFAULT_CONSOLIDATION_EFFORT
+    return model, effort
 
 
 def _fit_effort(levels: list[str], preferred: str) -> str | None:
@@ -290,9 +305,11 @@ class ClaudeAgentBackend:
 
     @classmethod
     def status_rows(cls, config: "MemclawConfig") -> list[tuple[str, str]]:
+        consolidation_model, consolidation_effort = _resolve_consolidation(config)
         return [
             ("Model", _resolve_model(config)),
             ("Effort", _resolve_effort(config) or "default"),
+            ("Consolidation", f"{consolidation_model} ({consolidation_effort})"),
         ]
 
     @classmethod
@@ -640,10 +657,12 @@ class ClaudeAgentBackend:
         system_prompt: str,
         user_message: str,
     ) -> str:
+        # Only memory consolidation uses one-shot calls.
+        model, effort = _resolve_consolidation(self.config)
         options = ClaudeAgentOptions(
             env=self._env,
-            model=self._model,
-            effort=self._effort,
+            model=model,
+            effort=effort,
             system_prompt=system_prompt,
             setting_sources=[],
             strict_mcp_config=True,

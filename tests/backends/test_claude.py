@@ -618,19 +618,24 @@ class TestStatusRows:
         cfg.claude_effort = "max"
         assert ClaudeAgentBackend.status_rows(cfg) == [
             ("Model", "claude-opus-5"), ("Effort", "max"),
+            ("Consolidation", "claude-opus-5-5 (medium)"),
         ]
 
     def test_defaults_are_shown_when_unset(self, claude_config):
         rows = ClaudeAgentBackend.status_rows(claude_config(api_key="k"))
-        assert rows == [("Model", "claude-sonnet-5-5"), ("Effort", "medium")]
+        assert rows == [
+            ("Model", "claude-sonnet-5-5"), ("Effort", "medium"),
+            ("Consolidation", "claude-opus-5-5 (medium)"),
+        ]
 
 
 class TestOptionsCarryModelAndEffort:
     @pytest.mark.asyncio
-    async def test_configured_values_reach_the_sdk(self, claude_config):
+    async def test_configured_consolidation_values_reach_the_sdk(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_model = "claude-opus-5"
-        cfg.claude_effort = "max"
+        cfg.claude_model = "claude-haiku-4-5"
+        cfg.claude_consolidation_model = "claude-opus-5"
+        cfg.claude_consolidation_effort = "max"
         backend = ClaudeAgentBackend(cfg)
 
         ctx_factory, _client = _mock_sdk_client("ok")
@@ -647,8 +652,11 @@ class TestOptionsCarryModelAndEffort:
         assert seen["options"].effort == "max"
 
     @pytest.mark.asyncio
-    async def test_defaults_reach_the_sdk_when_nothing_configured(self, claude_config):
-        backend = ClaudeAgentBackend(claude_config(oauth="x"))
+    async def test_consolidation_defaults_to_opus_medium(self, claude_config):
+        cfg = claude_config(oauth="x")
+        cfg.claude_model = "claude-sonnet-5-5"
+        cfg.claude_effort = "low"
+        backend = ClaudeAgentBackend(cfg)
 
         ctx_factory, _client = _mock_sdk_client("ok")
         seen = {}
@@ -660,7 +668,7 @@ class TestOptionsCarryModelAndEffort:
         with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=_capture):
             await backend.run_one_shot(system_prompt="s", user_message="u")
 
-        assert seen["options"].model == "claude-sonnet-5-5"
+        assert seen["options"].model == "claude-opus-5-5"
         assert seen["options"].effort == "medium"
 
     @pytest.mark.asyncio

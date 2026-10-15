@@ -359,6 +359,8 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 | `ANTHROPIC_API_KEY` | One of these two | Anthropic API key (`sk-ant-…`), pay-as-you-go |
 | `CLAUDE_MODEL` | Optional | Claude model to run (defaults to `claude-sonnet-5-5`; also set by `/model`) |
 | `CLAUDE_EFFORT` | Optional | Effort level: `low`, `medium`, `high`, `xhigh`, or `max` (defaults to `medium` on the default model, otherwise the model decides; also set by `/effort`) |
+| `CLAUDE_CONSOLIDATION_MODEL` | Optional | Claude model for memory consolidation (defaults to `claude-opus-5-5`) |
+| `CLAUDE_CONSOLIDATION_EFFORT` | Optional | Effort for consolidation (defaults to `medium`) |
 | `AGENT_BACKEND` | Optional | Agent SDK to use (defaults to `claude`; set to `cursor` for Cursor SDK) |
 | `MEMCLAW_PLATFORM` | Optional | Front-end the bare `memclaw` launches: `telegram`, `whatsapp`, `slack`, or `terminal` (defaults to `terminal`) |
 | `CURSOR_API_KEY` | For Cursor backend | Cursor API key from Dashboard → Integrations |

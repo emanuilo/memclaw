@@ -67,7 +67,8 @@ def isolate_claude_env(monkeypatch):
     own CLAUDE_MODEL stand in for the built-in default.
     """
     for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY",
-                 "ANTHROPIC_AUTH_TOKEN", "CLAUDE_MODEL", "CLAUDE_EFFORT"):
+                 "ANTHROPIC_AUTH_TOKEN", "CLAUDE_MODEL", "CLAUDE_EFFORT",
+                 "CLAUDE_CONSOLIDATION_MODEL", "CLAUDE_CONSOLIDATION_EFFORT"):
         monkeypatch.delenv(name, raising=False)
 
 

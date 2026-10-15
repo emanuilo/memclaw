@@ -8,7 +8,8 @@ own ~/.memclaw is never touched. They are skipped unless MEMCLAW_E2E=1:
 
 Keys come from the environment, a ./.env or ~/.memclaw/.env (the same
 places memclaw itself reads). MEMCLAW_E2E_MODEL picks the Claude model for
-the agent tests (defaults to claude-haiku-5-5 to keep runs cheap).
+the agent tests and MEMCLAW_E2E_CONSOLIDATION_MODEL the one for
+consolidation (both default to claude-haiku-5-5 to keep runs cheap).
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from memclaw.config import MemclawConfig
 
 E2E_ENABLED = os.environ.get("MEMCLAW_E2E") == "1"
 E2E_MODEL = os.environ.get("MEMCLAW_E2E_MODEL", "claude-haiku-5-5")
+E2E_CONSOLIDATION_MODEL = os.environ.get("MEMCLAW_E2E_CONSOLIDATION_MODEL", E2E_MODEL)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -52,11 +54,13 @@ def agent_vault(tmp_path: Path, monkeypatch) -> MemclawConfig:
     _require("OPENAI_API_KEY")
     if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")):
         pytest.skip("missing ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN")
-    monkeypatch.delenv("CLAUDE_EFFORT", raising=False)
+    for name in ("CLAUDE_EFFORT", "CLAUDE_CONSOLIDATION_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
     return MemclawConfig(
         memory_dir=tmp_path / "vault",
         agent_backend="claude",
         claude_model=E2E_MODEL,
+        claude_consolidation_model=E2E_CONSOLIDATION_MODEL,
     )
 
 

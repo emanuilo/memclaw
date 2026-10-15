@@ -117,7 +117,7 @@ Today's file is never consolidated: it is still being written to, and marking it
 
 1. Collects unconsolidated daily files from before today, oldest first, as whole files up to 80,000 characters (~20k tokens). Files that don't fit wait for the next run (a single file larger than the budget is sent truncated, so it can't block consolidation).
 2. Reads the current MEMORY.md.
-3. Sends them, with today's date and a list of the vault's other notes (name, size, first line), to the agent backend (a short-lived, tool-free call). The prompt asks for the profile + index described above, and:
+3. Sends them, with today's date and a list of the vault's other notes (name, size, first line), to the agent backend (a short-lived, tool-free call). With Claude it runs on its own model, Opus 5.5 at medium effort by default (`CLAUDE_CONSOLIDATION_MODEL` / `CLAUDE_CONSOLIDATION_EFFORT`), independent of the chat model. The prompt asks for the profile + index described above, and:
    - details are referenced, never copied — written exactly as `→ memory/YYYY-MM-DD.md` (or `→ todos.md` for another note), pointing to the latest entry when a detail was updated; the one exception is a value that exists only in the current MEMORY.md with no note behind it, which is kept as is (never replaced by a placeholder);
    - only what the sources say; each fact stays with the right person;
    - later entries win, and an explicit correction ("ISPRAVKA", "correction") overrides what it corrects;
@@ -269,6 +269,8 @@ All memory-related settings live in `MemclawConfig`:
 | `decay_half_life_days` | `30` | Days until a daily memory's score halves (0 = disabled) |
 | `mmr_lambda` | `0.7` | Relevance vs. diversity trade-off in MMR (1.0 = pure relevance) |
 | `consolidation_threshold` | `7` | Number of unconsolidated daily files before auto-consolidation |
+| `claude_consolidation_model` | `claude-opus-5-5` | Claude model for consolidation (`CLAUDE_CONSOLIDATION_MODEL`) |
+| `claude_consolidation_effort` | `medium` | Effort for consolidation (`CLAUDE_CONSOLIDATION_EFFORT`) |
 
 ---
 
@@ -282,7 +284,7 @@ The end-to-end suite in `tests/e2e/` exercises the real stack — OpenAI embeddi
 MEMCLAW_E2E=1 pytest tests/e2e -v
 ```
 
-It covers retrieval (recall on a seeded vault, keyword search on natural-language questions and identifiers, index freshness after rewrites, what gets indexed, image scoping, file guardrails) and the agent (save then recall after `/new`, permanent facts, resuming after a restart, saved instructions, an OpenAI outage, consolidation with a concurrent save, the consolidation prompt's promises — details referenced not copied, every reference resolving, a value with no note behind it kept, corrections applied, facts kept with the right person, links, expired one-offs and assistant instructions left out — and the agent following a reference to answer with an exact value when search is down). `MEMCLAW_E2E_MODEL` picks the Claude model (default `claude-haiku-5-5`).
+It covers retrieval (recall on a seeded vault, keyword search on natural-language questions and identifiers, index freshness after rewrites, what gets indexed, image scoping, file guardrails) and the agent (save then recall after `/new`, permanent facts, resuming after a restart, saved instructions, an OpenAI outage, consolidation with a concurrent save, the consolidation prompt's promises — details referenced not copied, every reference resolving, a value with no note behind it kept, corrections applied, facts kept with the right person, links, expired one-offs and assistant instructions left out — and the agent following a reference to answer with an exact value when search is down). `MEMCLAW_E2E_MODEL` picks the Claude model and `MEMCLAW_E2E_CONSOLIDATION_MODEL` the consolidation model (both default to `claude-haiku-5-5`; production consolidation uses Opus 5.5).
 
 ---
 
