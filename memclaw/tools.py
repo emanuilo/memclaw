@@ -19,15 +19,15 @@ from .store import MemoryStore
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "memory_save",
-        "description": "Save a new memory, thought, or note",
+        "description": (
+            "Save a new memory, thought, or note — durable facts and preferences "
+            "included — to today's notes. MEMORY.md (permanent memory) is "
+            "distilled from the notes automatically once a day."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The content to save"},
-                "permanent": {
-                    "type": "boolean",
-                    "description": "If true, save to MEMORY.md instead of daily file",
-                },
                 "entry_type": {
                     "type": "string",
                     "description": "Type of entry: note, image, link, voice",
@@ -80,9 +80,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "image_search",
         "description": (
-            "Search for previously stored images to send to the user. "
-            "Use when the user asks to retrieve, show, or send an image. "
-            "The image will be sent automatically."
+            "Find previously stored images when the user asks to retrieve, show, "
+            "or send one. Returns the closest matches with their ids and "
+            "descriptions; nothing is sent. Then call image_send with the ids of "
+            "the images that are what the user asked for."
         ),
         "input_schema": {
             "type": "object",
@@ -90,6 +91,25 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "query": {"type": "string", "description": "Search query for images"},
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "image_send",
+        "description": (
+            "Send stored images to the user, by the ids image_search returned. "
+            "Pass only the images that match the request (e.g. just the passport "
+            "when the user asks for their passport)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Image ids from image_search",
+                },
+            },
+            "required": ["ids"],
         },
     },
     {
@@ -204,12 +224,20 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+_MAX_SEARCH_RESULTS = 25
+
+# image_search: how many candidates the agent chooses from, and how much of
+# each description it sees.
+_IMAGE_CANDIDATES = 5
+_IMAGE_DESCRIPTION_CHARS = 300
+
 # Progress-message wording per tool: (label, argument shown after it).
 _STEP_LABELS: dict[str, tuple[str, str | None]] = {
     "memory_save": ("Saving to memory", None),
     "memory_search": ("Searching memories", "query"),
     "image_save": ("Saving the image", None),
     "image_search": ("Searching images", "query"),
+    "image_send": ("Sending images", None),
     "update_instructions": ("Updating my instructions", None),
     "file_write": ("Writing", "file_path"),
     "file_read": ("Reading", "file_path"),
@@ -241,16 +269,36 @@ def _format_results(results: list[SearchResult]) -> str:
     return "\n\n---\n\n".join(parts) if parts else "No matching memories found."
 
 
+# Memclaw's own state inside the memory dir. The agent may not read or
+# write it: the database, the session store and the consolidation marker
+# would be corrupted by a write, .env holds the API keys, and the WhatsApp /
+# Slack dirs hold the pairing session and downloaded media. Hidden
+# directories (e.g. .cursor/, holding the Cursor tool-restriction hooks) are
+# covered by the dot-prefix rule.
+_INTERNAL_NAMES = frozenset({"sessions.json", "sessions.tmp", "meta.json"})
+_INTERNAL_DIRS = frozenset({"whatsapp", "slack"})
+
+
 def _resolve_safe(raw_path: str, memory_dir: Path) -> Path | None:
-    """Resolve *raw_path* and return it only if under *memory_dir*."""
+    """Resolve *raw_path* and return it only if under *memory_dir* and not
+    one of Memclaw's internal files."""
     safe_root = memory_dir.resolve()
-    p = Path(raw_path)
+    p = Path(raw_path).expanduser()
     if not p.is_absolute():
-        p = memory_dir / raw_path
-    resolved = p.expanduser().resolve()
+        p = memory_dir / p
+    resolved = p.resolve()
     try:
-        resolved.relative_to(safe_root)
+        rel = resolved.relative_to(safe_root)
     except ValueError:
+        return None
+    parts = rel.parts
+    if not parts:
+        return None
+    if any(part.startswith(".") for part in parts):
+        return None
+    if parts[0] in _INTERNAL_DIRS or rel.name in _INTERNAL_NAMES:
+        return None
+    if rel.name.startswith("memclaw.db") or rel.suffix == ".log":
         return None
     return resolved
 
@@ -289,6 +337,7 @@ class ToolExecutor:
             "memory_search": self._memory_search,
             "image_save": self._image_save,
             "image_search": self._image_search,
+            "image_send": self._image_send,
             "update_instructions": self._update_instructions,
             "file_write": self._file_write,
             "file_read": self._file_read,
@@ -310,16 +359,31 @@ class ToolExecutor:
 
     async def _memory_save(self, args: dict) -> str:
         content: str = args["content"]
-        permanent: bool = args.get("permanent", False)
         entry_type: str = args.get("entry_type", "note")
         tags = args.get("tags")
-        file_path = self.store.save(content, permanent=permanent, entry_type=entry_type, tags=tags)
-        await self.index.index_file(file_path)
+        # A "permanent" flag from an older session is ignored: MEMORY.md is
+        # written only by consolidation.
+        file_path = self.store.save(content, entry_type=entry_type, tags=tags)
         logger.info("  → memory_save result: saved to {file}", file=file_path.name)
-        return f"Memory saved to {file_path.name}"
+        return f"Memory saved to {file_path.name}" + await self._index(file_path)
+
+    async def _index(self, path: Path) -> str:
+        """Index a just-written file. The write already succeeded, so an
+        indexing failure (e.g. OpenAI unreachable) is reported, not raised:
+        the next index sync picks the file up."""
+        try:
+            await self.index.index_file(path)
+        except Exception as exc:
+            logger.warning("Indexing {p} failed, will retry on next sync: {exc}", p=path, exc=exc)
+            return " (search indexing is delayed; it will be searchable soon)"
+        return ""
 
     async def _memory_search(self, args: dict) -> str:
-        results = await self.search.search(args["query"], limit=args.get("limit", 10))
+        try:
+            limit = max(1, min(int(args.get("limit") or 10), _MAX_SEARCH_RESULTS))
+        except (TypeError, ValueError):
+            limit = 10
+        results = await self.search.search(args["query"], limit=limit)
         formatted = _format_results(results)
         logger.info("  → memory_search result: {n} hits", n=len(results))
         for i, r in enumerate(results, 1):
@@ -339,14 +403,16 @@ class ToolExecutor:
         combined = f"Image: {description}"
         if caption:
             combined += f" Caption: {caption}"
-        store_path = self.store.save(combined, entry_type="image")
-        await self.index.index_file(store_path)
+        # Register the image first: it needs an embedding, and if that fails
+        # nothing has been written yet, so a retry doesn't save the note twice.
         await self.index.store_platform_image(
             platform=platform,
             media_ref=media_ref,
             description=combined,
             caption=caption,
         )
+        store_path = self.store.save(combined, entry_type="image")
+        await self._index(store_path)
         logger.info(
             "  → image_save({platform}) result: {desc}",
             platform=platform, desc=description[:100],
@@ -354,30 +420,39 @@ class ToolExecutor:
         return f"Image saved: {description[:100]}"
 
     async def _image_search(self, args: dict) -> str:
-        query_emb = await self.index.get_embedding(args["query"])
-        candidates = self.index.search_platform_images(query_emb, limit=5)
-        if candidates:
-            best_score = candidates[0]["score"]
-            threshold = best_score * 0.9
-            results = [r for r in candidates if r["score"] >= threshold]
-        else:
-            results = []
-        self.found_images.extend(results)
-        if results:
-            lines = []
-            for r in results:
-                line = f"- {r['description']}"
-                if r.get("caption"):
-                    line += f" (caption: {r['caption']})"
-                lines.append(line)
-            logger.info("  → image_search result: {n} image(s) found", n=len(results))
-            return (
-                f"Found {len(results)} image(s):\n"
-                + "\n".join(lines)
-                + "\nImages will be sent automatically."
-            )
-        logger.info("  → image_search result: no matching images")
-        return "No matching images found."
+        # Only images saved on this platform can be sent back on it (a
+        # Telegram file_id means nothing to Slack). The terminal has no
+        # platform and can describe images from anywhere.
+        candidates = await self.search.search_images(
+            args["query"], limit=_IMAGE_CANDIDATES, platform=self.platform,
+        )
+        logger.info("  → image_search result: {n} candidate(s)", n=len(candidates))
+        if not candidates:
+            return "No matching images found."
+        lines = []
+        for r in candidates:
+            description = " ".join(r["description"].split())
+            if len(description) > _IMAGE_DESCRIPTION_CHARS:
+                description = description[:_IMAGE_DESCRIPTION_CHARS] + "…"
+            lines.append(f"- id {r['id']} (match {r['score']:.2f}): {description}")
+        return (
+            "Closest stored images, best first (nothing sent yet):\n"
+            + "\n".join(lines)
+            + "\nCall image_send with the ids of the ones the user asked for."
+        )
+
+    async def _image_send(self, args: dict) -> str:
+        ids = [int(i) for i in args.get("ids") or []]
+        images = self.index.get_platform_images(ids, platform=self.platform)
+        queued = {img["id"] for img in self.found_images}
+        new = [img for img in images if img["id"] not in queued]
+        self.found_images.extend(new)
+        logger.info("  → image_send: {n} image(s) queued", n=len(new))
+        missing = sorted(set(ids) - {img["id"] for img in images})
+        note = f" No stored image with id {', '.join(map(str, missing))}." if missing else ""
+        if not images:
+            return "Nothing to send." + note
+        return f"Sending {len(images)} image(s) with your reply." + note
 
     async def _update_instructions(self, args: dict) -> str:
         instruction: str = args["instruction"].strip()
@@ -392,19 +467,33 @@ class ToolExecutor:
         resolved = _resolve_safe(args["file_path"], self.config.memory_dir)
         if resolved is None:
             safe_root = self.config.memory_dir.resolve()
-            msg = f"Blocked: path is outside {safe_root}. Files must be under ~/.memclaw/"
+            msg = (
+                f"Blocked: path is outside {safe_root} or is one of Memclaw's "
+                "internal files. Files must be under ~/.memclaw/"
+            )
             logger.warning(msg)
             return msg
+        rel = resolved.relative_to(self.config.memory_dir.resolve())
+        if rel == Path(self.config.memory_file.name) or rel.parts[0] == self.config.memory_subdir.name:
+            # MEMORY.md is written only by consolidation, and the daily notes
+            # are the append-only record it is rebuilt from.
+            return (
+                "Blocked: MEMORY.md and the daily notes in memory/ are maintained "
+                "by Memclaw. Use memory_save to add a memory."
+            )
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(args["content"])
         logger.info("  → file_write: wrote {path}", path=resolved)
-        return f"File written: {resolved}"
+        # Index under the same (unresolved) path the index sync uses.
+        path = self.config.memory_dir / rel
+        note = await self._index(path) if self.index.is_indexable(path) else ""
+        return f"File written: {resolved}{note}"
 
     async def _file_read(self, args: dict) -> str:
         resolved = _resolve_safe(args["file_path"], self.config.memory_dir)
         if resolved is None:
             safe_root = self.config.memory_dir.resolve()
-            return f"Blocked: path is outside {safe_root}."
+            return f"Blocked: path is outside {safe_root} or is one of Memclaw's internal files."
         if not resolved.exists():
             return f"File not found: {resolved}"
         text = resolved.read_text()

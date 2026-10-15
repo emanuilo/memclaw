@@ -150,63 +150,59 @@ class MemoryIndex:
     # ------------------------------------------------------------------
 
     def chunk_text(self, text: str, file_path: str) -> list[Chunk]:
-        """Split text into overlapping chunks by paragraphs and headings."""
+        """Split text into chunks by entries, headings and size.
+
+        A ``---`` line ends an entry (``MemoryStore.save`` writes one after
+        each), so every entry starts a fresh chunk. A heading starts a new
+        chunk once the current one is half full. Only an entry too long for
+        one chunk is split by size, with overlap and its heading repeated.
+        """
         lines = text.split("\n")
         chunks: list[Chunk] = []
-        current_lines: list[str] = []
-        current_start = 0
-        current_heading = ""
-        word_count = 0
+        current: list[str] = []
+        start = 0
+        heading = ""
+        words = 0
+        target = self.config.chunk_target_words
+
+        def flush(end: int) -> None:
+            content = "\n".join(current).strip()
+            if content and content != "---":
+                chunks.append(Chunk(file_path=file_path, line_start=start,
+                                    line_end=end, content=content))
 
         for i, line in enumerate(lines):
-            if line.startswith("#"):
-                current_heading = line
+            is_heading = line.startswith("#")
+            if is_heading and words > target // 2:
+                flush(i - 1)
+                current, start, words = [], i, 0
+            if is_heading:
+                heading = line
 
-            current_lines.append(line)
-            word_count += len(line.split())
+            current.append(line)
+            words += len(line.split())
 
-            is_boundary = (
-                line.strip() == "---"
-                or (line.startswith("#") and word_count > self.config.chunk_target_words // 2)
-                or word_count >= self.config.chunk_target_words
-            )
-
-            if is_boundary and current_lines:
-                content = "\n".join(current_lines).strip()
-                if content and content != "---":
-                    chunks.append(Chunk(
-                        file_path=file_path,
-                        line_start=current_start,
-                        line_end=i,
-                        content=content,
-                    ))
-
-                # Keep overlap for continuity
+            if line.strip() == "---":
+                flush(i)
+                current, start, words, heading = [], i + 1, 0, ""
+            elif words >= target:
+                flush(i)
+                # Keep a tail of the entry for continuity, under its heading.
                 overlap_words = 0
-                overlap_start = len(current_lines)
-                for j in range(len(current_lines) - 1, -1, -1):
-                    overlap_words += len(current_lines[j].split())
+                keep = len(current)
+                for j in range(len(current) - 1, -1, -1):
+                    overlap_words += len(current[j].split())
+                    keep = j
                     if overlap_words >= self.config.chunk_overlap_words:
-                        overlap_start = j
                         break
+                current = current[keep:] if keep > 0 else []
+                start = i - len(current) + 1
+                if heading and current and not any(ln.startswith("#") for ln in current):
+                    current.insert(0, heading)
+                words = sum(len(ln.split()) for ln in current)
 
-                current_lines = current_lines[overlap_start:]
-                if current_heading and not any(l.startswith("#") for l in current_lines):
-                    current_lines.insert(0, current_heading)
-                current_start = max(0, i - len(current_lines) + 1)
-                word_count = sum(len(l.split()) for l in current_lines)
-
-        # Flush remaining content
-        if current_lines:
-            content = "\n".join(current_lines).strip()
-            if content and content != "---":
-                chunks.append(Chunk(
-                    file_path=file_path,
-                    line_start=current_start,
-                    line_end=len(lines) - 1,
-                    content=content,
-                ))
-
+        if current:
+            flush(len(lines) - 1)
         return chunks
 
     # ------------------------------------------------------------------
@@ -269,46 +265,57 @@ class MemoryIndex:
     # Indexing
     # ------------------------------------------------------------------
 
-    async def index_file(self, file_path: Path):
-        """Re-index a single file: chunk, embed, store."""
-        content = file_path.read_text()
-        if not content.strip():
-            return
+    def is_indexable(self, path: Path) -> bool:
+        """Whether *path* holds memories: any ``.md`` under the memory dir
+        except AGENTS.md (instructions, already in the system prompt) and
+        files in hidden directories."""
+        try:
+            rel = Path(path).resolve().relative_to(self.config.memory_dir.resolve())
+        except ValueError:
+            return False
+        if rel.suffix != ".md" or rel == Path(self.config.agent_file.name):
+            return False
+        return not any(part.startswith(".") for part in rel.parts)
 
+    def indexable_files(self) -> list[Path]:
+        return sorted(
+            p for p in self.config.memory_dir.glob("**/*.md")
+            if p.is_file() and self.is_indexable(p)
+        )
+
+    async def index_file(self, file_path: Path):
+        """Re-index a single file: chunk, embed, store.
+
+        Embeddings are fetched before anything is replaced, so a failed
+        embedding call leaves the file's previous chunks in place.
+        """
+        content = file_path.read_text()
         mtime = file_path.stat().st_mtime
         path_str = str(file_path)
 
-        # Remove stale chunks for this file
-        self.db.execute("DELETE FROM chunks WHERE file_path = ?", (path_str,))
+        chunks = self.chunk_text(content, path_str) if content.strip() else []
+        embeddings = await self.get_embeddings([c.content for c in chunks])
 
-        chunks = self.chunk_text(content, path_str)
-        if not chunks:
-            return
-
-        # Batch embed
-        texts = [c.content for c in chunks]
-        embeddings = await self.get_embeddings(texts)
-
-        for chunk, emb in zip(chunks, embeddings):
+        with self.db:
+            self.db.execute("DELETE FROM chunks WHERE file_path = ?", (path_str,))
+            for chunk, emb in zip(chunks, embeddings):
+                self.db.execute(
+                    """INSERT INTO chunks
+                       (file_path, line_start, line_end, content, embedding, file_mtime)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        chunk.file_path,
+                        chunk.line_start,
+                        chunk.line_end,
+                        chunk.content,
+                        self.serialize_embedding(emb),
+                        mtime,
+                    ),
+                )
             self.db.execute(
-                """INSERT INTO chunks
-                   (file_path, line_start, line_end, content, embedding, file_mtime)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    chunk.file_path,
-                    chunk.line_start,
-                    chunk.line_end,
-                    chunk.content,
-                    self.serialize_embedding(emb),
-                    mtime,
-                ),
+                "INSERT OR REPLACE INTO file_meta (file_path, mtime) VALUES (?, ?)",
+                (path_str, mtime),
             )
-
-        self.db.execute(
-            "INSERT OR REPLACE INTO file_meta (file_path, mtime) VALUES (?, ?)",
-            (path_str, mtime),
-        )
-        self.db.commit()
 
     async def sync(self) -> bool:
         """Re-index any memory files that have changed since last indexed.
@@ -316,19 +323,21 @@ class MemoryIndex:
         Returns True if anything was updated.
         """
         changed = False
-        for md_file in sorted(self.config.memory_dir.glob("**/*.md")):
+        files = self.indexable_files()
+        for md_file in files:
             mtime = md_file.stat().st_mtime
             row = self.db.execute(
                 "SELECT mtime FROM file_meta WHERE file_path = ?",
                 (str(md_file),),
             ).fetchone()
-            if row is None or mtime > row[0]:
+            if row is None or mtime != row[0]:
                 await self.index_file(md_file)
                 changed = True
 
-        # Remove entries for deleted files
+        # Remove entries for deleted (or no longer indexable) files
         stored = {r[0] for r in self.db.execute("SELECT file_path FROM file_meta").fetchall()}
-        existing = {str(f) for f in self.config.memory_dir.glob("**/*.md")}
+        stored |= {r[0] for r in self.db.execute("SELECT DISTINCT file_path FROM chunks").fetchall()}
+        existing = {str(f) for f in files}
         for gone in stored - existing:
             self.db.execute("DELETE FROM chunks WHERE file_path = ?", (gone,))
             self.db.execute("DELETE FROM file_meta WHERE file_path = ?", (gone,))
@@ -395,13 +404,13 @@ class MemoryIndex:
         """Vector search over stored images. Optionally filter by platform."""
         if platform:
             rows = self.db.execute(
-                "SELECT id, platform, media_ref, description, caption, embedding, created_at "
+                "SELECT id, platform, media_ref, description, caption, created_at, embedding "
                 "FROM platform_images WHERE embedding IS NOT NULL AND platform = ?",
                 (platform,),
             ).fetchall()
         else:
             rows = self.db.execute(
-                "SELECT id, platform, media_ref, description, caption, embedding, created_at "
+                "SELECT id, platform, media_ref, description, caption, created_at, embedding "
                 "FROM platform_images WHERE embedding IS NOT NULL"
             ).fetchall()
 
@@ -410,24 +419,44 @@ class MemoryIndex:
 
         results = []
         for row in rows:
-            stored_emb = self.deserialize_embedding(row[5])
+            stored_emb = self.deserialize_embedding(row[6])
             similarity = float(
                 np.dot(query_embedding, stored_emb)
                 / (np.linalg.norm(query_embedding) * np.linalg.norm(stored_emb) + 1e-8)
             )
-            results.append({
-                "id": row[0],
-                "platform": row[1],
-                "media_ref": row[2],
-                "file_id": row[2],  # backward compat alias
-                "description": row[3],
-                "caption": row[4],
-                "created_at": row[6],
-                "score": similarity,
-            })
+            results.append(self._image_dict(row, score=similarity))
 
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
+
+    def get_platform_images(self, ids: list[int], platform: str | None = None) -> list[dict]:
+        """Stored images by id, in the order given; ids that don't exist
+        (or belong to another platform) are left out."""
+        found = {}
+        for image_id in ids:
+            row = self.db.execute(
+                "SELECT id, platform, media_ref, description, caption, created_at "
+                "FROM platform_images WHERE id = ? AND (? IS NULL OR platform = ?)",
+                (image_id, platform, platform),
+            ).fetchone()
+            if row is not None:
+                found[row[0]] = self._image_dict(row)
+        return list(found.values())
+
+    @staticmethod
+    def _image_dict(row: tuple, score: float | None = None) -> dict:
+        """(id, platform, media_ref, description, caption, created_at, ...)
+        as the dict the bots send images from."""
+        return {
+            "id": row[0],
+            "platform": row[1],
+            "media_ref": row[2],
+            "file_id": row[2],  # backward compat alias
+            "description": row[3],
+            "caption": row[4],
+            "created_at": row[5],
+            "score": score,
+        }
 
     # ------------------------------------------------------------------
     # Stats
@@ -436,7 +465,7 @@ class MemoryIndex:
     def get_stats(self) -> dict:
         chunks = self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         files = self.db.execute("SELECT COUNT(*) FROM file_meta").fetchone()[0]
-        images = self.db.execute("SELECT COUNT(*) FROM telegram_images").fetchone()[0]
+        images = self.db.execute("SELECT COUNT(*) FROM platform_images").fetchone()[0]
         return {"chunks": chunks, "files": files, "images": images}
 
     def close(self):

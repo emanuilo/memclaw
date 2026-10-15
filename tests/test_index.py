@@ -161,3 +161,86 @@ class TestChunking:
     def test_empty_text(self, idx: MemoryIndex):
         chunks = idx.chunk_text("", "test.md")
         assert chunks == []
+
+
+class TestEntryChunking:
+    def test_each_entry_is_its_own_chunk(self, cfg: MemclawConfig, idx: MemoryIndex):
+        from memclaw.store import MemoryStore
+
+        store = MemoryStore(cfg)
+        store.save("First entry about apples.")
+        path = store.save("Second entry about bananas.")
+        chunks = idx.chunk_text(path.read_text(), str(path))
+        bananas = [c for c in chunks if "bananas" in c.content]
+        assert len(bananas) == 1
+        assert "apples" not in bananas[0].content
+        assert bananas[0].content.count("## ") == 1
+
+    def test_long_entry_is_split_with_overlap_under_its_heading(self, idx: MemoryIndex):
+        body = "\n".join(f"line {i} " + "word " * 20 for i in range(40))
+        chunks = idx.chunk_text(f"## 10:00 - Note\n\n{body}\n\n---\n", "f.md")
+        assert len(chunks) > 1
+        assert all(c.content.startswith("## 10:00 - Note") for c in chunks)
+        # Consecutive chunks share some text.
+        assert chunks[0].content.splitlines()[-1] in chunks[1].content
+
+
+class TestIndexScope:
+    @pytest.mark.asyncio
+    async def test_agents_md_and_hidden_dirs_are_not_indexed(self, cfg: MemclawConfig, idx: MemoryIndex):
+        (cfg.memory_dir / ".cursor").mkdir()
+        (cfg.memory_dir / ".cursor" / "notes.md").write_text("hidden")
+        (cfg.memory_dir / "todos.md").write_text("- buy milk")
+        await idx.sync()
+        files = {Path(r[0]).name for r in idx.db.execute("SELECT file_path FROM file_meta")}
+        assert files == {"MEMORY.md", "todos.md"}
+
+    @pytest.mark.asyncio
+    async def test_previously_indexed_agents_md_is_removed(self, cfg: MemclawConfig, idx: MemoryIndex):
+        await idx.index_file(cfg.agent_file)  # what older versions did
+        await idx.sync()
+        rows = idx.db.execute(
+            "SELECT COUNT(*) FROM chunks WHERE file_path = ?", (str(cfg.agent_file),),
+        ).fetchone()[0]
+        assert rows == 0
+
+    @pytest.mark.asyncio
+    async def test_emptied_file_drops_its_chunks(self, cfg: MemclawConfig, idx: MemoryIndex):
+        path = cfg.memory_dir / "todos.md"
+        path.write_text("- buy milk")
+        await idx.index_file(path)
+        path.write_text("")
+        await idx.index_file(path)
+        assert idx.get_stats()["chunks"] == 0
+
+    @pytest.mark.asyncio
+    async def test_failed_embedding_keeps_previous_chunks(self, cfg: MemclawConfig, idx: MemoryIndex):
+        path = cfg.memory_dir / "todos.md"
+        path.write_text("- buy milk")
+        await idx.index_file(path)
+        path.write_text("- buy bread")
+        idx.get_embeddings = AsyncMock(side_effect=RuntimeError("OpenAI down"))
+        with pytest.raises(RuntimeError):
+            await idx.index_file(path)
+        contents = [r[0] for r in idx.db.execute("SELECT content FROM chunks")]
+        assert contents == ["- buy milk"]
+
+    @pytest.mark.asyncio
+    async def test_sync_reindexes_a_file_with_an_older_mtime(self, cfg: MemclawConfig, idx: MemoryIndex):
+        import os
+
+        path = cfg.memory_dir / "todos.md"
+        path.write_text("- buy milk")
+        await idx.sync()
+        path.write_text("- restored from backup")
+        os.utime(path, (1_000_000, 1_000_000))
+        assert await idx.sync()
+        contents = [r[0] for r in idx.db.execute(
+            "SELECT content FROM chunks WHERE file_path = ?", (str(path),))]
+        assert contents == ["- restored from backup"]
+
+    @pytest.mark.asyncio
+    async def test_stats_count_images_from_every_platform(self, idx: MemoryIndex):
+        await idx.store_platform_image("whatsapp", "wa-1", "a cat")
+        await idx.store_telegram_image("tg-1", "a dog")
+        assert idx.get_stats()["images"] == 2

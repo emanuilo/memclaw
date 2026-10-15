@@ -249,7 +249,7 @@ All memories are plain Markdown — human-readable, editable, and git-friendly.
 
 | File | Purpose |
 |------|---------|
-| `~/.memclaw/MEMORY.md` | Curated long-term facts and preferences |
+| `~/.memclaw/MEMORY.md` | Overview of you — a profile plus an index pointing to the notes with the details |
 | `~/.memclaw/AGENTS.md` | Customizable agent instructions and user preferences |
 | `~/.memclaw/memory/YYYY-MM-DD.md` | Timestamped daily entries |
 | `~/.memclaw/memclaw.db` | SQLite index (vector embeddings + FTS5) |
@@ -269,10 +269,10 @@ A pluggable agent SDK drives the loop — Claude or Cursor, picked during setup 
 
 | Tool | What it does |
 |------|-------------|
-| `memory_save` | Writes a new entry to today's daily file or MEMORY.md |
+| `memory_save` | Writes a new entry to today's daily file (MEMORY.md is written only by consolidation) |
 | `memory_search` | Hybrid search across all indexed memories |
 | `image_save` | Generates an AI description of an image and stores it |
-| `image_search` | Retrieves previously stored images by description |
+| `image_search` / `image_send` | Finds stored images by description; the agent then sends the ones you asked for (each at most once per reply) |
 | `file_write` / `file_read` | Sandboxed file operations within `~/.memclaw/` |
 | `update_instructions` | Appends user preferences to AGENTS.md |
 | `reminder_create` / `reminder_list` / `reminder_cancel` | Schedules one-shot or recurring reminders, delivered back to the originating chat |
@@ -359,6 +359,8 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 | `ANTHROPIC_API_KEY` | One of these two | Anthropic API key (`sk-ant-…`), pay-as-you-go |
 | `CLAUDE_MODEL` | Optional | Claude model to run (defaults to `claude-sonnet-5-5`; also set by `/model`) |
 | `CLAUDE_EFFORT` | Optional | Effort level: `low`, `medium`, `high`, `xhigh`, or `max` (defaults to `medium` on the default model, otherwise the model decides; also set by `/effort`) |
+| `CLAUDE_CONSOLIDATION_MODEL` | Optional | Claude model for memory consolidation (defaults to `claude-opus-5-5`) |
+| `CLAUDE_CONSOLIDATION_EFFORT` | Optional | Effort for consolidation (defaults to `medium`) |
 | `AGENT_BACKEND` | Optional | Agent SDK to use (defaults to `claude`; set to `cursor` for Cursor SDK) |
 | `MEMCLAW_PLATFORM` | Optional | Front-end the bare `memclaw` launches: `telegram`, `whatsapp`, `slack`, or `terminal` (defaults to `terminal`) |
 | `CURSOR_API_KEY` | For Cursor backend | Cursor API key from Dashboard → Integrations |
@@ -376,6 +378,7 @@ Backend choice and credentials are covered above in [Agent Backend](#agent-backe
 ```
 ~/.memclaw/
 ├── MEMORY.md              # Permanent / curated memories
+├── .history/              # MEMORY.md before each consolidation (last 60)
 ├── AGENTS.md              # Agent instructions + user preferences
 ├── memclaw.db             # SQLite index (embeddings + FTS5)
 ├── sessions.json          # Conversation session per chat
@@ -394,8 +397,8 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw)'s approach to AI me
 - **NumPy for vectors** — cosine similarity computed in-memory, no native extensions required
 - **Pluggable agent SDK** — Claude or Cursor drives the agentic loop that decides how to handle your input ([Agent Backend](#agent-backend))
 - **Chunking with overlap** — ~300-word chunks with 60-word overlap preserve context across boundaries
-- **Auto-consolidation** — daily files are periodically distilled into MEMORY.md, in the background after a reply
-- **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/`
+- **Auto-consolidation** — each finished day's notes are distilled into MEMORY.md — a profile plus references to the notes holding the details — in the background after your next reply; MEMORY.md has no other writer (the previous version is kept as `MEMORY.md.bak`)
+- **Filesystem guardrail** — every `file_read` / `file_write` tool call is path-checked, blocking anything outside `~/.memclaw/` and Memclaw's own files inside it (the database, `.env`, sessions, hidden dirs); MEMORY.md and the daily notes are read-only to it
 - **Embedding cache** — SHA-256 content hashing skips redundant API calls
 
 For a deep dive into how memory storage, search, consolidation, and context injection work, see the [Memory Architecture](docs/memory-architecture.md) doc.
@@ -432,6 +435,12 @@ asyncio.run(main())
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+`pytest` runs the unit tests offline. To validate the memory system end to end against the real OpenAI and Claude APIs (in a throwaway vault; needs `OPENAI_API_KEY` plus a Claude credential):
+
+```bash
+MEMCLAW_E2E=1 pytest tests/e2e -v
+```
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
