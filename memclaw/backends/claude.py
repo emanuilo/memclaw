@@ -68,8 +68,10 @@ _PRICES_PER_M: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0),
 }
 
-# Cache reads are billed at a tenth of the input price.
+# Cache reads are billed at a tenth of the input price, cache writes at
+# 1.25 times it.
 _CACHE_READ_MULTIPLIER = 0.1
+_CACHE_WRITE_MULTIPLIER = 1.25
 
 _ALLOWED_TOOLS = [
     f"mcp__{MCP_SERVER_NAME}__{t['name']}" for t in TOOL_DEFINITIONS
@@ -580,7 +582,10 @@ class ClaudeAgentBackend:
     async def set_model(self, model_id: str) -> str:
         model_id = model_id.strip()
         info = await self._model_info(model_id)
-        if info is None and self._models:
+        if info is None and not self._models:
+            # Can't check the id, and a typo would break every turn.
+            raise ValueError("Couldn't load the model list; try again later.")
+        if info is None:
             raise ValueError(f"Unknown model '{model_id}'.")
         effort = self._effort
         note = ""
@@ -724,6 +729,7 @@ class ClaudeAgentBackend:
                 result.input_tokens * input_per_m
                 + result.output_tokens * output_per_m
                 + result.cache_read_tokens * input_per_m * _CACHE_READ_MULTIPLIER
+                + result.cache_creation_tokens * input_per_m * _CACHE_WRITE_MULTIPLIER
             ) / 1_000_000
         return result
 
