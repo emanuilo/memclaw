@@ -3,13 +3,16 @@
   uv run --with playwright python capture.py preview 2.0 6.5 ...   -> preview_<t>.png
   uv run --with playwright python capture.py frames                -> frames/00000.png ...
 
-Then encode (frames/ and the outputs are not kept in the repo):
+Then encode (frames/ and w1600/ are not kept in the repo):
 
   ffmpeg -framerate 30 -i frames/%05d.png -c:v libx264 -preset slow -crf 20 \
       -pix_fmt yuv420p -movflags +faststart ../memclaw-demo.mp4
-  ffmpeg -framerate 30 -i frames/%05d.png -vf "fps=15,scale=800:-1:flags=lanczos,split[a][b];\
-[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
-      ../memclaw-demo.gif
+  mkdir -p w1600 && ffmpeg -i frames/%05d.png -vf scale=1600:-2:flags=lanczos w1600/%05d.png
+  img2webp -loop 0 -sharp_yuv -kmin 5 -kmax 10 -d 33 -lossy -exact -q 80 -m 4 \
+      w1600/*.png -o ../memclaw-demo.webp
+
+The regular keyframes (-kmax 10) matter: without them lossy errors pile up
+in static areas and show as blocky patches.
 
 Uses the locally installed Google Chrome.
 """

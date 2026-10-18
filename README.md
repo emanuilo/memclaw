@@ -11,7 +11,7 @@ A personal memory assistant that lives in Telegram, WhatsApp, Slack or your term
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-<a href="docs/assets/memclaw-demo.mp4"><img src="docs/assets/memclaw-demo.gif" alt="Memclaw in 30 seconds: save a note, voice memo, photo and link in a chat, ask for them months later, and how the memory layers work" width="800"></a>
+<a href="docs/assets/memclaw-demo.mp4"><img src="docs/assets/memclaw-demo.webp" alt="Memclaw in 30 seconds: save a note, voice memo, photo and link in a chat, ask for them months later, and how the memory layers work" width="800"></a>
 
 </div>
 
