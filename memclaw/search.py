@@ -2,14 +2,30 @@ from __future__ import annotations
 
 import math
 import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 import numpy as np
+from loguru import logger
 
 from .config import MemclawConfig
 from .index import MemoryIndex
+
+# Keyword-query tokenizer: words and numbers (same notion of a token as
+# FTS5's unicode61 tokenizer). Very common words are dropped — they match
+# nearly every chunk and only add noise to the BM25 ranking.
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+_MAX_QUERY_TERMS = 32
+_STOPWORDS = frozenset("""
+a about after all also am an and any are as at be been before but by can could
+did do does doing don for from had has have he her here hers him his how i if
+in into is it its just me my myself no not now of on or our ours out over she
+so some than that the their them then there these they this those to too up
+very was we were what when where which while who whom why will with would you
+your yours
+""".split())
 
 
 @dataclass
@@ -34,14 +50,19 @@ class HybridSearch:
         self.index = index
 
         # Spec #8 Phase 1: cache the embedding matrix to avoid re-reading
-        # all embeddings from SQLite on every search call.
+        # all embeddings from SQLite on every search call. Keyed on the chunk
+        # count and the highest chunk id: re-indexing a file replaces its
+        # rows with new (higher) ids even when the count stays the same.
         self._embedding_cache: tuple[np.ndarray, list[int]] | None = None
-        self._cache_chunk_count: int = 0
+        self._cache_key: tuple[int, int] = (0, 0)
 
-    async def search_images(self, query: str, limit: int = 5) -> list[dict]:
-        """Search stored Telegram images by semantic similarity."""
+    async def search_images(
+        self, query: str, limit: int = 5, platform: str | None = None,
+    ) -> list[dict]:
+        """Search stored images by semantic similarity, optionally only
+        those saved on *platform*."""
         query_embedding = await self.index.get_embedding(query)
-        return self.index.search_telegram_images(query_embedding, limit=limit)
+        return self.index.search_platform_images(query_embedding, limit=limit, platform=platform)
 
     async def search(
         self, query: str, limit: int = 10, file_filter: str | None = None
@@ -51,15 +72,16 @@ class HybridSearch:
         # Oversample: retrieve 3x candidates for MMR filtering
         internal_limit = limit * 3
 
-        vector_hits = self._vector_search(query_embedding, limit=internal_limit)
-        keyword_hits = self._keyword_search(query, limit=internal_limit)
+        # With a file filter, rank everything so the filter can't empty a
+        # candidate list filled by other files.
+        pool = None if file_filter is not None else internal_limit
+        vector_hits = self._vector_search(query_embedding, limit=pool)
+        keyword_hits = self._keyword_search(query, limit=pool)
 
         # Merge produces internal_limit candidates (not yet truncated)
-        candidates = self._merge(vector_hits, keyword_hits, internal_limit)
-
-        # Filter by file path substring when requested
-        if file_filter is not None:
-            candidates = [r for r in candidates if file_filter in r.file_path]
+        candidates = self._merge(
+            vector_hits, keyword_hits, internal_limit, file_filter=file_filter,
+        )
 
         # Apply temporal decay (spec #4)
         candidates = self._apply_decay(candidates)
@@ -72,20 +94,20 @@ class HybridSearch:
     # ------------------------------------------------------------------
 
     def _vector_search(
-        self, query_embedding: np.ndarray, limit: int
+        self, query_embedding: np.ndarray, limit: int | None
     ) -> list[tuple[int, float]]:
-        # Spec #8 Phase 1: use cached embedding matrix when chunk count
-        # hasn't changed, avoiding repeated deserialization from SQLite.
-        current_count = self.index.db.execute(
-            "SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL"
-        ).fetchone()[0]
+        # Spec #8 Phase 1: use the cached embedding matrix while the chunks
+        # haven't changed, avoiding repeated deserialization from SQLite.
+        current_count, max_id = self.index.db.execute(
+            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM chunks WHERE embedding IS NOT NULL"
+        ).fetchone()
 
         if current_count == 0:
             return []
 
         if (
             self._embedding_cache is not None
-            and current_count == self._cache_chunk_count
+            and (current_count, max_id) == self._cache_key
         ):
             matrix, ids = self._embedding_cache
         else:
@@ -104,7 +126,7 @@ class HybridSearch:
 
             matrix = np.stack(embeddings)
             self._embedding_cache = (matrix, ids)
-            self._cache_chunk_count = current_count
+            self._cache_key = (current_count, max_id)
 
         norms = np.linalg.norm(matrix, axis=1)
         q_norm = np.linalg.norm(query_embedding)
@@ -117,23 +139,41 @@ class HybridSearch:
     # Keyword search (FTS5 / BM25)
     # ------------------------------------------------------------------
 
-    def _keyword_search(self, query: str, limit: int) -> list[tuple[int, float]]:
+    @staticmethod
+    def _fts_query(query: str) -> str | None:
+        """Turn free text into a safe FTS5 query: each word quoted (so
+        punctuation and operators can't break the syntax), OR-ed so BM25
+        ranks chunks by how many — and how rare — the matching words are."""
+        terms: list[str] = []
+        for word in _WORD_RE.findall(query.lower()):
+            if word in _STOPWORDS or word in terms or len(word) < 2 and not word.isdigit():
+                continue
+            terms.append(word)
+        if not terms:
+            return None
+        return " OR ".join(f'"{t}"' for t in terms[:_MAX_QUERY_TERMS])
+
+    def _keyword_search(self, query: str, limit: int | None) -> list[tuple[int, float]]:
+        fts_query = self._fts_query(query)
+        if fts_query is None:
+            return []
         try:
             rows = self.index.db.execute(
                 """SELECT rowid, rank FROM chunks_fts
                    WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?""",
-                (query, limit),
+                (fts_query, -1 if limit is None else limit),
             ).fetchall()
-        except Exception:
-            # FTS5 match can fail on certain query syntax
+        except sqlite3.Error as exc:
+            logger.warning("Keyword search failed for {q!r}: {exc}", q=fts_query, exc=exc)
             return []
 
         if not rows:
             return []
 
-        # FTS5 rank is negative (lower = better). Normalise to 0-1 positive.
+        # FTS5 rank is BM25 negated: more negative = better match. Scale so
+        # the best match scores 1.0.
         max_abs = max(abs(r[1]) for r in rows) or 1.0
-        return [(row[0], 1.0 - abs(row[1]) / max_abs) for row in rows]
+        return [(row[0], abs(row[1]) / max_abs) for row in rows]
 
     # ------------------------------------------------------------------
     # Merge
@@ -144,6 +184,7 @@ class HybridSearch:
         vector_hits: list[tuple[int, float]],
         keyword_hits: list[tuple[int, float]],
         limit: int,
+        file_filter: str | None = None,
     ) -> list[SearchResult]:
         vw = self.config.vector_weight
         tw = self.config.text_weight
@@ -152,8 +193,11 @@ class HybridSearch:
         if vector_hits:
             max_v = max(s for _, s in vector_hits)
             min_v = min(s for _, s in vector_hits)
-            range_v = max_v - min_v or 1.0
-            v_scores = {cid: (s - min_v) / range_v for cid, s in vector_hits}
+            range_v = max_v - min_v
+            v_scores = {
+                cid: (s - min_v) / range_v if range_v > 0 else 1.0
+                for cid, s in vector_hits
+            }
         else:
             v_scores = {}
 
@@ -176,12 +220,14 @@ class HybridSearch:
         combined.sort(key=lambda x: x[1], reverse=True)
 
         results: list[SearchResult] = []
-        for cid, score, match_type in combined[:limit]:
+        for cid, score, match_type in combined:
+            if len(results) >= limit:
+                break
             row = self.index.db.execute(
                 "SELECT file_path, line_start, line_end, content FROM chunks WHERE id = ?",
                 (cid,),
             ).fetchone()
-            if row:
+            if row and (file_filter is None or file_filter in row[0]):
                 results.append(SearchResult(
                     file_path=row[0],
                     line_start=row[1],

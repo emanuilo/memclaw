@@ -1,7 +1,11 @@
 """Shared fixtures for memclaw tests."""
 from __future__ import annotations
 
+import hashlib
+import os
+import re
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -10,6 +14,34 @@ from memclaw.config import MemclawConfig
 from memclaw.index import MemoryIndex
 from memclaw.search import HybridSearch, SearchResult
 from memclaw.store import MemoryStore
+
+
+class _FakeEmbeddings:
+    """Offline stand-in for the OpenAI embeddings API: a hashed
+    bag-of-words vector, so texts sharing words are similar."""
+
+    async def create(self, *, model: str, input: list[str]):
+        data = []
+        for text in input:
+            vec = np.zeros(1536, dtype=np.float32)
+            for word in re.findall(r"\w+", text.lower()):
+                vec[int(hashlib.md5(word.encode()).hexdigest(), 16) % 1536] += 1.0
+            vec /= np.linalg.norm(vec) or 1.0
+            data.append(MagicMock(embedding=vec.tolist()))
+        return MagicMock(data=data)
+
+
+class _FakeOpenAI:
+    def __init__(self, *args, **kwargs):
+        self.embeddings = _FakeEmbeddings()
+
+
+@pytest.fixture(autouse=True)
+def _offline_embeddings(request, monkeypatch):
+    """Unit tests never call OpenAI; tests/e2e uses the real API."""
+    if f"{os.sep}e2e{os.sep}" in str(request.node.fspath):
+        return
+    monkeypatch.setattr("memclaw.index.AsyncOpenAI", _FakeOpenAI)
 
 
 @pytest.fixture
@@ -33,7 +65,8 @@ def isolate_claude_env(monkeypatch):
     own CLAUDE_MODEL stand in for the built-in default.
     """
     for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY",
-                 "ANTHROPIC_AUTH_TOKEN", "CLAUDE_MODEL", "CLAUDE_EFFORT"):
+                 "ANTHROPIC_AUTH_TOKEN", "CLAUDE_MODEL", "CLAUDE_EFFORT",
+                 "CLAUDE_CONSOLIDATION_MODEL", "CLAUDE_CONSOLIDATION_EFFORT"):
         monkeypatch.delenv(name, raising=False)
 
 

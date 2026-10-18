@@ -15,7 +15,7 @@ Each chat's conversation lives in the agent backend's own session (for Claude, a
 **How it works:**
 
 - Every chat gets a session key: `<platform>:<chat id>` for the bots (e.g. `telegram:12345`, `slack:C01ABC`), `cli` for the interactive terminal.
-- The Claude backend keeps one connected Claude CLI process per chat and reuses it for every turn, so a message doesn't pay the CLI start-up cost. Turns in the same chat are serialized.
+- The Claude backend keeps one connected Claude CLI process per chat and reuses it for every turn, so a message doesn't pay the CLI start-up cost. Turns are serialized, across chats too: the tool executor carries per-turn state (the chat a reminder belongs to, the images to send back), so two chats' turns must not overlap.
 - The Cursor backend runs one Cursor SDK bridge process for all chats and keeps one open agent per chat. The agent stores its conversation on disk (under `~/.cursor`, in a store tied to the bridge's working directory, which is pinned to the memory directory). Cursor agents have no system-prompt field, so the system prompt goes at the top of a new agent's first message; later messages carry only the context block and the message.
 - The session id is saved in `~/.memclaw/sessions.json` (written atomically). After a restart, the next message in that chat resumes the same session, so the conversation carries on.
 - If a session can't be resumed (deleted, created on another machine, ...), a warning is logged and a fresh session starts.
@@ -45,7 +45,7 @@ The system prompt is **static for a session**, so the backend can prompt-cache i
 Everything that changes per turn goes at the **top of the user message**, in a compact `<context>` block:
 
 - The current local date and time (used for dates and reminders).
-- **Relevant memories** — the top 5 search results for the message (hybrid search), each cut to 500 characters. MEMORY.md hits are skipped since MEMORY.md is already in the system prompt.
+- **Relevant memories** — the top 5 search results for the message (hybrid search), each cut to 500 characters. MEMORY.md hits are skipped since MEMORY.md is already in the system prompt. If the search fails (e.g. OpenAI is unreachable), the block is sent without memories rather than failing the message.
 - **Delivered reminders** — reminders that fired in this chat since the last message, so the agent has context if you reply to one.
 - **Updated AGENTS.md / MEMORY.md** — see below.
 
@@ -53,7 +53,7 @@ The block stays in the session transcript, which is why it is kept small.
 
 ### Keeping AGENTS.md and MEMORY.md Current
 
-The session stores a hash of the AGENTS.md and MEMORY.md content it has seen (persisted in `sessions.json`). Before each message the files are hashed again; if either changed (an `update_instructions` call, a consolidation, a manual edit), its new content is included **once** in that message's context block, labelled as superseding the earlier version, and the stored hash is updated. The conversation continues without a reset. Changes the session makes itself during a turn (`memory_save` with `permanent=true`, `update_instructions`) count as seen and aren't sent back; a consolidation that rewrites MEMORY.md during a turn is.
+The session stores a hash of the AGENTS.md and MEMORY.md content it has seen (persisted in `sessions.json`). Before each message the files are hashed again; if either changed (an `update_instructions` call, a consolidation, a manual edit), its new content is included **once** in that message's context block, labelled as superseding the earlier version, and the stored hash is updated. The conversation continues without a reset. AGENTS.md changes the session makes itself during a turn (`update_instructions`) count as seen and aren't sent back. The session never writes MEMORY.md, so any change to it during a turn (a consolidation) is sent with the next message.
 
 Because a resumed session keeps its original system prompt, the stored hashes always describe what the session has actually seen, including across restarts.
 
@@ -65,7 +65,8 @@ Long-term memory is everything that survives between sessions. It lives on disk 
 
 ```
 ~/.memclaw/
-├── MEMORY.md                  # Curated permanent knowledge base
+├── MEMORY.md                  # Profile + index, written only by consolidation
+├── .history/                  # MEMORY.md before each consolidation (last 60)
 ├── memclaw.db                 # SQLite: chunks, embeddings, FTS index, cache
 ├── meta.json                  # Consolidation tracking metadata
 ├── sessions.json              # Per-chat conversation session ids + hashes
@@ -77,7 +78,16 @@ Long-term memory is everything that survives between sessions. It lives on disk 
 
 **Daily files** (`memory/YYYY-MM-DD.md`) are append-only logs. Every time the agent decides something is worth saving during a conversation, it appends a timestamped entry to today's file. Entries include the content, a type label (note, image, link, voice), and optional tags.
 
-**MEMORY.md** is the permanent knowledge base. It holds curated, structured facts about you — preferences, people, projects, decisions. It is populated either manually (when the agent saves with `permanent=true`) or automatically through consolidation.
+**MEMORY.md** is the overview of you: a holistic **profile** (who you are, the people and pets in your life, work and projects, health, finances in broad strokes, preferences, open threads) plus an **index** that points to the notes holding the details:
+
+```
+- Bekele (dog; also Izi, Beka) → memory/2026-04-18.md
+## Index
+### Credentials
+- Lion8 prod login and SSH commands → memory/2026-05-12.md, memory/2026-06-13.md
+```
+
+Details — credentials, document numbers, instructions, receipts — stay in the daily files and other notes, which are never deleted. MEMORY.md summarizes and points; it doesn't copy. It has a single writer, consolidation: the agent never writes it directly (`memory_save` has no "permanent" option, and `file_write` refuses MEMORY.md and the daily notes, which it may still read). So the daily files are the complete, append-only record, and whatever a consolidation does to MEMORY.md, it can be rebuilt from them.
 
 ### How Memories Get Saved
 
@@ -87,7 +97,7 @@ The agent — not the handler, not a pre-processing step — decides what to sav
 - **Rephrase it** if the verbatim text is messy but the information matters.
 - **Skip it** if it's trivial ("hey", "ok", "thanks").
 
-For durable facts like your name, preferences, or major decisions, the agent saves directly to MEMORY.md using `permanent=true`. Everything else goes to the daily file.
+Everything goes to today's daily file — durable facts like your name, preferences or major decisions included. They reach MEMORY.md at the next consolidation, after the day is over; until then they're in today's notes, indexed right away, so search (and the per-message context) finds them.
 
 ### Consolidation
 
@@ -95,22 +105,31 @@ Daily files accumulate over time. Consolidation is a periodic process that disti
 
 **When it runs:**
 
-- Automatically, in the background after each reply, if 7 or more daily files haven't been consolidated yet. At most one consolidation runs at a time; failures are logged and retried after a later message.
+- Automatically, in the background after a reply, once a past day has notes that aren't consolidated yet — in practice after your first message of the next day you wrote in (days without notes cost nothing; after a few quiet days it catches up in one call). `consolidation_threshold` (default 1) raises the number of pending days to wait for. At most one consolidation runs at a time; a failure is logged and retried after a reply an hour or more later.
 - Manually, via the `memclaw consolidate` CLI command (which forces it regardless of count).
+
+Today's file is never consolidated: it is still being written to, and marking it done would skip everything saved later that day. It is picked up once the day is over.
 
 **What it does:**
 
-1. Collects all unconsolidated daily files (up to 30,000 characters).
+1. Collects unconsolidated daily files from before today, oldest first, as whole files up to 80,000 characters (~20k tokens). Files that don't fit wait for the next run (a single file larger than the budget is sent truncated, so it can't block consolidation).
 2. Reads the current MEMORY.md.
-3. Sends both to the agent backend (a short-lived, tool-free call) with instructions to extract durable facts, merge with existing content, remove outdated entries, and output a clean structured document.
-4. Overwrites MEMORY.md with the result.
-5. Records the latest consolidated date in `meta.json` so those files aren't processed again.
+3. Sends them, with today's date and a list of the vault's other notes (name, size, first line), to the agent backend (a short-lived, tool-free call). With Claude it runs on its own model, Opus 5.5 at medium effort by default (`CLAUDE_CONSOLIDATION_MODEL` / `CLAUDE_CONSOLIDATION_EFFORT`; another model gets no effort setting unless one is configured), independent of the chat model. The prompt asks for the profile + index described above, and:
+   - details are referenced, never copied — written exactly as `→ memory/YYYY-MM-DD.md` (or `→ todos.md` for another note), pointing to the latest entry when a detail was updated; the one exception is a value that exists only in the current MEMORY.md with no note behind it, which is kept as is (never replaced by a placeholder);
+   - only what the sources say; each fact stays with the right person;
+   - later entries win, and an explicit correction ("ISPRAVKA", "correction") overrides what it corrects;
+   - existing facts and references stay unless updated or expired;
+   - left out entirely: expired one-offs (verification codes, past events, finished trips' bookings), links saved to read later (they stay searchable), instructions for the assistant (they belong in AGENTS.md), small talk.
 
-The result is a MEMORY.md organized into sections like Preferences, Projects, People, Key Facts, and Decisions — with the most important information at the top.
+   A wrapping ```` ``` ```` fence in the reply is stripped, and every reference is checked: one to a note that doesn't exist is dropped, one whose note shares no word with the line is logged as unconfirmed.
+4. Saves a dated copy of the previous MEMORY.md in `.history/` (the last 60 are kept; the hidden directory isn't indexed or reachable by the file tools), then overwrites MEMORY.md with the result. Lines appended by hand while the backend was working are carried over below the result; if MEMORY.md was otherwise edited meanwhile, nothing is written and consolidation retries later.
+5. Records the date of the last file it included in `meta.json` so those files aren't processed again.
+
+The result aims for about 6,000 characters, with absolute dates, in the language MEMORY.md already uses (English when it starts empty).
 
 ### Permanent Memory in the Prompt
 
-MEMORY.md goes into the session's system prompt in full (consolidation keeps it under ~5,000 characters; anything past 20,000 characters is cut with a note pointing the agent to `memory_search`). Since the system prompt is cached, carrying the whole file costs little. When consolidation rewrites MEMORY.md mid-conversation, the new version reaches the session through the context block as described above.
+MEMORY.md goes into the session's system prompt in full (consolidation aims for ~6,000 characters; anything past 20,000 characters is cut with a note pointing the agent to `memory_search`). The system prompt tells the agent that `→ file` lines are references: when you need a detail — an exact value, a number, instructions — it opens the note with `file_read` and answers from it rather than from the summary. Secrets and document numbers therefore aren't sent with every message, only when asked for. Since the system prompt is cached, carrying the whole file costs little. When consolidation rewrites MEMORY.md mid-conversation, the new version reaches the session through the context block as described above.
 
 ---
 
@@ -125,7 +144,9 @@ Every search combines two strategies:
 - **Vector search (70% weight):** Each memory chunk has an embedding vector (from OpenAI's `text-embedding-3-small`). The query is embedded too, and cosine similarity finds the semantically closest chunks. This catches meaning even when the words are different — searching "canine" finds "my dog Max".
 - **Keyword search (30% weight):** SQLite FTS5 with BM25 scoring. This catches exact matches that vector search might miss — searching "2025-03-01" finds entries with that literal date.
 
-The two score lists are normalized and merged with configurable weights.
+The keyword query is built from the message, not passed to FTS5 as-is: each word is quoted (so punctuation like `What's` or `INV-48213` can't break the query syntax), very common words are dropped, and the rest are OR-ed, so BM25 ranks chunks by how many — and how rare — the matching words are.
+
+Both score lists are normalized to 0–1 (vector scores min-max over the candidates, keyword scores relative to the best BM25 match) and merged with configurable weights.
 
 ### Temporal Decay
 
@@ -159,17 +180,16 @@ This means searching "pizza" returns diverse results (your preference, a restaur
 
 ### File Filtering
 
-Search can be restricted to a specific file by passing a `file_filter` string. It filters results by checking if the file path contains the given substring.
+Search can be restricted to a specific file by passing a `file_filter` string. It filters results by checking if the file path contains the given substring. The filter is applied while merging, before candidates are cut to the oversampling limit, so matches in the filtered file aren't crowded out by other files.
 
 ### Full Search Pipeline
 
 For each search call, the pipeline runs in this order:
 
 1. **Embed the query** using OpenAI.
-2. **Vector search** — retrieve 3x the requested limit as candidates.
-3. **Keyword search** — retrieve 3x the requested limit as candidates.
-4. **Merge** — combine and score using weighted blend.
-5. **File filter** — restrict to specific file if requested.
+2. **Vector search** — retrieve 3x the requested limit as candidates (all chunks with a file filter).
+3. **Keyword search** — retrieve 3x the requested limit as candidates (all chunks with a file filter).
+4. **Merge + file filter** — combine and score using weighted blend, keeping only the filtered file if requested.
 6. **Temporal decay** — reduce scores for older daily files.
 7. **MMR deduplication** — greedily select diverse top-k results.
 8. **Return** the final limited result set.
@@ -190,35 +210,43 @@ The cache is also model-aware — if you switch embedding models, cached embeddi
 
 During search, all chunk embeddings need to be loaded from SQLite into a numpy matrix for cosine similarity computation. To avoid doing this on every search, the matrix is cached in memory.
 
-Before each vector search, the system checks if the chunk count has changed. If it hasn't, the cached matrix is reused. If new chunks were added, the matrix is rebuilt. This makes repeated searches with no index changes effectively free.
+Before each vector search, the system checks the chunk count and the highest chunk id. Re-indexing a file replaces its rows with new ids, so any change — including a rewrite that keeps the same number of chunks, like a consolidation — rebuilds the matrix; otherwise the cached one is reused. This makes repeated searches with no index changes effectively free.
+
+### What Gets Indexed
+
+Every `.md` file under `~/.memclaw/` — MEMORY.md, the daily files, and files the agent creates with `file_write` (e.g. `todos.md`) — except AGENTS.md (instructions, already in the system prompt, not memories) and anything in a hidden directory (e.g. `.cursor/`).
+
+Files are chunked per entry: the `---` line `memory_save` writes after each entry ends a chunk, so a search hit is one entry, without the text or heading of the entry before it. A heading starts a new chunk once the current one is half full. Only an entry longer than ~300 words is split by size, with 60 words of overlap and its heading repeated on each part.
+
+Re-indexing a file fetches its embeddings first and then swaps its chunks in one transaction, so a failed embedding call leaves the previous chunks in place. A file emptied on disk loses its chunks.
 
 ### Index Sync Strategy
 
 Rather than scanning the entire filesystem on every search, indexing is event-driven:
 
-- **Write-time indexing:** When the agent saves a memory, that specific file is indexed immediately after writing.
-- **Startup sync:** A full filesystem scan runs once when the agent starts, catching any changes made while it was offline.
-- **Background sync (Telegram bot):** A periodic task runs every 60 seconds to pick up external edits without blocking the search path.
+- **Write-time indexing:** When the agent saves a memory (or writes a `.md` file with `file_write`), that file is indexed immediately after writing. If indexing fails (e.g. OpenAI is unreachable), the write still counts as saved and the next sync indexes it.
+- **Startup sync:** A full filesystem scan runs once when the agent starts, catching any changes made while it was offline (any mtime change, including a file restored with an older mtime). A failed startup sync is logged and doesn't stop the agent.
+- **Background sync (bots):** A periodic task runs every 60 seconds to pick up external edits without blocking the search path. Failures are logged and retried on the next tick.
 - **Search path:** No sync. Search trusts that the index is up-to-date from the above mechanisms.
 
 ---
 
 ## Image Memory
 
-Memclaw can also store and retrieve images, primarily through the Telegram bot.
+Memclaw can also store and retrieve images sent through Telegram, WhatsApp or Slack.
 
 ### Saving
 
-When you send a photo on Telegram, the agent sees the image (via base64), generates a detailed text description of what's in it, and saves:
+When you send a photo, the agent sees the image (via base64), generates a detailed text description of what's in it, and saves (`image_save`):
 
 1. The description as a text entry in the daily file.
-2. The Telegram `file_id`, description, caption, and an embedding vector in the `telegram_images` table.
+2. The platform, its media reference (Telegram `file_id`, WhatsApp media path, Slack file), description, caption, and an embedding vector in the `platform_images` table.
 
-For local images (CLI mode), the file path and any caption are saved as a text memory entry.
+For local images (CLI mode), the file path and any caption are saved the same way, under the platform `local`.
 
 ### Retrieval
 
-When you ask "show me that photo of the sunset," the agent runs a vector search over the `telegram_images` table using the query's embedding. Matching images are returned by `file_id` and sent back through Telegram automatically.
+When you ask "show me that photo of the sunset," the agent runs `image_search`: a vector search over the `platform_images` table using the query's embedding, limited to images saved on the platform you're talking on (a Telegram `file_id` can't be sent through Slack; the terminal searches every platform). It returns the 5 closest images with their ids and descriptions and sends nothing. The agent reads the descriptions and calls `image_send` with the ids of the images that are what you asked for — a similarity score alone can't tell your passport from your ID card when both descriptions mention your name — and each image goes out at most once per reply, even after several searches.
 
 ---
 
@@ -237,7 +265,23 @@ All memory-related settings live in `MemclawConfig`:
 | `text_weight` | `0.3` | Weight for keyword search in hybrid merge |
 | `decay_half_life_days` | `30` | Days until a daily memory's score halves (0 = disabled) |
 | `mmr_lambda` | `0.7` | Relevance vs. diversity trade-off in MMR (1.0 = pure relevance) |
-| `consolidation_threshold` | `7` | Number of unconsolidated daily files before auto-consolidation |
+| `consolidation_threshold` | `1` | Past days with unconsolidated notes before auto-consolidation (1 = after each day) |
+| `claude_consolidation_model` | `claude-opus-5-5` | Claude model for consolidation (`CLAUDE_CONSOLIDATION_MODEL`) |
+| `claude_consolidation_effort` | `medium` | Effort for consolidation (`CLAUDE_CONSOLIDATION_EFFORT`) |
+
+---
+
+## Validation
+
+Unit tests (`pytest`) run offline: OpenAI embeddings are replaced by a hashed bag-of-words fake, and the agent runs against a fake backend.
+
+The end-to-end suite in `tests/e2e/` exercises the real stack — OpenAI embeddings, the SQLite index and a real Claude backend — against a throwaway vault in a temp directory (`~/.memclaw` is never touched):
+
+```bash
+MEMCLAW_E2E=1 pytest tests/e2e -v
+```
+
+It covers retrieval (recall on a seeded vault, keyword search on natural-language questions and identifiers, index freshness after rewrites, what gets indexed, image scoping, file guardrails) and the agent (save then recall after `/new`, a durable fact reaching MEMORY.md through the next day's consolidation, resuming after a restart, saved instructions, an OpenAI outage, consolidation with a concurrent save, the consolidation prompt's promises — details referenced not copied, every reference resolving, a value with no note behind it kept, corrections applied, facts kept with the right person, links, expired one-offs and assistant instructions left out — and the agent following a reference to answer with an exact value when search is down). `MEMCLAW_E2E_MODEL` picks the Claude model and `MEMCLAW_E2E_CONSOLIDATION_MODEL` the consolidation model (both default to `claude-haiku-5-5`; production consolidation uses Opus 5.5).
 
 ---
 
@@ -258,7 +302,8 @@ User Message (chat → session key)
 │           ├─ memory_save   → write to daily file or MEMORY.md → index
 │           ├─ memory_search → run full search pipeline
 │           ├─ image_save    → store image metadata
-│           └─ image_search  → vector search over image descriptions
+│           ├─ image_search  → vector search over image descriptions (candidates)
+│           └─ image_send    → send the chosen images with the reply
 ├─ 4. Save the session id + AGENTS.md / MEMORY.md hashes
 ├─ 5. Schedule consolidation in the background (if threshold reached)
 │

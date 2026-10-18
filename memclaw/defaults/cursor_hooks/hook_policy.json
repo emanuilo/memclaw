@@ -7,6 +7,7 @@
     "file_write",
     "image_save",
     "image_search",
+    "image_send",
     "memory_save",
     "memory_search",
     "reminder_cancel",

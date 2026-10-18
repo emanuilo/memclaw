@@ -46,6 +46,10 @@ if TYPE_CHECKING:
 
 _DEFAULT_MODEL = "claude-sonnet-5-5"
 
+# Memory consolidation: rare and one-shot, so a stronger model is worth it.
+_DEFAULT_CONSOLIDATION_MODEL = "claude-opus-5-5"
+_DEFAULT_CONSOLIDATION_EFFORT = "medium"
+
 # Used when CLAUDE_EFFORT is unset and the default model runs, and
 # preselected in the wizard for any model that supports effort at all.
 _DEFAULT_EFFORT = "medium"
@@ -125,6 +129,21 @@ def _resolve_effort(config: "MemclawConfig") -> str | None:
     if effort in SDK_EFFORT_LEVELS:
         return effort
     return _DEFAULT_EFFORT if _resolve_model(config) == _DEFAULT_MODEL else None
+
+
+def _resolve_consolidation(config: "MemclawConfig") -> tuple[str, str | None]:
+    """(model, effort) for consolidation: CLAUDE_CONSOLIDATION_MODEL /
+    CLAUDE_CONSOLIDATION_EFFORT, else Opus 5.5 at medium. As in
+    `_resolve_effort`, an unknown level counts as unset, and an unset level
+    means the default effort only on the default model (another model may
+    not take an effort at all)."""
+    model = (config.claude_consolidation_model or "").strip() or _DEFAULT_CONSOLIDATION_MODEL
+    effort = (config.claude_consolidation_effort or "").strip().lower()
+    if effort in SDK_EFFORT_LEVELS:
+        return model, effort
+    if model == _DEFAULT_CONSOLIDATION_MODEL:
+        return model, _DEFAULT_CONSOLIDATION_EFFORT
+    return model, None
 
 
 def _fit_effort(levels: list[str], preferred: str) -> str | None:
@@ -295,9 +314,11 @@ class ClaudeAgentBackend(ModelSelectionMixin):
 
     @classmethod
     def status_rows(cls, config: "MemclawConfig") -> list[tuple[str, str]]:
+        consolidation_model, consolidation_effort = _resolve_consolidation(config)
         return [
             ("Model", _resolve_model(config)),
             ("Effort", _resolve_effort(config) or "default"),
+            ("Consolidation", f"{consolidation_model} ({consolidation_effort or 'default'})"),
         ]
 
     @classmethod
@@ -484,13 +505,15 @@ class ClaudeAgentBackend(ModelSelectionMixin):
 
     # -- Sessions ----------------------------------------------------------
 
-    def _options(self, *, system_prompt: str, max_turns: int, **extra: Any) -> ClaudeAgentOptions:
+    def _options(
+        self, *, model: str, effort: str | None, system_prompt: str, max_turns: int, **extra: Any,
+    ) -> ClaudeAgentOptions:
         """The locked-down CLI options every call shares (chat sessions and
-        one-shots alike), plus *extra*."""
+        consolidation alike), plus *extra*."""
         return ClaudeAgentOptions(
             env=self._env,
-            model=self._model,
-            effort=self._effort,
+            model=model,
+            effort=effort,
             system_prompt=system_prompt,
             # Don't load ~/.claude settings, plugins, CLAUDE.md or the user's
             # MCP servers: faster startup and nothing outside our control.
@@ -511,6 +534,8 @@ class ClaudeAgentBackend(ModelSelectionMixin):
         self, *, system_prompt: str, resume: str | None, max_turns: int,
     ) -> ClaudeAgentOptions:
         return self._options(
+            model=self._model,
+            effort=self._effort,
             system_prompt=system_prompt,
             max_turns=max_turns,
             # Claude Code stores sessions per working directory; a fixed one
@@ -610,7 +635,9 @@ class ClaudeAgentBackend(ModelSelectionMixin):
         system_prompt: str,
         user_message: str,
     ) -> str:
-        options = self._options(system_prompt=system_prompt, max_turns=1)
+        # Only memory consolidation uses one-shot calls.
+        model, effort = _resolve_consolidation(self.config)
+        options = self._options(model=model, effort=effort, system_prompt=system_prompt, max_turns=1)
 
         result_text = ""
         async with ClaudeSDKClient(options=options) as client:

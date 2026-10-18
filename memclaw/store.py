@@ -21,23 +21,22 @@ class MemoryStore:
         self,
         content: str,
         *,
-        permanent: bool = False,
         entry_type: str = "note",
         tags: list[str] | None = None,
     ) -> Path:
-        """Append a new entry to a memory file.
+        """Append a new entry to today's daily file.
+
+        The daily files are the complete, append-only record. MEMORY.md is
+        written only by consolidation, which distills it from them.
 
         Args:
             content: The text content to save.
-            permanent: If True, append to MEMORY.md. Otherwise, use today's daily file.
             entry_type: Type label (note, image, link, voice).
             tags: Optional tags for categorization.
 
         Returns:
-            Path to the file where content was saved.
+            Path to the daily file.
         """
-        target = self.config.memory_file if permanent else self.config.daily_file()
-
         now = datetime.now()
         timestamp = now.strftime("%H:%M")
 
@@ -47,18 +46,12 @@ class MemoryStore:
             entry += f"\nTags: {', '.join(tags)}\n"
         entry += "\n---\n"
 
-        if not target.exists():
-            header = (
-                "# Personal Memory\n\n"
-                if permanent
-                else f"# {date.today().strftime('%A, %B %d, %Y')}\n\n"
-            )
-            target.write_text(header)
-
-        with open(target, "a") as f:
+        daily = self.config.daily_file()
+        if not daily.exists():
+            daily.write_text(f"# {date.today().strftime('%A, %B %d, %Y')}\n\n")
+        with open(daily, "a") as f:
             f.write(entry)
-
-        return target
+        return daily
 
     def read_file(self, path: Path) -> str:
         if path.exists():

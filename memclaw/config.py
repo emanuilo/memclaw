@@ -42,6 +42,10 @@ class MemclawConfig:
     # default" -- see memclaw.backends.claude.
     claude_model: str = ""
     claude_effort: str = ""
+    # Model / effort for memory consolidation (a rare, one-shot call where
+    # a stronger model pays off). Empty means the built-in default.
+    claude_consolidation_model: str = ""
+    claude_consolidation_effort: str = ""
 
     # Cursor SDK backend settings
     cursor_api_key: str = ""
@@ -49,8 +53,9 @@ class MemclawConfig:
     cursor_effort: str = ""
     mcp_http_port: int = 17373
 
-    # Memory consolidation
-    consolidation_threshold: int = 7
+    # Memory consolidation: runs (after a reply) once this many past days
+    # have notes that aren't in MEMORY.md yet. 1 = after each day.
+    consolidation_threshold: int = 1
 
     # Telegram bot settings
     telegram_bot_token: str = ""
@@ -77,6 +82,10 @@ class MemclawConfig:
             self.claude_model = os.environ.get("CLAUDE_MODEL", "")
         if not self.claude_effort:
             self.claude_effort = os.environ.get("CLAUDE_EFFORT", "")
+        if not self.claude_consolidation_model:
+            self.claude_consolidation_model = os.environ.get("CLAUDE_CONSOLIDATION_MODEL", "")
+        if not self.claude_consolidation_effort:
+            self.claude_consolidation_effort = os.environ.get("CLAUDE_CONSOLIDATION_EFFORT", "")
         if not self.cursor_api_key:
             self.cursor_api_key = os.environ.get("CURSOR_API_KEY", "")
         if not self.cursor_model:

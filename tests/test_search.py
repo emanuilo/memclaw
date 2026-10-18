@@ -204,7 +204,7 @@ class TestFileFilter:
 class TestVectorSearchCache:
     def test_cache_initialized_empty(self, hs: HybridSearch):
         assert hs._embedding_cache is None
-        assert hs._cache_chunk_count == 0
+        assert hs._cache_key == (0, 0)
 
     def test_cache_populated_after_first_search(self, hs: HybridSearch, idx: MemoryIndex):
         """After a vector search with data, the cache should be populated."""
@@ -221,7 +221,7 @@ class TestVectorSearchCache:
         hs._vector_search(query, limit=10)
 
         assert hs._embedding_cache is not None
-        assert hs._cache_chunk_count == 1
+        assert hs._cache_key[0] == 1
 
     def test_cache_reused_on_same_count(self, hs: HybridSearch, idx: MemoryIndex):
         """When chunk count hasn't changed, the cached matrix is reused."""
@@ -253,7 +253,7 @@ class TestVectorSearchCache:
 
         query = np.random.randn(1536).astype(np.float32)
         hs._vector_search(query, limit=10)
-        assert hs._cache_chunk_count == 1
+        assert hs._cache_key[0] == 1
 
         # Add another chunk
         emb2 = np.random.randn(1536).astype(np.float32)
@@ -265,9 +265,76 @@ class TestVectorSearchCache:
         idx.db.commit()
 
         hs._vector_search(query, limit=10)
-        assert hs._cache_chunk_count == 2
+        assert hs._cache_key[0] == 2
 
     def test_empty_index_returns_empty(self, hs: HybridSearch):
         query = np.random.randn(1536).astype(np.float32)
         results = hs._vector_search(query, limit=10)
         assert results == []
+
+
+# ────────────────────────────────────────────────────────────────────
+# Keyword search, score merging and cache invalidation
+# ────────────────────────────────────────────────────────────────────
+
+async def _index_text(idx: MemoryIndex, cfg: MemclawConfig, name: str, text: str) -> Path:
+    path = cfg.memory_dir / name
+    path.write_text(text)
+    await idx.index_file(path)
+    return path
+
+
+class TestKeywordSearch:
+    def test_fts_query_quotes_words_and_drops_noise(self):
+        q = HybridSearch._fts_query("What's the plumber's invoice INV-48213?")
+        assert q == '"plumber" OR "invoice" OR "inv" OR "48213"'
+
+    def test_fts_query_of_only_stopwords_is_none(self):
+        assert HybridSearch._fts_query("is it?") is None
+
+    @pytest.mark.asyncio
+    async def test_punctuation_and_operators_do_not_break_search(self, cfg, idx, hs):
+        await _index_text(idx, cfg, "a.md", "The plumber's invoice is INV-48213.")
+        for query in ('What\'s the invoice?', 'invoice AND (NOT "x', "INV-48213", "invoice* OR -plumber"):
+            assert hs._keyword_search(query, limit=5), query
+
+    @pytest.mark.asyncio
+    async def test_best_bm25_match_scores_highest(self, cfg, idx, hs):
+        await _index_text(idx, cfg, "a.md", "zebra zebra zebra crossing")
+        await _index_text(idx, cfg, "b.md", "a documentary about lions, one zebra and many other animals")
+        hits = dict(hs._keyword_search("zebra", limit=5))
+        strong = idx.db.execute("SELECT id FROM chunks WHERE content LIKE 'zebra zebra%'").fetchone()[0]
+        assert hits[strong] == 1.0
+        assert min(hits.values()) < 1.0
+
+
+class TestMergeScores:
+    def test_single_vector_hit_is_not_zeroed(self, hs: HybridSearch, idx: MemoryIndex):
+        idx.db.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, content, embedding, file_mtime) "
+            "VALUES ('a.md', 0, 0, 'only chunk', NULL, 1.0)"
+        )
+        cid = idx.db.execute("SELECT id FROM chunks").fetchone()[0]
+        results = hs._merge([(cid, 0.42)], [], limit=5)
+        assert results[0].score == pytest.approx(hs.config.vector_weight)
+
+
+class TestCacheInvalidation:
+    @pytest.mark.asyncio
+    async def test_reindex_with_same_chunk_count_refreshes_matrix(self, cfg, idx, hs):
+        path = await _index_text(idx, cfg, "a.md", "I drink oat milk.")
+        await hs.search("milk", limit=3)
+        path.write_text("I am allergic to penicillin.")
+        await idx.index_file(path)
+        results = await hs.search("penicillin allergy", limit=3)
+        assert results and "penicillin" in results[0].content
+
+
+class TestFileFilterBeforeTruncation:
+    @pytest.mark.asyncio
+    async def test_filter_finds_matches_crowded_out_by_other_files(self, cfg, idx, hs):
+        for i in range(12):
+            await _index_text(idx, cfg, f"other{i}.md", f"coffee beans note number {i}")
+        await _index_text(idx, cfg, "target.md", "tea leaves")
+        results = await hs.search("coffee beans", limit=1, file_filter="target.md")
+        assert [Path(r.file_path).name for r in results] == ["target.md"]
