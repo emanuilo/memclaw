@@ -502,32 +502,45 @@ class ClaudeAgentBackend:
 
     # -- Sessions ----------------------------------------------------------
 
-    def _session_options(
-        self, *, system_prompt: str, resume: str | None, max_turns: int,
+    def _options(
+        self, *, model: str, effort: str | None, system_prompt: str, max_turns: int, **extra: Any,
     ) -> ClaudeAgentOptions:
+        """The locked-down CLI options every call shares (chat sessions and
+        consolidation alike), plus *extra*."""
         return ClaudeAgentOptions(
             env=self._env,
-            model=self._model,
-            effort=self._effort,
+            model=model,
+            effort=effort,
             system_prompt=system_prompt,
-            # Claude Code stores sessions per working directory; a fixed one
-            # lets a restarted process find (and resume) them.
-            cwd=str(self.config.memory_dir),
             # Don't load ~/.claude settings, plugins, CLAUDE.md or the user's
             # MCP servers: faster startup and nothing outside our control.
             setting_sources=[],
             strict_mcp_config=True,
-            mcp_servers={MCP_SERVER_NAME: self._mcp_server},
             # No built-in tools at all; only our in-process mcp__memclaw__*.
             tools=[],
-            allowed_tools=_ALLOWED_TOOLS,
             # Anything not in allowed_tools is denied, never prompted for.
             permission_mode="dontAsk",
             # No @file expansion / slash commands from chat text.
             verbatim_prompts=True,
             max_turns=max_turns,
-            resume=resume,
             stderr=lambda line: logger.debug("claude-cli: {line}", line=line.rstrip()),
+            **extra,
+        )
+
+    def _session_options(
+        self, *, system_prompt: str, resume: str | None, max_turns: int,
+    ) -> ClaudeAgentOptions:
+        return self._options(
+            model=self._model,
+            effort=self._effort,
+            system_prompt=system_prompt,
+            max_turns=max_turns,
+            # Claude Code stores sessions per working directory; a fixed one
+            # lets a restarted process find (and resume) them.
+            cwd=str(self.config.memory_dir),
+            mcp_servers={MCP_SERVER_NAME: self._mcp_server},
+            allowed_tools=_ALLOWED_TOOLS,
+            resume=resume,
         )
 
     async def _connect(
@@ -668,17 +681,7 @@ class ClaudeAgentBackend:
     ) -> str:
         # Only memory consolidation uses one-shot calls.
         model, effort = _resolve_consolidation(self.config)
-        options = ClaudeAgentOptions(
-            env=self._env,
-            model=model,
-            effort=effort,
-            system_prompt=system_prompt,
-            setting_sources=[],
-            strict_mcp_config=True,
-            tools=[],
-            verbatim_prompts=True,
-            max_turns=1,
-        )
+        options = self._options(model=model, effort=effort, system_prompt=system_prompt, max_turns=1)
 
         result_text = ""
         async with ClaudeSDKClient(options=options) as client:
@@ -735,26 +738,28 @@ class ClaudeAgentBackend:
                 await self._disconnect(session)
                 raise
 
-        # Turn the session's running total into this turn's cost. Without a
-        # baseline (first turn after a restart resumed it) estimate instead.
+        result.cost_usd = self._turn_cost(result, resume_session_id)
+        return result
+
+    def _turn_cost(self, result: TurnResult, resume_session_id: str | None) -> float | None:
+        """This turn's cost from the session's running total, which is what
+        the CLI reports. Without a baseline (the first turn after a restart
+        resumed the session) it is estimated from the token counts instead."""
         total = result.cost_usd
-        result.cost_usd = None
         if total is not None and result.session_id:
             previous = self._session_costs.get(result.session_id)
             self._session_costs[result.session_id] = total
             if previous is not None or resume_session_id != result.session_id:
-                result.cost_usd = max(total - (previous or 0.0), 0.0)
-
-        # Fallback cost estimate when the SDK didn't supply a usable one.
-        if result.cost_usd is None and self.bills_per_token:
-            input_per_m, output_per_m = _prices_per_m(self._model)
-            result.cost_usd = (
-                result.input_tokens * input_per_m
-                + result.output_tokens * output_per_m
-                + result.cache_read_tokens * input_per_m * _CACHE_READ_MULTIPLIER
-                + result.cache_creation_tokens * input_per_m * _CACHE_WRITE_MULTIPLIER
-            ) / 1_000_000
-        return result
+                return max(total - (previous or 0.0), 0.0)
+        if not self.bills_per_token:
+            return None
+        input_per_m, output_per_m = _prices_per_m(self._model)
+        return (
+            result.input_tokens * input_per_m
+            + result.output_tokens * output_per_m
+            + result.cache_read_tokens * input_per_m * _CACHE_READ_MULTIPLIER
+            + result.cache_creation_tokens * input_per_m * _CACHE_WRITE_MULTIPLIER
+        ) / 1_000_000
 
     @staticmethod
     async def _query(

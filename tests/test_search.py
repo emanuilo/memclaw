@@ -1,10 +1,8 @@
 """Tests for HybridSearch — decay, MMR, file_filter, vector caching (specs #3–5, #8)."""
 from __future__ import annotations
 
-import math
 from datetime import date, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pytest
