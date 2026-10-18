@@ -783,6 +783,17 @@ class TestCursorModelSelection:
             await backend.set_model("nope")
 
     @pytest.mark.asyncio
+    async def test_switch_is_refused_when_the_list_is_unavailable(self, tmp_path):
+        backend = _backend(tmp_path)
+        client = _make_client()
+        client.models.list.side_effect = RuntimeError("offline")
+
+        with _patched(backend, client), pytest.raises(ValueError, match="Couldn't load"):
+            await backend.set_model("composr-2.5")
+        assert backend.model == "composer-2.5"
+        assert "CURSOR_MODEL" not in self._env()
+
+    @pytest.mark.asyncio
     async def test_effort_is_sent_as_model_parameter(self, tmp_path):
         backend = _backend(tmp_path)
         agent = _make_agent()

@@ -13,7 +13,7 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import httpx
 from loguru import logger
@@ -23,6 +23,7 @@ from .claude_models import ModelInfo
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks
 from .cursor_sdk_adapter import RunUsageTracker, collect_run_result, extract_run_text
 from .mcp_bridge import HttpMcpServer, mcp_servers_for
+from .model_selection import ModelSelectionMixin
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -180,9 +181,11 @@ class _Session:
     client: Any = None
 
 
-class CursorAgentBackend:
+class CursorAgentBackend(ModelSelectionMixin):
     """Cursor Python SDK implementation of the AgentBackend protocol."""
 
+    _label = "Cursor"
+    _env_prefix = "CURSOR"
     name: ClassVar[str] = "cursor"
     display_name: ClassVar[str] = "Cursor SDK"
     supports_model_selection: ClassVar[bool] = True
@@ -391,6 +394,50 @@ class CursorAgentBackend:
                 )
         return await client.agents.create(options), True
 
+    async def _ensure_agent(
+        self, session: _Session, client: Any, *, resume: str | None, mcp_servers: dict[str, Any],
+    ) -> Literal["open", "resumed", "created"]:
+        """Give *session* an open agent on *client*: the one it already has,
+        else agent *resume* resumed, else a new one. Returns which."""
+        if session.agent is not None and session.client is client:
+            return "open"
+        # None yet, or it lived on a bridge that has since been relaunched.
+        session.agent, is_new = await self._open_agent(
+            client, resume=resume, mcp_servers=mcp_servers,
+        )
+        session.client = client
+        return "created" if is_new else "resumed"
+
+    async def _send(
+        self,
+        agent: Any,
+        message: Any,
+        *,
+        mcp_servers: dict[str, Any],
+        force: bool,
+        max_turns: int,
+        on_tool: ProgressCallback | None,
+    ) -> TurnResult:
+        from cursor_sdk import LocalSendOptions, SendOptions
+
+        usage_tracker = RunUsageTracker()
+        run = await agent.send(
+            message,
+            SendOptions(
+                # Passed on every send: a resumed agent doesn't remember its
+                # model, and /model takes effect here.
+                model=await self._model_selection(),
+                mcp_servers=mcp_servers,
+                on_delta=usage_tracker.on_delta,
+                local=LocalSendOptions(force=True) if force else None,
+            ),
+        )
+        result = await collect_run_result(
+            run, max_turns=max_turns, usage_tracker=usage_tracker, on_tool=on_tool,
+        )
+        result.session_id = agent.agent_id
+        return result
+
     async def reset_session(self, session_key: str) -> None:
         session = self._sessions.get(session_key)
         if session is None:
@@ -399,14 +446,6 @@ class CursorAgentBackend:
             await self._close_agent(session)
 
     # -- Model selection ---------------------------------------------------
-
-    @property
-    def model(self) -> str:
-        return self._model
-
-    @property
-    def effort(self) -> str | None:
-        return self._effort
 
     async def list_models(self) -> list[ModelInfo]:
         client = await self._get_client()
@@ -426,17 +465,6 @@ class CursorAgentBackend:
         self._models, self._effort_params = infos, params
         return infos
 
-    async def _model_info(self, model_id: str) -> ModelInfo | None:
-        """*model_id*'s entry in the model list, or None if it isn't listed
-        or the list can't be fetched."""
-        if not self._models:
-            try:
-                await self.list_models()
-            except Exception as exc:
-                logger.warning("Could not fetch the Cursor model list: {exc}", exc=exc)
-                return None
-        return next((m for m in self._models if m.id == model_id), None)
-
     async def _model_selection(self) -> Any:
         """The model (and effort parameter, if set) to run with."""
         from cursor_sdk import ModelParameterValue, ModelSelection
@@ -453,24 +481,19 @@ class CursorAgentBackend:
             params=[ModelParameterValue(id=param, value=self._effort)],
         )
 
-    async def effort_levels(self) -> list[str] | None:
-        info = await self._model_info(self._model)
-        return list(info.effort_levels) if info else None
-
     async def set_model(self, model_id: str) -> str:
-        model_id = model_id.strip()
-        info = await self._model_info(model_id)
-        if info is None and self._models:
-            raise ValueError(f"Unknown model '{model_id}'.")
+        """Switch from the next turn on. The model is passed with every send,
+        so open agents keep their conversation and need no reconnect."""
+        info = await self._known_model(model_id.strip())
         effort = self._effort
         note = ""
-        if info is not None and self._effort and self._effort not in info.effort_levels:
+        if self._effort and self._effort not in info.effort_levels:
             effort = None
             note = (
                 f"{info.display_name} doesn't support '{self._effort}' effort, "
                 "so its default is used."
             )
-        self._apply_model(model_id, effort)
+        self._apply_model(info.id, effort)
         return note
 
     async def set_effort(self, level: str) -> None:
@@ -487,24 +510,6 @@ class CursorAgentBackend:
                 f"Supported: {', '.join(levels)}."
             )
         self._apply_model(self._model, match)
-
-    def _apply_model(self, model: str, effort: str | None) -> None:
-        """Use *model* / *effort* from the next turn on and save them to
-        ~/.memclaw/.env. The model is passed with every send, so open agents
-        keep their conversation and need no reconnect."""
-        from ..setup import update_env_file  # local import — setup imports backends
-
-        logger.info(
-            "Cursor model: {m} effort: {e} -> {m2} effort: {e2}",
-            m=self._model, e=self._effort, m2=model, e2=effort,
-        )
-        self._model, self._effort = model, effort
-        self.config.cursor_model = model
-        self.config.cursor_effort = effort or ""
-        if effort:
-            update_env_file({"CURSOR_MODEL": model, "CURSOR_EFFORT": effort})
-        else:
-            update_env_file({"CURSOR_MODEL": model}, drop_keys=["CURSOR_EFFORT"])
 
     # -- Runtime -----------------------------------------------------------
 
@@ -552,7 +557,7 @@ class CursorAgentBackend:
         max_turns: int = 10,
         on_tool: ProgressCallback | None = None,
     ) -> TurnResult:
-        from cursor_sdk import CursorAgentError, LocalSendOptions, SendOptions
+        from cursor_sdk import CursorAgentError
 
         if not self._api_key:
             raise RuntimeError("CURSOR_API_KEY is not configured")
@@ -566,44 +571,26 @@ class CursorAgentBackend:
         session = self._sessions.setdefault(session_key, _Session())
         async with session.lock:
             client = await self._get_client()
-            if session.agent is not None and session.client is not client:
-                session.agent = None  # its bridge was relaunched
-            opened = is_new = False
             try:
-                if session.agent is None:
-                    session.agent, is_new = await self._open_agent(
-                        client, resume=resume_session_id, mcp_servers=mcp_servers,
-                    )
-                    session.client = client
-                    opened = True
+                agent = await self._ensure_agent(
+                    session, client, resume=resume_session_id, mcp_servers=mcp_servers,
+                )
                 message = _build_user_message(
-                    system_prompt=system_prompt if is_new else "",
+                    # A Cursor agent has no system-prompt field; a new one
+                    # gets it at the top of its first message.
+                    system_prompt=system_prompt if agent == "created" else "",
                     context=context,
                     user_message=user_message,
                     image_b64=image_b64,
                     image_media_type=image_media_type,
                 )
-                usage_tracker = RunUsageTracker()
-                run = await session.agent.send(
-                    message,
-                    SendOptions(
-                        # Passed on every send: a resumed agent doesn't
-                        # remember its model, and /model takes effect here.
-                        model=await self._model_selection(),
-                        mcp_servers=mcp_servers,
-                        on_delta=usage_tracker.on_delta,
-                        # A resumed agent may still show a run that died with
-                        # the previous process; take it over.
-                        local=LocalSendOptions(force=True) if opened and not is_new else None,
-                    ),
+                result = await self._send(
+                    session.agent, message, mcp_servers=mcp_servers,
+                    # A resumed agent may still show a run that died with
+                    # the previous process; take it over.
+                    force=agent == "resumed",
+                    max_turns=max_turns, on_tool=on_tool,
                 )
-                result = await collect_run_result(
-                    run,
-                    max_turns=max_turns,
-                    usage_tracker=usage_tracker,
-                    on_tool=on_tool,
-                )
-                result.session_id = session.agent.agent_id
             except BaseException as exc:
                 # The agent may be mid-run or gone; reopen (resuming) next time.
                 await self._close_agent(session)
