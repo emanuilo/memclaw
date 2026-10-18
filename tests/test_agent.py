@@ -1093,4 +1093,24 @@ class TestReviewFixes:
         assert not await agent.index.sync()  # nothing left to re-index or remove
         paths = {r[0] for r in agent.index.db.execute("SELECT DISTINCT file_path FROM chunks")}
         assert str(cfg.memory_dir / "todos.md") in paths
+
+class TestNewDuringReset:
+    @pytest.mark.asyncio
+    async def test_message_right_after_new_does_not_resume_the_old_session(
+        self, cfg: MemclawConfig, fake_backend: FakeBackend,
+    ):
+        """A message that runs while /new is still disconnecting the backend
+        must start fresh, not resume (and re-save) the old session."""
+        agent = _chat_agent(cfg, fake_backend, platform="slack")
+        await agent.handle("hi", chat_id="C1")
+        seen: list[str | None] = []
+
+        async def slow_reset(key):
+            # The next message arrives while the reset is in progress.
+            await agent.handle("next", chat_id="C1")
+            seen.append(fake_backend.turn_calls[-1]["resume_session_id"])
+
+        fake_backend.reset_session = slow_reset
+        await agent.reset_conversation("C1")
+        assert seen == [None]
         agent.close()

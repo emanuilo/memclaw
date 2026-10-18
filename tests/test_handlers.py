@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import textwrap
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -342,11 +341,12 @@ class TestModelCommand:
             ("Claude Haiku 4.5", "m:claude-haiku-4-5"),
         ]
 
-    def test_long_model_id_falls_back_to_index(self):
-        from memclaw.bot.handlers import model_callback_data
+    def test_long_model_id_falls_back_to_a_hash(self):
+        from memclaw.bot.handlers import _model_key, model_callback_data
 
-        assert model_callback_data(3, "x" * 70) == "mi:3"
-        assert model_callback_data(3, "claude-opus-5") == "m:claude-opus-5"
+        assert model_callback_data("x" * 70) == f"mi:{_model_key('x' * 70)}"
+        assert len(model_callback_data("x" * 70).encode()) <= 64
+        assert model_callback_data("claude-opus-5") == "m:claude-opus-5"
 
     @pytest.mark.asyncio
     async def test_button_press_switches_and_edits_the_menu(self):
@@ -369,7 +369,11 @@ class TestModelCommand:
     async def test_index_button_press(self):
         handlers = _telegram_handlers()
         handlers.agent.backend = backend = _SelectableBackend()
-        await handlers.handle_callback(_callback_update("mi:1"), MagicMock())
+        from memclaw.bot.handlers import _model_key
+
+        await handlers.handle_callback(
+            _callback_update(f"mi:{_model_key('claude-haiku-4-5')}"), MagicMock(),
+        )
         assert backend.model == "claude-haiku-4-5"
 
     @pytest.mark.asyncio

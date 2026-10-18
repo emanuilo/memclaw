@@ -506,15 +506,18 @@ class TestModelSelection:
         assert backend.model == "claude-opus-5"
 
     @pytest.mark.asyncio
-    async def test_any_id_is_accepted_when_the_list_is_unavailable(
+    async def test_switch_is_refused_when_the_list_is_unavailable(
         self, claude_config, env_file,
     ):
+        """An unchecked id (e.g. a typo) would break every turn until .env
+        is fixed by hand, so nothing is switched or saved."""
         backend = self._backend(claude_config)
+        before = backend.model, backend.effort
         with patch("memclaw.backends.claude.fetch_models",
                    AsyncMock(side_effect=httpx.ConnectError("offline"))):
-            await backend.set_model("claude-future-9")
-        assert backend.model == "claude-future-9"
-        assert backend.effort == "high"
+            with pytest.raises(ValueError, match="Couldn't load the model list"):
+                await backend.set_model("claude-opsu-5")
+        assert (backend.model, backend.effort) == before
 
     @pytest.mark.asyncio
     async def test_set_effort(self, claude_config, env_file):
