@@ -333,19 +333,12 @@ class MemclawAgent:
         force: bool = False,
         consolidated_through_override: date | None = None,
     ) -> bool:
-        meta_path = self.config.memory_dir / "meta.json"
-
-        consolidated_through: date | None = None
+        """Distill the daily files not in MEMORY.md yet into it. Returns
+        whether MEMORY.md was rewritten."""
         if consolidated_through_override is not None:
             consolidated_through = consolidated_through_override
-        elif meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text())
-                ct = meta.get("consolidated_through")
-                if ct:
-                    consolidated_through = date.fromisoformat(ct)
-            except (json.JSONDecodeError, ValueError):
-                pass
+        else:
+            consolidated_through = self._read_consolidated_through()
 
         # Today's file is still being written to; it's consolidated once the
         # day is over, so nothing saved later today is skipped.
@@ -359,69 +352,28 @@ class MemclawAgent:
         if len(unconsolidated) < self.config.consolidation_threshold and not force:
             return False
 
-        # Whole files only, oldest first, up to the budget; the rest wait for
-        # the next run. A single file over the budget is sent truncated, or
-        # it would block consolidation forever.
-        daily_content_parts: list[str] = []
-        included: list[Path] = []
-        total_chars = 0
-        for path in unconsolidated:
-            content = self.store.read_file(path)
-            chunk = f"\n### {path.stem}\n\n{content}" if content.strip() else ""
-            if total_chars + len(chunk) > _CONSOLIDATION_BUDGET_CHARS:
-                if not included:
-                    daily_content_parts.append(chunk[:_CONSOLIDATION_BUDGET_CHARS])
-                    included.append(path)
-                break
-            if chunk:
-                daily_content_parts.append(chunk)
-                total_chars += len(chunk)
-            included.append(path)
-
-        daily_text = "\n".join(daily_content_parts)
-        new_consolidated_through = date.fromisoformat(included[-1].stem)
+        daily_text, included = self._daily_text(unconsolidated)
+        through = date.fromisoformat(included[-1].stem)
         if not daily_text.strip():
-            self._write_consolidated_through(meta_path, new_consolidated_through)
+            self._write_consolidated_through(through)
             return False
 
         existing_memory = self.store.read_file(self.config.memory_file)
-        user_message = (
-            f"Today's date: {today.isoformat()}\n\n## Daily Memory Files\n\n" + daily_text
-        )
-        other_notes = self._other_notes_overview()
-        if other_notes:
-            user_message += "\n\n## Other Notes\n\n" + other_notes
-        if existing_memory.strip():
-            user_message += "\n\n## Current MEMORY.md\n\n" + existing_memory
-
-        result_text = await self.backend.run_one_shot(
+        result_text = _strip_fence(await self.backend.run_one_shot(
             system_prompt=_CONSOLIDATION_PROMPT,
-            user_message=user_message,
-        )
-        result_text = _strip_fence(result_text)
+            user_message=self._consolidation_message(today, daily_text, existing_memory),
+        ))
         if not result_text:
             return False
         refs = check_references(result_text, self.config.memory_dir)
-        result_text = refs.text
         for ref in refs.dropped:
             logger.warning("Consolidation referenced a missing note, dropped: {r}", r=ref)
         for ref in refs.unconfirmed:
             logger.warning("Consolidation reference not confirmed by its note: {r}", r=ref)
 
-        # Someone may have appended to MEMORY.md by hand while the backend
-        # was working: carry that over instead of overwriting it. Any other
-        # change (an edit) — try again later.
-        current_memory = self.store.read_file(self.config.memory_file)
-        if not current_memory.startswith(existing_memory):
-            logger.warning("MEMORY.md changed during consolidation; will retry later")
+        if not self._replace_memory(existing_memory, refs.text):
             return False
-        added_since = current_memory[len(existing_memory):]
-
-        if existing_memory.strip():
-            self._save_history(existing_memory)
-        self.config.memory_file.write_text(result_text.rstrip("\n") + "\n" + added_since)
-        self._write_consolidated_through(meta_path, new_consolidated_through)
-
+        self._write_consolidated_through(through)
         try:
             await self.index.index_file(self.config.memory_file)
         except Exception as exc:
@@ -430,9 +382,55 @@ class MemclawAgent:
         logger.info(
             "Consolidation complete: {n} files → MEMORY.md (through {d}){more}",
             n=len(included),
-            d=new_consolidated_through.isoformat(),
+            d=through.isoformat(),
             more=f", {remaining} left for the next run" if remaining else "",
         )
+        return True
+
+    def _daily_text(self, files: list[Path]) -> tuple[str, list[Path]]:
+        """The daily files to send, and which ones that covers: whole files,
+        oldest first, up to the budget; the rest wait for the next run. A
+        single file over the budget is sent truncated, or it would block
+        consolidation forever."""
+        parts: list[str] = []
+        included: list[Path] = []
+        total = 0
+        for path in files:
+            content = self.store.read_file(path)
+            part = f"\n### {path.stem}\n\n{content}" if content.strip() else ""
+            if total + len(part) > _CONSOLIDATION_BUDGET_CHARS:
+                if not included:
+                    parts.append(part[:_CONSOLIDATION_BUDGET_CHARS])
+                    included.append(path)
+                break
+            if part:
+                parts.append(part)
+                total += len(part)
+            included.append(path)
+        return "\n".join(parts), included
+
+    def _consolidation_message(self, today: date, daily_text: str, existing_memory: str) -> str:
+        message = f"Today's date: {today.isoformat()}\n\n## Daily Memory Files\n\n{daily_text}"
+        other_notes = self._other_notes_overview()
+        if other_notes:
+            message += f"\n\n## Other Notes\n\n{other_notes}"
+        if existing_memory.strip():
+            message += f"\n\n## Current MEMORY.md\n\n{existing_memory}"
+        return message
+
+    def _replace_memory(self, existing_memory: str, new_memory: str) -> bool:
+        """Write *new_memory* over MEMORY.md, keeping a dated copy of the old
+        one. Lines someone appended by hand while consolidation was running
+        are carried over; any other change meanwhile (an edit) means nothing
+        is written, and consolidation retries later."""
+        current = self.store.read_file(self.config.memory_file)
+        if not current.startswith(existing_memory):
+            logger.warning("MEMORY.md changed during consolidation; will retry later")
+            return False
+        if existing_memory.strip():
+            self._save_history(existing_memory)
+        added_since = current[len(existing_memory):]
+        self.config.memory_file.write_text(new_memory.rstrip("\n") + "\n" + added_since)
         return True
 
     def _save_history(self, memory: str) -> None:
@@ -458,18 +456,30 @@ class MemclawAgent:
             lines.append(f"- {rel} ({len(text)} chars): {first[:120]}")
         return "\n".join(lines)
 
-    @staticmethod
-    def _write_consolidated_through(meta_path: Path, through: date) -> None:
-        meta: dict = {}
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text())
-            except (json.JSONDecodeError, ValueError):
-                pass
+    @property
+    def _meta_path(self) -> Path:
+        return self.config.memory_dir / "meta.json"
+
+    def _read_meta(self) -> dict:
+        try:
+            meta = json.loads(self._meta_path.read_text())
+        except (OSError, ValueError):  # missing or unreadable: start over
+            return {}
+        return meta if isinstance(meta, dict) else {}
+
+    def _read_consolidated_through(self) -> date | None:
+        """The date of the last daily file consolidated, if any."""
+        try:
+            return date.fromisoformat(self._read_meta().get("consolidated_through") or "")
+        except ValueError:
+            return None
+
+    def _write_consolidated_through(self, through: date) -> None:
+        meta = self._read_meta()
         meta["consolidated_through"] = through.isoformat()
-        tmp = meta_path.with_suffix(".tmp")
+        tmp = self._meta_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(meta, indent=2))
-        tmp.replace(meta_path)
+        tmp.replace(self._meta_path)
 
     def _schedule_consolidation(self) -> None:
         """Run the consolidation check in the background, after the reply,
