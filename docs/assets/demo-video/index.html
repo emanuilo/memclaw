@@ -1,0 +1,393 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face { font-family: 'Space Grotesk'; font-weight: 300 700; src: url(sg.woff2) format('woff2'); }
+  @font-face { font-family: 'JetBrains Mono'; font-weight: 500; src: url(jb.woff2) format('woff2'); }
+  :root {
+    --bg: #F7F7F5; --bg-soft: #F1F1EE; --ink: #0B0D10; --ink-soft: #1B2026;
+    --muted: #5B6470; --muted-2: #8A93A0; --border: #E5E6E3;
+    --cyan: #03C8F7; --cyan-2: #00A1E4; --cyan-soft: #DDF4FF; --dark-2: #14181D;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; background: var(--bg); }
+  body { font-family: 'Space Grotesk', system-ui, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 500; }
+  .layer { position: absolute; inset: 0; overflow: hidden; }
+  .abs { position: absolute; }
+  .grid {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(to right, rgba(11,13,16,.045) 1px, transparent 1px),
+                      linear-gradient(to bottom, rgba(11,13,16,.045) 1px, transparent 1px);
+    background-size: 64px 64px;
+    -webkit-mask-image: radial-gradient(ellipse at 50% 45%, #000 30%, transparent 80%);
+  }
+  .glow { position: absolute; border-radius: 50%; filter: blur(60px); }
+  .cyan { color: var(--cyan); }
+
+  /* Intro */
+  #intro { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #introRow { display: flex; align-items: center; gap: 26px; }
+  #introCrab { width: 210px; }
+  #introWord { font-size: 132px; font-weight: 700; letter-spacing: -5px; line-height: 1; }
+  #introWord .mem { color: #2a2d31; }
+  #introTag { font-size: 34px; font-weight: 600; letter-spacing: -0.8px; margin-top: 30px; }
+  #introPill { margin-top: 22px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 10px; padding: 8px 16px; border-radius: 999px;
+    border: 1px solid #BFE9F8; background: #EAF8FE; color: var(--cyan-2); font-size: 14px; letter-spacing: .5px;
+  }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); }
+
+  /* Chat scene */
+  #copy { left: 84px; top: 0; width: 520px; height: 720px; }
+  .copyBlock { position: absolute; left: 0; top: 214px; width: 520px; }
+  .eyebrow { display: inline-block; padding: 7px 14px; border-radius: 999px; border: 1px solid #BFE9F8;
+             background: #EAF8FE; color: var(--cyan-2); font-size: 13px; letter-spacing: 2px; }
+  .head { font-size: 64px; font-weight: 700; letter-spacing: -2.4px; line-height: 1.02; margin-top: 22px; }
+  .sub { font-size: 22px; color: var(--muted); line-height: 1.45; margin-top: 22px; max-width: 470px; }
+
+  #chat {
+    left: 668px; top: 64px; width: 528px; height: 592px; border-radius: 28px; background: #fff;
+    border: 1px solid var(--border); box-shadow: 0 30px 80px -20px rgba(11,13,16,.18), 0 2px 6px rgba(11,13,16,.04);
+    overflow: hidden;
+  }
+  #chatHead { height: 76px; display: flex; align-items: center; gap: 14px; padding: 0 22px;
+              border-bottom: 1px solid var(--border);
+              background: linear-gradient(90deg, #fff 40%, #EAF8FE); }
+  #chatHead .av { width: 46px; height: 46px; border-radius: 12px; background: var(--bg-soft);
+                  display: grid; place-items: center; border: 1px solid var(--border); }
+  #chatHead .av img { width: 38px; }
+  #chatHead .name { font-weight: 600; font-size: 18px; }
+  #chatHead .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 7px; margin-top: 2px; }
+  #chatHead .status i { width: 8px; height: 8px; border-radius: 50%; background: #3BC56A; display: inline-block; }
+  #chatHead .chip { margin-left: auto; font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-soft); background: #fff; }
+  #msgView { position: absolute; left: 0; right: 0; top: 76px; bottom: 0; overflow: hidden; background: #FCFCFB; }
+  #msgs { position: absolute; left: 0; right: 0; top: 0; padding: 20px 22px 0; }
+  .item { position: relative; overflow: visible; }
+  .inner { padding-bottom: 12px; display: flex; }
+  .item.me .inner { justify-content: flex-end; }
+  .item.mid .inner { justify-content: center; }
+  .bubble { max-width: 80%; padding: 12px 16px; border-radius: 20px; font-size: 16.5px; line-height: 1.4; }
+  .me .bubble { background: var(--ink); color: #F7F7F5; border-bottom-right-radius: 6px; }
+  .bot .bubble { background: var(--bg-soft); border: 1px solid var(--border); color: var(--ink); border-bottom-left-radius: 6px; }
+  .bot .bubble b { font-weight: 600; }
+  .bubble .tick { color: var(--cyan-2); font-weight: 700; margin-right: 4px; }
+  .bubble .meta { display: block; font-size: 12.5px; color: var(--muted-2); margin-top: 4px; }
+  .divider { font-size: 12.5px; padding: 5px 12px; border-radius: 999px; background: var(--bg-soft); color: var(--muted); border: 1px solid var(--border); letter-spacing: .5px; }
+  .typing { display: flex; gap: 5px; padding: 15px 18px; }
+  .typing span { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-2); }
+  .voice { display: flex; align-items: center; gap: 12px; }
+  .voice .play { width: 30px; height: 30px; border-radius: 50%; background: var(--cyan); display: grid; place-items: center; }
+  .voice .play::after { content: ''; border-left: 10px solid #fff; border-top: 6px solid transparent; border-bottom: 6px solid transparent; margin-left: 3px; }
+  .voice .bars { display: flex; align-items: center; gap: 3px; height: 30px; }
+  .voice .bars span { width: 3px; border-radius: 2px; background: #F7F7F5; opacity: .85; }
+  .voice .dur { font-size: 13px; opacity: .7; }
+  .photo { padding: 6px; }
+  .photo img { display: block; width: 250px; border-radius: 15px; }
+  .photo .cap { padding: 6px 8px 2px; font-size: 14.5px; }
+  .link { color: #7FDFFB; text-decoration: underline; text-underline-offset: 3px; }
+
+  /* Dark scene */
+  #dark { background: #0B0D10; color: #F7F7F5; }
+  #dark .gridD { position: absolute; inset: 0;
+    background-image: linear-gradient(to right, rgba(255,255,255,.035) 1px, transparent 1px),
+                      linear-gradient(to bottom, rgba(255,255,255,.035) 1px, transparent 1px);
+    background-size: 64px 64px; -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 85%); }
+  #dark .eyebrowD { display: inline-block; padding: 7px 14px; border-radius: 999px; border: 1px solid rgba(3,200,247,.45);
+             background: rgba(3,200,247,.08); color: var(--cyan); font-size: 13px; letter-spacing: 2px; }
+  #darkHead { left: 84px; top: 96px; }
+  #darkHead h2 { font-size: 58px; font-weight: 700; letter-spacing: -2px; line-height: 1.04; margin-top: 18px; }
+  .dcard { position: absolute; top: 278px; width: 336px; height: 268px; border-radius: 22px; padding: 26px 26px;
+           background: linear-gradient(#171B21, #111419); border: 1px solid rgba(255,255,255,.09); }
+  .dcard.hot { border-color: rgba(3,200,247,.55); box-shadow: 0 0 60px -10px rgba(3,200,247,.35); }
+  .dcard .lab { color: var(--cyan); font-size: 12.5px; letter-spacing: 2px; }
+  .dcard h3 { font-size: 25px; font-weight: 600; margin-top: 12px; letter-spacing: -.3px; }
+  .dcard .row { border-top: 1px dashed rgba(255,255,255,.12); margin-top: 16px; padding-top: 14px; }
+  .dcard .row + .row { margin-top: 12px; }
+  .dcard .k { color: var(--cyan); font-size: 13.5px; }
+  .dcard .d { color: #A3ABB6; font-size: 15.5px; margin-top: 3px; }
+  .arrow { position: absolute; top: 411px; height: 2px; overflow: hidden; }
+  .arrow::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, var(--cyan) 0 7px, transparent 7px 13px); }
+  .arrowHead { position: absolute; top: 403px; width: 14px; height: 18px; }
+  #darkFoot { left: 84px; top: 600px; font-size: 15px; color: #8A93A0; letter-spacing: .3px; }
+  #darkFoot b { color: #C9EEFB; font-weight: 500; }
+
+  /* Outro */
+  #outro { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #outroRow { display: flex; align-items: center; gap: 18px; }
+  #outroRow img { width: 120px; }
+  #outroWord { font-size: 82px; font-weight: 700; letter-spacing: -3px; line-height: 1; }
+  #outroWord .mem { color: #2a2d31; }
+  #outroTag { font-size: 24px; color: var(--muted); margin-top: 14px; }
+  #platforms { display: flex; gap: 12px; margin-top: 34px; }
+  .plat { display: flex; align-items: center; gap: 9px; padding: 10px 18px; border-radius: 999px; background: #fff;
+          border: 1px solid var(--border); font-weight: 600; font-size: 17px; box-shadow: 0 6px 18px -8px rgba(11,13,16,.15); }
+  .plat i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  #install { margin-top: 28px; padding: 16px 28px; border-radius: 999px; background: var(--ink); color: #F7F7F5;
+             font-size: 22px; min-width: 330px; }
+  #install .p { color: var(--cyan); margin-right: 12px; }
+  #install .cur { display: inline-block; width: 11px; height: 24px; background: var(--cyan); vertical-align: -4px; margin-left: 3px; }
+  #gh { margin-top: 22px; font-size: 16px; color: var(--muted-2); }
+</style>
+</head>
+<body>
+
+<!-- Light base: intro + chat -->
+<div class="layer" id="light">
+  <div class="grid"></div>
+  <div class="glow" style="left:820px;top:-120px;width:520px;height:420px;background:#CDEFFD;opacity:.7"></div>
+  <div class="glow" style="left:-160px;top:420px;width:460px;height:380px;background:#E3F6FE;opacity:.8"></div>
+
+  <div class="layer" id="intro">
+    <div id="introRow">
+      <img id="introCrab" src="crab_big.png">
+      <div id="introWord"><span class="mem">mem</span><span class="cyan">claw</span></div>
+    </div>
+    <div id="introTag">Your second brain, <span class="cyan">actually remembers.</span></div>
+    <div id="introPill"><span class="pill mono"><span class="dot"></span>Open source · MIT · pip install memclaw</span></div>
+  </div>
+
+  <div class="abs" id="copy">
+    <div class="copyBlock" id="copy1">
+      <span class="eyebrow mono">01 / SAVE</span>
+      <div class="head">Drop anything<br>into a chat.</div>
+      <div class="sub">Thoughts, voice notes, photos, links. Memclaw decides what's worth keeping.</div>
+    </div>
+    <div class="copyBlock" id="copy2">
+      <span class="eyebrow mono">02 / RECALL</span>
+      <div class="head">Ask for it<br><span class="cyan">months later.</span></div>
+      <div class="sub">Hybrid search finds it from a vague description — and sends the photo back.</div>
+    </div>
+  </div>
+
+  <div class="abs" id="chat">
+    <div id="chatHead">
+      <div class="av"><img src="crab160.png"></div>
+      <div>
+        <div class="name">Memclaw</div>
+        <div class="status"><i></i>online</div>
+      </div>
+      <div class="chip mono">telegram</div>
+    </div>
+    <div id="msgView"><div id="msgs"></div></div>
+  </div>
+</div>
+
+<!-- Dark: how it works -->
+<div class="layer" id="dark">
+  <div class="gridD"></div>
+  <div class="glow" style="left:380px;top:260px;width:560px;height:360px;background:#03C8F7;opacity:.10"></div>
+  <div class="abs" id="darkHead">
+    <span class="eyebrowD mono">HOW IT WORKS</span>
+    <h2>Three layers, <span class="cyan">no surprises.</span></h2>
+  </div>
+  <div class="dcard" id="dc1" style="left:84px">
+    <div class="lab mono">01 / NOTES</div>
+    <h3>Plain Markdown</h3>
+    <div class="row"><div class="k mono">memory/2026-10-18.md</div><div class="d">Append-only daily log</div></div>
+    <div class="row"><div class="k mono">~/.memclaw/</div><div class="d">Yours to read, edit, git</div></div>
+  </div>
+  <div class="dcard hot" id="dc2" style="left:472px">
+    <div class="lab mono">02 / SEARCH</div>
+    <h3>Hybrid retrieval</h3>
+    <div class="row"><div class="k mono">vectors 0.7 · bm25 0.3</div><div class="d">Meaning and exact words</div></div>
+    <div class="row"><div class="k mono">decay · mmr</div><div class="d">Recent first, no duplicates</div></div>
+  </div>
+  <div class="dcard" id="dc3" style="left:860px">
+    <div class="lab mono">03 / PROFILE</div>
+    <h3>Distilled every day</h3>
+    <div class="row"><div class="k mono">MEMORY.md</div><div class="d">A profile of you + an index</div></div>
+    <div class="row"><div class="k mono">→ memory/2026-05-12.md</div><div class="d">Details opened on demand</div></div>
+  </div>
+  <div class="arrow" id="ar1" style="left:426px;width:0"></div>
+  <svg class="arrowHead" id="ah1" style="left:452px" viewBox="0 0 14 18"><path d="M3 2 L11 9 L3 16" fill="none" stroke="#03C8F7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="arrow" id="ar2" style="left:814px;width:0"></div>
+  <svg class="arrowHead" id="ah2" style="left:840px" viewBox="0 0 14 18"><path d="M3 2 L11 9 L3 16" fill="none" stroke="#03C8F7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="abs mono" id="darkFoot">runs on your <b>Claude plan</b> &nbsp;·&nbsp; sandboxed to <b>~/.memclaw</b> &nbsp;·&nbsp; <b>SQLite</b>, no servers</div>
+</div>
+
+<!-- Light: outro -->
+<div class="layer" id="outroL" style="background:var(--bg)">
+  <div class="grid"></div>
+  <div class="glow" style="left:380px;top:120px;width:520px;height:360px;background:#D6F2FD;opacity:.8"></div>
+  <div class="layer" id="outro">
+    <div id="outroRow">
+      <img id="outroCrab" src="crab_big.png">
+      <div id="outroWord"><span class="mem">mem</span><span class="cyan">claw</span></div>
+    </div>
+    <div id="outroTag">Your personal memory, in the chat apps you already use.</div>
+    <div id="platforms">
+      <div class="plat"><i style="background:#26A5E4"></i>Telegram</div>
+      <div class="plat"><i style="background:#25D366"></i>WhatsApp</div>
+      <div class="plat"><i style="background:#E01E5A"></i>Slack</div>
+      <div class="plat"><i style="background:#8A93A0"></i>Terminal</div>
+    </div>
+    <div id="install" class="mono"><span class="p">$</span><span id="cmd"></span><span class="cur" id="cur"></span></div>
+    <div id="gh" class="mono">github.com/emanuilo/memclaw &nbsp;·&nbsp; memclaw.app</div>
+  </div>
+</div>
+
+<script>
+// ── easing / timing helpers ────────────────────────────────────────
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lin = (t, a, b) => clamp((t - a) / (b - a));
+const outCubic = x => 1 - Math.pow(1 - x, 3);
+const inOutCubic = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const outBack = x => { const c1 = 1.6, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const seg = (t, a, b, ease = outCubic) => ease(lin(t, a, b));
+const $ = id => document.getElementById(id);
+const set = (el, o) => { for (const k in o) el.style[k] = o[k]; };
+
+// ── chat script ────────────────────────────────────────────────────
+const bars = n => Array.from({length: n}, (_, i) => `<span data-i="${i}"></span>`).join('');
+const MSGS = [
+  { at: 5.0,  side: 'me',  html: `Just had coffee with Alex — she's moving to Berlin for a role at Stripe.` },
+  { at: 6.2,  side: 'bot', typing: 0.7, html: `<span class="tick">✓</span>Saved: <b>Alex → Berlin</b>, new role at Stripe.` },
+  { at: 7.3,  side: 'me',  html: `<div class="voice"><div class="play"></div><div class="bars">${bars(26)}</div><span class="dur mono">0:07</span></div>`, voice: true },
+  { at: 8.3,  side: 'bot', typing: 0.6, html: `<span class="tick">✓</span>Transcribed & saved: <b>idea for the onboarding flow</b>.` },
+  { at: 9.3,  side: 'me',  html: `<img src="wb.jpg"><div class="cap">sprint planning board</div>`, photo: true },
+  { at: 10.3, side: 'bot', typing: 0.6, html: `<span class="tick">✓</span>Saved — sprint board: <b>To Do, Doing, Done</b> with sticky notes.` },
+  { at: 11.3, side: 'me',  html: `read later <span class="link">jepsen.io/consistency</span>` },
+  { at: 12.3, side: 'bot', typing: 0.6, html: `<span class="tick">✓</span>Summarized & saved: <b>a map of database consistency models</b>.` },
+  { at: 14.4, side: 'mid', html: `<span class="divider mono">4 months later</span>` },
+  { at: 15.0, side: 'me',  html: `where did Alex move again?` },
+  { at: 16.2, side: 'bot', typing: 0.8, html: `<b>Berlin</b> — she took a role at Stripe.<span class="meta mono">from your note · 2026-06-12</span>` },
+  { at: 17.3, side: 'me',  html: `send me the sprint whiteboard` },
+  { at: 18.5, side: 'bot', typing: 0.8, html: `<img src="wb.jpg"><div class="cap">Here it is — saved on 2026-06-12.</div>`, photo: true },
+  { at: 19.6, side: 'me',  html: `remind me tomorrow at 9 to call her` },
+  { at: 20.5, side: 'bot', typing: 0.5, html: `<span class="tick">⏰</span>Reminder set for <b>tomorrow, 09:00</b>.` },
+];
+
+const msgsEl = $('msgs');
+const items = [];
+function addItem(side, html, extraClass = '') {
+  const wrap = document.createElement('div');
+  wrap.className = `item ${side}`;
+  wrap.innerHTML = `<div class="inner"><div class="bubble ${extraClass}">${html}</div></div>`;
+  msgsEl.appendChild(wrap);
+  return wrap;
+}
+for (const m of MSGS) {
+  if (m.typing) {
+    const el = addItem('bot', '<span></span><span></span><span></span>', 'typing');
+    items.push({ el, kind: 'typing', a: m.at - m.typing, b: m.at });
+  }
+  const cls = m.side === 'mid' ? '' : (m.photo ? 'photo' : '');
+  const el = m.side === 'mid'
+    ? (() => { const w = document.createElement('div'); w.className = 'item mid'; w.innerHTML = `<div class="inner">${m.html}</div>`; msgsEl.appendChild(w); return w; })()
+    : addItem(m.side, m.html, cls);
+  items.push({ el, kind: m.voice ? 'voice' : 'msg', a: m.at });
+}
+// Measure natural heights once fonts and images are in.
+let measured = false;
+function measure() {
+  for (const it of items) { it.el.style.height = 'auto'; it.h = it.el.offsetHeight; }
+  measured = true;
+}
+
+function renderChat(t) {
+  if (!measured) measure();
+  const viewH = 592 - 76 - 8;
+  let total = 20;
+  for (const it of items) {
+    let p;
+    if (it.kind === 'typing') {
+      p = Math.min(seg(t, it.a, it.a + 0.25), 1 - seg(t, it.b - 0.05, it.b + 0.15));
+    } else {
+      p = seg(t, it.a, it.a + 0.4);
+    }
+    const ph = it.kind === 'typing' ? p : seg(t, it.a, it.a + 0.32, inOutCubic);
+    it.el.style.height = (it.h * ph) + 'px';
+    const bubble = it.el.querySelector('.inner');
+    set(bubble, { opacity: p, transform: `translateY(${(1 - p) * 14}px) scale(${0.96 + 0.04 * p})`,
+                  transformOrigin: it.el.classList.contains('me') ? 'right bottom' : 'left bottom' });
+    if (it.kind === 'typing') {
+      it.el.querySelectorAll('.typing span').forEach((s, i) => {
+        const y = Math.sin((t * 9) - i * 0.9);
+        s.style.transform = `translateY(${-Math.max(0, y) * 4}px)`;
+        s.style.opacity = 0.45 + 0.4 * Math.max(0, y);
+      });
+    }
+    if (it.kind === 'voice') {
+      it.el.querySelectorAll('.bars span').forEach((s, i) => {
+        const base = 8 + 18 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * 0.6));
+        const live = lin(t, it.a, it.a + 1.2) < 1 ? 0.6 + 0.4 * Math.abs(Math.sin(t * 10 + i)) : 1;
+        s.style.height = (base * live) + 'px';
+      });
+    }
+    total += it.h * ph;
+  }
+  msgsEl.style.transform = `translateY(${-Math.max(0, total - viewH)}px)`;
+}
+
+// ── main timeline ──────────────────────────────────────────────────
+function render(t) {
+  // Intro (0 – 4.6)
+  const crabIn = seg(t, 0.15, 1.0, outBack);
+  set($('introCrab'), { transform: `translateY(${(1 - crabIn) * 40}px) scale(${0.6 + 0.4 * crabIn}) rotate(${(1 - crabIn) * -12}deg)`, opacity: lin(t, 0.15, 0.5) });
+  const wordIn = seg(t, 0.55, 1.35);
+  set($('introWord'), { clipPath: `inset(0 ${(1 - wordIn) * 100}% 0 0)`, transform: `translateX(${(1 - wordIn) * -20}px)` });
+  const tagIn = seg(t, 1.35, 2.0);
+  set($('introTag'), { opacity: tagIn, transform: `translateY(${(1 - tagIn) * 18}px)` });
+  const pillIn = seg(t, 1.9, 2.5);
+  set($('introPill'), { opacity: pillIn, transform: `translateY(${(1 - pillIn) * 14}px)` });
+  const introOut = seg(t, 3.6, 4.2, inOutCubic);
+  set($('intro'), { opacity: 1 - introOut, transform: `translateY(${-introOut * 60}px) scale(${1 - introOut * 0.06})` });
+
+  // Chat card (4.3 – 21.2)
+  const chatIn = seg(t, 4.35, 5.05);
+  const chatOut = seg(t, 21.0, 21.6, inOutCubic);
+  set($('chat'), { opacity: chatIn * (1 - chatOut), transform: `translateX(${(1 - chatIn) * 80}px) translateY(${chatOut * 20}px)` });
+  renderChat(t);
+
+  // Copy blocks
+  const c1in = seg(t, 4.5, 5.2), c1out = seg(t, 13.6, 14.1, inOutCubic);
+  set($('copy1'), { opacity: c1in * (1 - c1out), transform: `translateY(${(1 - c1in) * 24 - c1out * 24}px)` });
+  const c2in = seg(t, 14.0, 14.7), c2out = seg(t, 21.0, 21.5, inOutCubic);
+  set($('copy2'), { opacity: c2in * (1 - c2out), transform: `translateY(${(1 - c2in) * 24 - c2out * 24}px)` });
+
+  // Dark scene (21.3 – 26.8), revealed by a growing circle
+  const darkR = seg(t, 21.2, 22.0, inOutCubic) * 1500;
+  set($('dark'), { clipPath: `circle(${darkR}px at 640px 360px)` });
+  const dh = seg(t, 21.8, 22.5);
+  set($('darkHead'), { opacity: dh, transform: `translateY(${(1 - dh) * 24}px)` });
+  [['dc1', 22.4], ['dc2', 23.0], ['dc3', 23.6]].forEach(([id, a]) => {
+    const p = seg(t, a, a + 0.6);
+    set($(id), { opacity: p, transform: `translateY(${(1 - p) * 40}px)` });
+  });
+  [['ar1', 'ah1', 22.8], ['ar2', 'ah2', 23.4]].forEach(([ar, ah, a]) => {
+    const p = seg(t, a, a + 0.5);
+    $(ar).style.width = (32 * p) + 'px';
+    $(ah).style.opacity = seg(t, a + 0.35, a + 0.55);
+  });
+  const df = seg(t, 24.4, 25.0);
+  set($('darkFoot'), { opacity: df, transform: `translateY(${(1 - df) * 12}px)` });
+
+  // Outro (26.7 – 30)
+  const outR = seg(t, 26.6, 27.4, inOutCubic) * 1500;
+  set($('outroL'), { clipPath: `circle(${outR}px at 640px 360px)` });
+  const oc = seg(t, 27.0, 27.8, outBack);
+  set($('outroCrab'), { transform: `scale(${0.5 + 0.5 * oc}) rotate(${(1 - oc) * -15}deg)`, opacity: lin(t, 27.0, 27.3) });
+  const ow = seg(t, 27.2, 27.9);
+  set($('outroWord'), { clipPath: `inset(0 ${(1 - ow) * 100}% 0 0)` });
+  const ot = seg(t, 27.6, 28.2);
+  set($('outroTag'), { opacity: ot, transform: `translateY(${(1 - ot) * 12}px)` });
+  document.querySelectorAll('.plat').forEach((el, i) => {
+    const p = seg(t, 27.9 + i * 0.12, 28.4 + i * 0.12, outBack);
+    set(el, { opacity: clamp(p), transform: `translateY(${(1 - p) * 20}px) scale(${0.85 + 0.15 * p})` });
+  });
+  const ins = seg(t, 28.3, 28.7);
+  set($('install'), { opacity: ins, transform: `translateY(${(1 - ins) * 14}px)` });
+  const full = ' pip install memclaw';
+  $('cmd').textContent = full.slice(0, Math.round(lin(t, 28.6, 29.3) * full.length));
+  $('cur').style.opacity = (Math.floor(t * 2.5) % 2 === 0 || t < 29.3) ? 1 : 0;
+  const gh = seg(t, 29.2, 29.7);
+  set($('gh'), { opacity: gh });
+}
+window.render = render;
+window.ready = Promise.all([document.fonts.ready, ...[...document.images].map(i => i.complete ? 1 : new Promise(r => i.onload = r))]).then(() => { measure(); render(0); return true; });
+</script>
+</body>
+</html>

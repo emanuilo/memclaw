@@ -78,7 +78,7 @@ update_instructions tool to save it. These are rules you should follow in every 
 future conversation.
 """
 
-# MEMORY.md is meant to stay under ~5,000 characters (see consolidation);
+# Consolidation aims for ~6,000 characters of MEMORY.md;
 # this cap only guards against a runaway file.
 _MEMORY_PROMPT_CHARS = 20000
 

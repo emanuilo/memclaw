@@ -35,7 +35,7 @@ TZ=Europe/Belgrade
 ```
 
 Slack and WhatsApp work the same way - set `MEMCLAW_PLATFORM` and fill in
-that platform's tokens. See the project README for the full list of env vars.
+that platform's tokens. See [Configuration](configuration.md) for the full list of env vars.
 
 > The container's entrypoint creates an empty `~/.memclaw/.env` on first
 > boot to skip Memclaw's interactive setup wizard. Credentials are taken

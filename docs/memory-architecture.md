@@ -1,6 +1,6 @@
 # Memclaw Memory Architecture
 
-Memclaw is a personal memory assistant that stores everything you tell it and retrieves it when you need it. It works through a Telegram bot or an interactive CLI. Under the hood, it has two distinct layers of memory — short-term and long-term — that work together to give the agent context about who you are and what you've told it.
+Memclaw is a personal memory assistant that stores everything you tell it and retrieves it when you need it. It works through Telegram, WhatsApp or Slack bots, or an interactive terminal. Under the hood, it has two distinct layers of memory — short-term and long-term — that work together to give the agent context about who you are and what you've told it.
 
 ---
 
@@ -190,9 +190,9 @@ For each search call, the pipeline runs in this order:
 2. **Vector search** — retrieve 3x the requested limit as candidates (all chunks with a file filter).
 3. **Keyword search** — retrieve 3x the requested limit as candidates (all chunks with a file filter).
 4. **Merge + file filter** — combine and score using weighted blend, keeping only the filtered file if requested.
-6. **Temporal decay** — reduce scores for older daily files.
-7. **MMR deduplication** — greedily select diverse top-k results.
-8. **Return** the final limited result set.
+5. **Temporal decay** — reduce scores for older daily files.
+6. **MMR deduplication** — greedily select diverse top-k results.
+7. **Return** the final limited result set.
 
 ---
 
@@ -299,7 +299,7 @@ User Message (chat → session key)
 ├─ 3. Run the turn in the chat's session (reuse the live client, or resume /
 │     start one with the static system prompt: AGENTS.md + rules + MEMORY.md)
 │     └─ Agent may call:
-│           ├─ memory_save   → write to daily file or MEMORY.md → index
+│           ├─ memory_save   → append to today's daily file → index
 │           ├─ memory_search → run full search pipeline
 │           ├─ image_save    → store image metadata
 │           ├─ image_search  → vector search over image descriptions (candidates)
