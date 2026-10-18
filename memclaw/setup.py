@@ -96,8 +96,8 @@ def _select_platform(existing: dict[str, str]) -> str:
         rows=[label for _, label in PLATFORMS],
         default=default,
         footer=(
-            "[dim]See the README for instructions on how to set up Telegram, "
-            "WhatsApp, or Slack credentials.[/dim]"
+            "[dim]Setup for Telegram, WhatsApp and Slack credentials: "
+            "https://github.com/emanuilo/memclaw/blob/main/docs/platforms.md[/dim]"
         ),
         separator="\n\n",
     )
