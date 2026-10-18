@@ -35,6 +35,7 @@ from ..tools import TOOL_DEFINITIONS
 from .base import ProgressCallback, TurnResult, report_tool_step
 from .claude_models import SDK_EFFORT_LEVELS, ModelInfo, fetch_models
 from .mcp_tools import MCP_SERVER_NAME
+from .model_selection import ModelSelectionMixin
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -272,9 +273,11 @@ class _Session:
     options_key: tuple[str, str | None] | None = None
 
 
-class ClaudeAgentBackend:
+class ClaudeAgentBackend(ModelSelectionMixin):
     """Claude Agent SDK implementation of the AgentBackend protocol."""
 
+    _label = "Claude"
+    _env_prefix = "CLAUDE"
     name: ClassVar[str] = "claude"
     display_name: ClassVar[str] = "Claude Agent SDK"
     supports_model_selection: ClassVar[bool] = True
@@ -586,55 +589,26 @@ class ClaudeAgentBackend:
 
     # -- Model selection ---------------------------------------------------
 
-    @property
-    def model(self) -> str:
-        return self._model
-
-    @property
-    def effort(self) -> str | None:
-        return self._effort
-
     async def list_models(self) -> list[ModelInfo]:
         self._models = await fetch_models(_claude_auth_mode(self.config), _credential(self.config))
         return self._models
 
-    async def _model_info(self, model_id: str) -> ModelInfo | None:
-        """*model_id*'s entry in the model list, or None if it isn't listed
-        or the list can't be fetched."""
-        if not self._models:
-            try:
-                await self.list_models()
-            except Exception as exc:
-                logger.warning("Could not fetch the Claude model list: {exc}", exc=exc)
-                return None
-        return next((m for m in self._models if m.id == model_id), None)
-
-    async def effort_levels(self) -> list[str] | None:
-        info = await self._model_info(self._model)
-        return list(info.effort_levels) if info else None
-
     async def set_model(self, model_id: str) -> str:
-        model_id = model_id.strip()
-        info = await self._model_info(model_id)
-        if info is None and not self._models:
-            # Can't check the id, and a typo would break every turn.
-            raise ValueError("Couldn't load the model list; try again later.")
-        if info is None:
-            raise ValueError(f"Unknown model '{model_id}'.")
-        effort = self._effort
+        """Switch from the next turn on. Live chats then reconnect, resuming
+        their session (Claude Code resumes fine under a different model)."""
+        info = await self._known_model(model_id.strip())
+        # Keep the effort if the new model takes it, otherwise the nearest
+        # level it does take (or none at all).
+        effort = _fit_effort(info.effort_levels, self._effort or _DEFAULT_EFFORT)
         note = ""
-        if info is not None:
-            # Keep the effort if the new model takes it, otherwise the nearest
-            # level it does take (or none at all).
-            effort = _fit_effort(info.effort_levels, self._effort or _DEFAULT_EFFORT)
-            if self._effort and effort is None:
-                note = f"{info.display_name} doesn't support an effort setting, so none is used."
-            elif self._effort and effort != self._effort:
-                note = (
-                    f"{info.display_name} doesn't support '{self._effort}' effort; "
-                    f"using '{effort}' instead."
-                )
-        self._apply_model(model_id, effort)
+        if self._effort and effort is None:
+            note = f"{info.display_name} doesn't support an effort setting, so none is used."
+        elif self._effort and effort != self._effort:
+            note = (
+                f"{info.display_name} doesn't support '{self._effort}' effort; "
+                f"using '{effort}' instead."
+            )
+        self._apply_model(info.id, effort)
         return note
 
     async def set_effort(self, level: str) -> None:
@@ -652,24 +626,6 @@ class ClaudeAgentBackend:
                 f"Supported: {', '.join(levels)}."
             )
         self._apply_model(self._model, level)
-
-    def _apply_model(self, model: str, effort: str | None) -> None:
-        """Use *model* / *effort* from the next turn on and save them to
-        ~/.memclaw/.env. Live chats reconnect on their next turn, resuming
-        their session (Claude Code resumes fine under a different model)."""
-        from ..setup import update_env_file  # local import — setup imports backends
-
-        logger.info(
-            "Claude model: {m} effort: {e} -> {m2} effort: {e2}",
-            m=self._model, e=self._effort, m2=model, e2=effort,
-        )
-        self._model, self._effort = model, effort
-        self.config.claude_model = model
-        self.config.claude_effort = effort or ""
-        if effort:
-            update_env_file({"CLAUDE_MODEL": model, "CLAUDE_EFFORT": effort})
-        else:
-            update_env_file({"CLAUDE_MODEL": model}, drop_keys=["CLAUDE_EFFORT"])
 
     # -- Runtime ---------------------------------------------------------
 

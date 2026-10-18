@@ -37,13 +37,15 @@ def test_claude_backend_shows_its_model_and_effort(tmp_path: Path, monkeypatch):
 def test_cursor_backend_shows_only_its_own_model(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("AGENT_BACKEND", "cursor")
     monkeypatch.setenv("CURSOR_MODEL", "composer-3")
+    monkeypatch.delenv("CURSOR_EFFORT", raising=False)
     monkeypatch.setenv("CLAUDE_MODEL", "claude-opus-5")
+    monkeypatch.setenv("CLAUDE_EFFORT", "high")
 
     output = _status(tmp_path)
 
     assert "Model            : composer-3" in output
+    assert "Effort           : default" in output
     assert "claude-opus-5" not in output
-    assert "Effort" not in output
 
 
 def test_general_rows_are_still_shown(tmp_path: Path):
