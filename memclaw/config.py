@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.resources
 import os
-import shutil
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -48,10 +47,6 @@ class MemclawConfig:
     cursor_api_key: str = ""
     cursor_model: str = ""
     mcp_http_port: int = 17373
-
-    # Conversation continuity
-    conversation_history_limit: int = 10
-    conversation_history_window_minutes: int = 60
 
     # Memory consolidation
     consolidation_threshold: int = 7

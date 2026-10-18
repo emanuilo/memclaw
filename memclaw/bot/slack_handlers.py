@@ -44,7 +44,7 @@ class SlackHandlers:
 
     async def _deliver_reminder(self, chat_id: str, text: str):
         await self.app.client.chat_postMessage(channel=chat_id, text=text)
-        self.agent.record_reminder_fired(text)
+        self.agent.record_reminder_fired(text, chat_id)
 
     def _register_handlers(self):
         """Register Slack event handlers on the bolt app."""
@@ -101,7 +101,10 @@ class SlackHandlers:
         image_files = [f for f in files if f.get("mimetype", "") in _IMAGE_MIMES]
         audio_files = [f for f in files if f.get("mimetype", "").startswith("audio/")]
 
-        if image_files:
+        if not files and text.lower() == "/new":
+            await self.agent.reset_conversation(channel)
+            await say(text="Started a new conversation.", thread_ts=thread_ts)
+        elif image_files:
             await self._handle_image(user, channel, thread_ts, text, image_files[0], say, client)
         elif audio_files:
             await self._handle_audio(user, channel, thread_ts, text, audio_files[0], say, client)

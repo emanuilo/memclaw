@@ -121,6 +121,15 @@ docker compose up -d --build
   as-is. No reverse proxy needed.
 - Memory footprint is modest (a few hundred MB), but the SQLite index
   grows with your memory vault, so back the volume up periodically.
-- The Claude backend (`AGENT_BACKEND=claude`, the default) spawns the
-  Claude Code CLI per turn. The Cursor backend (`AGENT_BACKEND=cursor`)
-  is pure-Python and slightly leaner if you don't need Claude.
+- The Claude backend (`AGENT_BACKEND=claude`, the default) keeps one
+  Claude Code CLI process running per active chat (closed on `/new`
+  and shutdown). The Cursor backend (`AGENT_BACKEND=cursor`) is
+  pure-Python and slightly leaner if you don't need Claude.
+- Conversations resume after a restart: `sessions.json` lives in the
+  data volume and Claude Code's own session files in the container's
+  `~/.claude`. That directory isn't on the volume, so after a rebuild
+  (`docker compose up -d --build` recreates the container) each chat
+  starts a fresh conversation. Memories are unaffected.
+- Telegram's `/model` and `/effort` save their choice to
+  `~/.memclaw/.env`. A `CLAUDE_MODEL` / `CLAUDE_EFFORT` passed in from
+  the compose `.env` wins over that file on the next start.

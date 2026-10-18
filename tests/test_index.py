@@ -109,7 +109,7 @@ class TestEmbeddingCacheBehavior:
             mock_openai.embeddings.create = AsyncMock(return_value=mock_response)
             idx._openai = mock_openai
 
-            result = await idx.get_embeddings([text])
+            await idx.get_embeddings([text])
             # API should have been called because model doesn't match
             mock_openai.embeddings.create.assert_called_once()
 

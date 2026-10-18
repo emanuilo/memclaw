@@ -1,12 +1,7 @@
-"""Tests for new MemclawConfig fields (specs #1, #2, #4, #5)."""
+"""Tests for MemclawConfig fields (specs #2, #4, #5)."""
 from pathlib import Path
 
 from memclaw.config import MemclawConfig
-
-
-def test_default_conversation_history_limit(tmp_path: Path):
-    cfg = MemclawConfig(memory_dir=tmp_path / "m", openai_api_key="k", anthropic_api_key="k")
-    assert cfg.conversation_history_limit == 10
 
 
 def test_default_consolidation_threshold(tmp_path: Path):
@@ -29,12 +24,10 @@ def test_custom_values(tmp_path: Path):
         memory_dir=tmp_path / "m",
         openai_api_key="k",
         anthropic_api_key="k",
-        conversation_history_limit=5,
         consolidation_threshold=3,
         decay_half_life_days=60,
         mmr_lambda=0.5,
     )
-    assert cfg.conversation_history_limit == 5
     assert cfg.consolidation_threshold == 3
     assert cfg.decay_half_life_days == 60
     assert cfg.mmr_lambda == 0.5
@@ -77,3 +70,22 @@ def test_claude_cli_model_vars_are_not_picked_up(
     monkeypatch.setenv("ANTHROPIC_MODEL", "claude-opus-5")
     cfg = MemclawConfig(memory_dir=tmp_path / "m", openai_api_key="k", anthropic_api_key="k")
     assert cfg.claude_model == ""
+
+
+def test_rolling_history_settings_are_gone(tmp_path: Path):
+    """Conversations live in the backend session now; there is no window."""
+    cfg = MemclawConfig(memory_dir=tmp_path / "m", openai_api_key="k", anthropic_api_key="k")
+    assert not hasattr(cfg, "conversation_history_limit")
+    assert not hasattr(cfg, "conversation_history_window_minutes")
+
+
+def test_update_env_file_merges_and_drops(tmp_path: Path, monkeypatch):
+    from memclaw import setup
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("OPENAI_API_KEY=k\nCLAUDE_MODEL=old\nCLAUDE_EFFORT=high\n")
+    monkeypatch.setattr(setup, "ENV_FILE", env_file)
+
+    setup.update_env_file({"CLAUDE_MODEL": "claude-haiku-4-5"}, drop_keys=["CLAUDE_EFFORT"])
+
+    assert env_file.read_text() == "OPENAI_API_KEY=k\nCLAUDE_MODEL=claude-haiku-4-5\n"

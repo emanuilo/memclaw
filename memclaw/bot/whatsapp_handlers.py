@@ -50,7 +50,7 @@ class WhatsAppBot:
             user, server = chat_id, "s.whatsapp.net"
         jid = build_jid(user, server=server)
         await self.client.send_message(jid, text)
-        self.agent.record_reminder_fired(text)
+        self.agent.record_reminder_fired(text, chat_id)
 
     # ------------------------------------------------------------------
     # Event registration
@@ -113,7 +113,10 @@ class WhatsAppBot:
             return
 
         text = msg.conversation or msg.extendedTextMessage.text
-        if text:
+        if text and text.strip().lower() == "/new":
+            await self.agent.reset_conversation(self._chat_id(ev))
+            await cli.send_message(ev.Info.MessageSource.Chat, "Started a new conversation.")
+        elif text:
             await self._handle_text(cli, ev, text)
         else:
             logger.debug("Ignoring unsupported WhatsApp message type")

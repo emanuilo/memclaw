@@ -206,6 +206,25 @@ def _load_existing() -> dict[str, str]:
     return values
 
 
+def update_env_file(values: dict[str, str], drop_keys: list[str] | tuple[str, ...] = ()) -> None:
+    """Merge *values* into ~/.memclaw/.env and remove *drop_keys*.
+
+    Keys are written in their existing order, new ones appended; a key with
+    an empty value is removed, matching how the wizard writes the file.
+    """
+    merged = _load_existing()
+    merged.update(values)
+    for key in drop_keys:
+        merged.pop(key, None)
+    _write_env(merged)
+
+
+def _write_env(values: dict[str, str]) -> None:
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{k}={v}" for k, v in values.items() if v]
+    ENV_FILE.write_text("\n".join(lines) + "\n")
+
+
 def needs_setup() -> bool:
     """Return True if first-run setup is needed."""
     return not ENV_FILE.exists()
@@ -298,9 +317,7 @@ def run_setup(*, reconfigure: bool = False, memory_dir: Path | str | None = None
             raise SystemExit(1)
 
     # Write to ~/.memclaw/.env
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"{k}={v}" for k, v in values.items() if v]
-    ENV_FILE.write_text("\n".join(lines) + "\n")
+    _write_env(values)
 
     # Sync the current process env with the freshly-written .env. Without this,
     # MemclawConfig.__post_init__ would still see stale values (e.g. an OAuth

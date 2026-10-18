@@ -204,6 +204,33 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+# Progress-message wording per tool: (label, argument shown after it).
+_STEP_LABELS: dict[str, tuple[str, str | None]] = {
+    "memory_save": ("Saving to memory", None),
+    "memory_search": ("Searching memories", "query"),
+    "image_save": ("Saving the image", None),
+    "image_search": ("Searching images", "query"),
+    "update_instructions": ("Updating my instructions", None),
+    "file_write": ("Writing", "file_path"),
+    "file_read": ("Reading", "file_path"),
+    "reminder_create": ("Setting a reminder", "text"),
+    "reminder_list": ("Checking reminders", None),
+    "reminder_cancel": ("Cancelling a reminder", None),
+}
+
+
+def describe_tool_call(name: str, args: Any, limit: int = 80) -> str:
+    """A short one-line description of a tool call for progress messages."""
+    label, arg = _STEP_LABELS.get(name, (name, None))
+    value = args.get(arg) if arg and isinstance(args, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return label
+    value = " ".join(value.split())
+    if len(value) > limit:
+        value = value[: limit - 1] + "…"
+    return f"{label}: {value}"
+
+
 def _format_results(results: list[SearchResult]) -> str:
     parts = []
     for i, r in enumerate(results, 1):

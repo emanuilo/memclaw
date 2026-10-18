@@ -6,18 +6,21 @@ Memclaw is a personal memory assistant that stores everything you tell it and re
 
 ## Short-Term Memory
 
-Short-term memory covers anything the agent needs to remember within a single session but that doesn't persist across restarts.
+Short-term memory is the conversation itself: what you and the agent said in the current chat.
 
-### Conversation History
+### Conversation Sessions
 
-The agent keeps a rolling buffer of recent messages — both yours and its own responses. This lets it follow multi-turn conversations without losing the thread.
+Each chat's conversation lives in the agent backend's own session (for Claude, a Claude Code session), not in a buffer Memclaw re-sends with every message.
 
 **How it works:**
 
-- Each time you send a message, it's appended to an in-memory list along with a timestamp.
-- When the agent responds, that response is appended too.
-- After each append, the buffer is trimmed to the **union** of two rolling windows: the last 10 exchanges (20 entries) and every entry timestamped within the last hour. Whichever set is larger wins; older entries that fall outside both are dropped.
-- The full history is formatted and included in the system prompt so the agent can see what was said earlier in the session.
+- Every chat gets a session key: `<platform>:<chat id>` for the bots (e.g. `telegram:12345`, `slack:C01ABC`), `cli` for the interactive terminal.
+- The Claude backend keeps one connected Claude CLI process per chat and reuses it for every turn, so a message doesn't pay the CLI start-up cost. Turns in the same chat are serialized.
+- The session id is saved in `~/.memclaw/sessions.json` (written atomically). After a restart, the next message in that chat resumes the same session, so the conversation carries on.
+- If a session can't be resumed (deleted, created on another machine, ...), a warning is logged and a fresh session starts.
+- Each saved session records a **fingerprint** of the code-level instructions (the system-prompt template and the backend). Claude Code keeps a session's original system prompt when it resumes, so a session created under different instructions (e.g. after an upgrade that changed the template) is not resumed; the chat starts fresh.
+- `/new` (Telegram command; a message of exactly `/new` in Slack, WhatsApp and the terminal) closes that chat's session and forgets its id. Your memories are untouched.
+- `/model` and `/effort` (Telegram) switch the model or effort level. Live sessions reconnect on their next message, resuming the same session with the new settings, so the conversation is kept.
 
 **What this means in practice:**
 
@@ -28,28 +31,32 @@ You:       What's my dog called?
 Assistant: Your dog's name is Max.
 ```
 
-Without this buffer, the second question would get "I don't know" because each message was previously independent.
+The conversation is bounded only by the backend's own context management (Claude Code compacts long sessions on its own). Use `/new` to start over.
 
-The union policy matters in two regimes. During a quick burst of chatter (say, 30 messages in five minutes) the time window keeps **all** of them in scope, even though the 10-pair floor alone would have dropped the oldest. During a slow conversation with long gaps, the time window may be empty, but the 10-pair floor still guarantees continuity across resumption.
+The Cursor backend has no native sessions yet: as an interim measure it keeps the last 10 messages per chat in memory and folds them into each prompt. That transcript does not survive a restart.
 
-**Limitations:**
+### System Prompt and Per-Message Context
 
-- The buffer resets when the process restarts. It is not written to disk.
-- For images, the history stores `[User sent a photo]` as a placeholder — not the actual image data.
-- Both bounds are configurable: `conversation_history_limit` (default `10` pairs) and `conversation_history_window_minutes` (default `60`).
+The system prompt is **static for a session**, so the backend can prompt-cache it. It is built when a session is created and contains:
 
-### Memory Context Injection
+1. **AGENTS.md** — your behavioural instructions (editable via the `update_instructions` tool).
+2. Reply-formatting rules and a description of the per-message context block.
+3. **MEMORY.md** — your permanent memory (see Permanent Memory in the Prompt below).
 
-Before every response, the agent builds a context block from long-term storage and injects it into the system prompt. This is ephemeral — it's assembled fresh for each message based on what seems relevant.
+Everything that changes per turn goes at the **top of the user message**, in a compact `<context>` block:
 
-The context has two parts:
+- The current local date and time (used for dates and reminders).
+- **Relevant memories** — the top 5 search results for the message (hybrid search), each cut to 500 characters. MEMORY.md hits are skipped since MEMORY.md is already in the system prompt.
+- **Delivered reminders** — reminders that fired in this chat since the last message, so the agent has context if you reply to one.
+- **Updated AGENTS.md / MEMORY.md** — see below.
 
-1. **Permanent memory (MEMORY.md)** — always included (see Smart Context Strategy below).
-2. **Relevant memories** — the top 10 search results from the full memory index, matched against the current message using hybrid search.
+The block stays in the session transcript, which is why it is kept small.
 
-This means the agent always has access to your key facts and any memories related to what you're currently talking about, even if you didn't explicitly ask to search.
+### Keeping AGENTS.md and MEMORY.md Current
 
----
+The session stores a hash of the AGENTS.md and MEMORY.md content it has seen (persisted in `sessions.json`). Before each message the files are hashed again; if either changed (an `update_instructions` call, a consolidation, a manual edit), its new content is included **once** in that message's context block, labelled as superseding the earlier version, and the stored hash is updated. The conversation continues without a reset. Changes the session makes itself during a turn (`memory_save` with `permanent=true`, `update_instructions`) count as seen and aren't sent back; a consolidation that rewrites MEMORY.md during a turn is.
+
+Because Claude Code keeps a resumed session's original system prompt, the stored hashes always describe what the session has actually seen, including across restarts.
 
 ## Long-Term Memory
 
@@ -62,6 +69,7 @@ Long-term memory is everything that survives between sessions. It lives on disk 
 ├── MEMORY.md                  # Curated permanent knowledge base
 ├── memclaw.db                 # SQLite: chunks, embeddings, FTS index, cache
 ├── meta.json                  # Consolidation tracking metadata
+├── sessions.json              # Per-chat conversation session ids + hashes
 └── memory/
     ├── 2025-03-01.md          # Daily log for March 1
     ├── 2025-03-02.md          # Daily log for March 2
@@ -88,27 +96,22 @@ Daily files accumulate over time. Consolidation is a periodic process that disti
 
 **When it runs:**
 
-- Automatically, before each message, if 7 or more daily files haven't been consolidated yet.
+- Automatically, in the background after each reply, if 7 or more daily files haven't been consolidated yet. At most one consolidation runs at a time; failures are logged and retried after a later message.
 - Manually, via the `memclaw consolidate` CLI command (which forces it regardless of count).
 
 **What it does:**
 
 1. Collects all unconsolidated daily files (up to 30,000 characters).
 2. Reads the current MEMORY.md.
-3. Sends both to Claude with instructions to extract durable facts, merge with existing content, remove outdated entries, and output a clean structured document.
+3. Sends both to the agent backend (a short-lived, tool-free call) with instructions to extract durable facts, merge with existing content, remove outdated entries, and output a clean structured document.
 4. Overwrites MEMORY.md with the result.
 5. Records the latest consolidated date in `meta.json` so those files aren't processed again.
 
 The result is a MEMORY.md organized into sections like Preferences, Projects, People, Key Facts, and Decisions — with the most important information at the top.
 
-### Smart Context Strategy
+### Permanent Memory in the Prompt
 
-When MEMORY.md is included in the system prompt, it uses an adaptive strategy rather than a hard character cutoff:
-
-- **Small file (under 4,000 characters):** Included in full. Nothing is lost.
-- **Large file (over 4,000 characters):** The first 2,000 characters are always included (this is where consolidation places the most important content). Then a semantic search runs against just the MEMORY.md chunks using the current message as query, and the top 3 matching sections are appended.
-
-This means a 10,000-character MEMORY.md doesn't lose relevant information — it just includes the top section plus the parts most related to what you're currently asking about.
+MEMORY.md goes into the session's system prompt in full (consolidation keeps it under ~5,000 characters; anything past 20,000 characters is cut with a note pointing the agent to `memory_search`). Since the system prompt is cached, carrying the whole file costs little. When consolidation rewrites MEMORY.md mid-conversation, the new version reaches the session through the context block as described above.
 
 ---
 
@@ -157,7 +160,7 @@ This means searching "pizza" returns diverse results (your preference, a restaur
 
 ### File Filtering
 
-Search can be restricted to a specific file by passing a `file_filter` string. Internally this is used to search only within MEMORY.md when building the smart context strategy. It filters results by checking if the file path contains the given substring.
+Search can be restricted to a specific file by passing a `file_filter` string. It filters results by checking if the file path contains the given substring.
 
 ### Full Search Pipeline
 
@@ -235,8 +238,6 @@ All memory-related settings live in `MemclawConfig`:
 | `text_weight` | `0.3` | Weight for keyword search in hybrid merge |
 | `decay_half_life_days` | `30` | Days until a daily memory's score halves (0 = disabled) |
 | `mmr_lambda` | `0.7` | Relevance vs. diversity trade-off in MMR (1.0 = pure relevance) |
-| `conversation_history_limit` | `10` | Minimum message pairs to keep in session buffer (count floor of the union policy) |
-| `conversation_history_window_minutes` | `60` | Time window for the session buffer — every entry newer than this is also retained |
 | `consolidation_threshold` | `7` | Number of unconsolidated daily files before auto-consolidation |
 
 ---
@@ -244,22 +245,23 @@ All memory-related settings live in `MemclawConfig`:
 ## Data Flow Summary
 
 ```
-User Message
+User Message (chat → session key)
 │
-├─ 1. Consolidation check (merge daily files → MEMORY.md if threshold reached)
-├─ 2. Append to conversation history buffer
-├─ 3. Build context:
-│     ├─ Include MEMORY.md (full or smart-truncated)
-│     └─ Semantic search for 10 relevant memory chunks
-├─ 4. Format history for system prompt
-├─ 5. Send to Claude with context + history + tools
+├─ 1. Look up the chat's saved session (sessions.json; dropped if the fingerprint changed)
+├─ 2. Build the <context> block:
+│     ├─ Current local time
+│     ├─ Reminders delivered since the last message
+│     ├─ AGENTS.md / MEMORY.md, if changed since the session last saw them
+│     └─ Semantic search for 5 relevant memory chunks
+├─ 3. Run the turn in the chat's session (reuse the live client, or resume /
+│     start one with the static system prompt: AGENTS.md + rules + MEMORY.md)
 │     └─ Agent may call:
 │           ├─ memory_save   → write to daily file or MEMORY.md → index
 │           ├─ memory_search → run full search pipeline
-│           ├─ image_save / telegram_image_save → store image metadata
+│           ├─ image_save    → store image metadata
 │           └─ image_search  → vector search over image descriptions
-├─ 6. Append assistant response to history buffer
-├─ 7. Trim history to union of (last N pairs) and (entries within the time window)
+├─ 4. Save the session id + AGENTS.md / MEMORY.md hashes
+├─ 5. Schedule consolidation in the background (if threshold reached)
 │
-└─ Return response (+ any found images for Telegram)
+└─ Return response (+ any found images)
 ```
