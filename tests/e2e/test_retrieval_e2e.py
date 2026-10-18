@@ -35,7 +35,9 @@ CORPUS: list[tuple[int, list[tuple[str, str]]]] = [
         ("09:00", "Car registration renewal is due in November; the insurance policy number is AX-99-1203."),
         ("21:00", "Tried the new ramen place Ichiraku on Strahinjica Bana, the tonkotsu was excellent."),
     ]),
-    (90, [
+    # Old enough for temporal decay to matter, recent enough that a natural
+    # question should still find it (decay itself has its own unit tests).
+    (45, [
         ("12:00", "Started learning Spanish on Duolingo, goal is 15 minutes a day."),
     ]),
 ]
@@ -63,7 +65,7 @@ QUERIES: list[tuple[str, str]] = [
     ("How fast was my last run?", "52 minutes"),
     ("What did we decide about FAISS?", "SQLite"),
     ("Which book did Marko recommend?", "Pragmatic Programmer"),
-    ("language learning goal", "Duolingo"),
+    ("Which language am I learning?", "Duolingo"),
     ("What milk do I take in my coffee?", "oat milk"),
 ]
 
