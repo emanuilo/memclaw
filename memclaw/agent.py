@@ -210,9 +210,12 @@ class MemclawAgent:
         """Start a fresh conversation for *chat_id* (the `/new` command)."""
         key = self._session_key(chat_id)
         self._generations[key] = self._generations.get(key, 0) + 1
-        await self.backend.reset_session(key)
+        # Forget the session before awaiting the backend: a message sent
+        # right after /new may run while the reset is still disconnecting,
+        # and must not resume the old session.
         self.sessions.drop(key)
         self._pending_notes.pop(key, None)
+        await self.backend.reset_session(key)
         logger.info("Started a new conversation for {k}", k=key)
 
     # ── Startup / sync ───────────────────────────────────────────────

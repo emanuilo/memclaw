@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hashlib
 import time
 
 from loguru import logger
@@ -57,10 +58,16 @@ CALLBACK_DATA_MAX_BYTES = 64
 _APPLIES = "Applies from your next message; the conversation is kept."
 
 
-def model_callback_data(index: int, model_id: str) -> str:
-    """``m:<id>``, or ``mi:<index>`` if the id would exceed Telegram's limit."""
+def _model_key(model_id: str) -> str:
+    return hashlib.sha256(model_id.encode()).hexdigest()[:16]
+
+
+def model_callback_data(model_id: str) -> str:
+    """``m:<id>``, or ``mi:<hash of the id>`` if the id would exceed
+    Telegram's limit. A hash rather than a list position, so a button still
+    picks its own model if the list has changed since the menu was shown."""
     data = f"m:{model_id}"
-    return data if len(data.encode()) <= CALLBACK_DATA_MAX_BYTES else f"mi:{index}"
+    return data if len(data.encode()) <= CALLBACK_DATA_MAX_BYTES else f"mi:{_model_key(model_id)}"
 
 
 def _unsupported(backend: AgentBackend, what: str) -> str:
@@ -97,15 +104,15 @@ async def model_menu(
         lines += ["", note]
     lines.append("")
     if not models:
-        lines.append("Couldn't load the model list right now; send /model <id> to switch.")
+        lines.append("Couldn't load the model list right now; try /model again later.")
         return "\n".join(lines), None
     lines.append("Tap a model to switch, or send /model <id>.")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             ("✓ " if m.id == backend.model else "") + m.display_name,
-            callback_data=model_callback_data(i, m.id),
+            callback_data=model_callback_data(m.id),
         )]
-        for i, m in enumerate(models)
+        for m in models
     ])
     return "\n".join(lines), keyboard
 
@@ -338,9 +345,9 @@ class MessageHandlers:
                 model_id = value
                 if kind == "mi":
                     models = await _load_models(backend)
-                    if not (value.isdigit() and int(value) < len(models)):
+                    model_id = next((m.id for m in models if _model_key(m.id) == value), "")
+                    if not model_id:
                         raise ValueError("That model is no longer available; send /model again.")
-                    model_id = models[int(value)].id
                 note = await select_model(backend, model_id)
                 await query.answer(f"Model: {backend.model}")
                 text, keyboard = await model_menu(backend, note)
