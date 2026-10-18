@@ -505,12 +505,15 @@ class TestCursorAgentBackendRuns:
 
     @pytest.mark.asyncio
     async def test_resume_failure_starts_fresh_agent(self, tmp_path):
-        from cursor_sdk import UnknownAgentError
+        import cursor_sdk
 
+        # The SDK's "no such agent" error: UnknownAgentError up to 0.1.4,
+        # AgentNotFoundError later. Both are CursorAgentErrors.
+        not_found = getattr(cursor_sdk, "AgentNotFoundError", None) or cursor_sdk.UnknownAgentError
         backend = _backend(tmp_path)
         fresh = _make_agent("agent-new")
         client = _make_client(
-            resume=[UnknownAgentError("Agent agent-gone not found")], create=[fresh],
+            resume=[not_found("Agent agent-gone not found")], create=[fresh],
         )
 
         with _patched(backend, client):
