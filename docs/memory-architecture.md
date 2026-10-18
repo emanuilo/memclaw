@@ -10,17 +10,18 @@ Short-term memory is the conversation itself: what you and the agent said in the
 
 ### Conversation Sessions
 
-Each chat's conversation lives in the agent backend's own session (for Claude, a Claude Code session), not in a buffer Memclaw re-sends with every message.
+Each chat's conversation lives in the agent backend's own session (for Claude, a Claude Code session; for Cursor, a local Cursor SDK agent), not in a buffer Memclaw re-sends with every message.
 
 **How it works:**
 
 - Every chat gets a session key: `<platform>:<chat id>` for the bots (e.g. `telegram:12345`, `slack:C01ABC`), `cli` for the interactive terminal.
 - The Claude backend keeps one connected Claude CLI process per chat and reuses it for every turn, so a message doesn't pay the CLI start-up cost. Turns in the same chat are serialized.
+- The Cursor backend runs one Cursor SDK bridge process for all chats and keeps one open agent per chat. The agent stores its conversation on disk (under `~/.cursor`, in a store tied to the bridge's working directory, which is pinned to the memory directory). Cursor agents have no system-prompt field, so the system prompt goes at the top of a new agent's first message; later messages carry only the context block and the message.
 - The session id is saved in `~/.memclaw/sessions.json` (written atomically). After a restart, the next message in that chat resumes the same session, so the conversation carries on.
 - If a session can't be resumed (deleted, created on another machine, ...), a warning is logged and a fresh session starts.
-- Each saved session records a **fingerprint** of the code-level instructions (the system-prompt template and the backend). Claude Code keeps a session's original system prompt when it resumes, so a session created under different instructions (e.g. after an upgrade that changed the template) is not resumed; the chat starts fresh.
+- Each saved session records a **fingerprint** of the code-level instructions (the system-prompt template and the backend). A resumed session keeps its original system prompt, so a session created under different instructions (e.g. after an upgrade that changed the template) is not resumed; the chat starts fresh.
 - `/new` (Telegram command; a message of exactly `/new` in Slack, WhatsApp and the terminal) closes that chat's session and forgets its id. Your memories are untouched.
-- `/model` and `/effort` (Telegram) switch the model or effort level. Live sessions reconnect on their next message, resuming the same session with the new settings, so the conversation is kept.
+- `/model` and `/effort` (Telegram) switch the model or effort level, and the conversation is kept. Claude sessions reconnect on their next message, resuming the same session with the new settings; Cursor passes the model with every message, so its agents just use it. For Cursor, `/effort` is available only on models that expose a reasoning/effort parameter.
 
 **What this means in practice:**
 
@@ -31,9 +32,7 @@ You:       What's my dog called?
 Assistant: Your dog's name is Max.
 ```
 
-The conversation is bounded only by the backend's own context management (Claude Code compacts long sessions on its own). Use `/new` to start over.
-
-The Cursor backend has no native sessions yet: as an interim measure it keeps the last 10 messages per chat in memory and folds them into each prompt. That transcript does not survive a restart.
+The conversation is bounded only by the backend's own context management (e.g. Claude Code compacts long sessions on its own). Use `/new` to start over.
 
 ### System Prompt and Per-Message Context
 
@@ -56,7 +55,7 @@ The block stays in the session transcript, which is why it is kept small.
 
 The session stores a hash of the AGENTS.md and MEMORY.md content it has seen (persisted in `sessions.json`). Before each message the files are hashed again; if either changed (an `update_instructions` call, a consolidation, a manual edit), its new content is included **once** in that message's context block, labelled as superseding the earlier version, and the stored hash is updated. The conversation continues without a reset. Changes the session makes itself during a turn (`memory_save` with `permanent=true`, `update_instructions`) count as seen and aren't sent back; a consolidation that rewrites MEMORY.md during a turn is.
 
-Because Claude Code keeps a resumed session's original system prompt, the stored hashes always describe what the session has actually seen, including across restarts.
+Because a resumed session keeps its original system prompt, the stored hashes always describe what the session has actually seen, including across restarts.
 
 ## Long-Term Memory
 
