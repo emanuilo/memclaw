@@ -148,15 +148,25 @@ def _effort_param(model: Any) -> Any | None:
 
 async def _drain_stderr(stream: asyncio.StreamReader) -> None:
     """Keep reading the bridge's stderr. The SDK only reads it until the
-    bridge is up, and a long-lived bridge would block once the pipe fills."""
-    while line := await stream.readline():
-        logger.debug("cursor-sdk-bridge: {line}", line=line.decode(errors="replace").rstrip())
+    bridge is up, and a long-lived bridge would block once the pipe fills.
+    Read in chunks: readline() fails on a line over 64 KiB, which would end
+    the drain."""
+    while chunk := await stream.read(65536):
+        logger.debug("cursor-sdk-bridge: {out}", out=chunk.decode(errors="replace").rstrip())
 
 
 def _bridge_failed(exc: BaseException) -> bool:
     """True when *exc* came from not reaching the bridge process at all
-    (it crashed or hung), rather than from the agent or Cursor's API."""
-    return isinstance(exc.__cause__, httpx.RequestError)
+    (it crashed), rather than from the agent or Cursor's API. A timeout
+    doesn't count: a slow run says nothing about the bridge, and dropping it
+    would abort other chats' runs."""
+    cause = exc.__cause__
+    return isinstance(cause, httpx.RequestError) and not isinstance(cause, httpx.TimeoutException)
+
+
+def _bridge_process(client: Any) -> asyncio.subprocess.Process | None:
+    # The SDK keeps the subprocess it launched on a private attribute.
+    return getattr(getattr(client, "_owned_bridge", None), "process", None)
 
 
 @dataclass
@@ -282,7 +292,8 @@ class CursorAgentBackend:
             )
 
     async def on_agent_shutdown(self) -> None:
-        for session in self._sessions.values():
+        # A copy: a message arriving mid-shutdown may add a session.
+        for session in list(self._sessions.values()):
             await self._close_agent(session)
         self._sessions.clear()
         if self._client is not None:
@@ -310,7 +321,7 @@ class CursorAgentBackend:
             ["/bin/sh", "-c", 'cd "$0" && exec "$@"', self._cwd, resolve_bridge_path()],
             workspace=self._cwd,
         )
-        process = getattr(client._owned_bridge, "process", None)
+        process = _bridge_process(client)
         if process is not None and process.stderr is not None:
             task = asyncio.create_task(_drain_stderr(process.stderr))
             self._background.add(task)
@@ -319,6 +330,14 @@ class CursorAgentBackend:
 
     async def _get_client(self) -> Any:
         async with self._client_lock:
+            client = self._client
+            if client is not None:
+                process = _bridge_process(client)
+                if process is not None and process.returncode is not None:
+                    # The bridge died between calls: relaunch now rather than
+                    # failing the next message (or /model) first.
+                    logger.warning("Cursor SDK bridge exited ({rc}); relaunching", rc=process.returncode)
+                    await self._drop_client(client)
             if self._client is None:
                 self._client = await self._launch_client()
             return self._client

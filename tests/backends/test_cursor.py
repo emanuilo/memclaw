@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+import httpx
 import pytest
 from cursor_sdk import (
     HttpMcpServerConfig,
@@ -342,8 +344,9 @@ def _make_agent(agent_id: str = "agent-1", replies=None):
     return agent
 
 
-def _make_client(*, create=None, resume=None):
+def _make_client(*, create=None, resume=None, process=None):
     client = MagicMock()
+    client._owned_bridge = MagicMock(process=process) if process else None
     client.agents.create = AsyncMock(side_effect=create or [_make_agent()])
     client.agents.resume = AsyncMock(side_effect=resume or [])
     client.models.list = AsyncMock(return_value=[])
@@ -658,6 +661,65 @@ class TestCursorAgentBackendRuns:
         ) as mock_stop:
             await agent.aclose()
             mock_stop.assert_awaited_once()
+
+
+class TestBridgeRobustness:
+    @pytest.mark.asyncio
+    async def test_dead_bridge_is_relaunched_before_the_next_call(self, tmp_path):
+        backend = _backend(tmp_path)
+        dead = _make_client(process=MagicMock(returncode=1))
+        fresh = _make_client()
+        with patch.object(
+            backend, "_launch_client", new_callable=AsyncMock, side_effect=[dead, fresh],
+        ):
+            assert await backend._get_client() is dead
+            assert await backend._get_client() is fresh
+        dead.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_running_bridge_is_reused(self, tmp_path):
+        backend = _backend(tmp_path)
+        alive = _make_client(process=MagicMock(returncode=None))
+        with patch.object(backend, "_launch_client", new_callable=AsyncMock, side_effect=[alive]):
+            assert await backend._get_client() is alive
+            assert await backend._get_client() is alive
+
+    def test_timeout_is_not_a_dead_bridge(self):
+        from memclaw.backends.cursor import _bridge_failed
+
+        def raised_from(cause):
+            exc = RuntimeError("run failed")
+            exc.__cause__ = cause
+            return exc
+
+        assert _bridge_failed(raised_from(httpx.ConnectError("refused")))
+        assert not _bridge_failed(raised_from(httpx.ReadTimeout("slow")))
+        assert not _bridge_failed(RuntimeError("agent error"))
+
+    @pytest.mark.asyncio
+    async def test_drain_survives_a_line_over_64_kib(self):
+        from memclaw.backends.cursor import _drain_stderr
+
+        stream = asyncio.StreamReader()
+        stream.feed_data(b"x" * 200_000 + b"\nok\n")
+        stream.feed_eof()
+        await _drain_stderr(stream)  # reads to EOF without raising
+        assert stream.at_eof()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_tolerates_a_session_added_meanwhile(self, tmp_path):
+        from memclaw.backends.cursor import _Session
+
+        backend = _backend(tmp_path)
+        backend._mcp_server = MagicMock(stop=AsyncMock())
+
+        async def close_and_add(session):
+            backend._sessions.setdefault("late", _Session())
+
+        backend._sessions["a"] = _Session()
+        with patch.object(backend, "_close_agent", side_effect=close_and_add):
+            await backend.on_agent_shutdown()
+        assert backend._sessions == {}
 
 
 class TestCursorModelSelection:
