@@ -191,10 +191,10 @@ class MemoryIndex:
                         break
 
                 current_lines = current_lines[overlap_start:]
-                if current_heading and not any(l.startswith("#") for l in current_lines):
+                if current_heading and not any(ln.startswith("#") for ln in current_lines):
                     current_lines.insert(0, current_heading)
                 current_start = max(0, i - len(current_lines) + 1)
-                word_count = sum(len(l.split()) for l in current_lines)
+                word_count = sum(len(ln.split()) for ln in current_lines)
 
         # Flush remaining content
         if current_lines:

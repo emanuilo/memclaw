@@ -24,7 +24,7 @@ from pathlib import Path
 from loguru import logger
 
 from .backends import AgentBackend, build_backend
-from .backends.base import ProgressCallback
+from .backends.base import ProgressCallback, TurnResult
 from .config import MemclawConfig
 from .index import MemoryIndex
 from .reminders import ReminderScheduler
@@ -456,25 +456,7 @@ class MemclawAgent:
             max_turns=10,
             on_tool=on_tool,
         )
-        elapsed_ms = int((time.perf_counter() - t0) * 1000)
-
-        token_summary = (
-            f"in={result.input_tokens}, out={result.output_tokens}, "
-            f"cache_read={result.cache_read_tokens}, "
-            f"cache_create={result.cache_creation_tokens}"
-        )
-        if self.backend.bills_per_token and result.cost_usd is not None:
-            logger.info(
-                "Agent done: {turns} turns, {ms}ms, cost ${cost:.4f} ({tokens})",
-                turns=result.num_turns or 1, ms=elapsed_ms,
-                cost=result.cost_usd, tokens=token_summary,
-            )
-        else:
-            # Subscription-billed backends, or backends that don't report cost.
-            logger.info(
-                "Agent done: {turns} turns, {ms}ms ({tokens})",
-                turns=result.num_turns or 1, ms=elapsed_ms, tokens=token_summary,
-            )
+        self._log_turn(result, int((time.perf_counter() - t0) * 1000))
 
         # The session has now seen these notes and these file versions. Its
         # own writes during the turn (memory_save permanent=true,
@@ -483,21 +465,49 @@ class MemclawAgent:
         agents_hash = _hash(_load_agent_instructions(self.config))
         if self._memory_rewrites == memory_rewrites:
             memory_hash = _hash(_load_permanent_memory(self.config))
-        pending = self._pending_notes.get(key)
-        if pending:
-            del pending[:len(notes)]
+        self._ack_notes(key, len(notes))
         if result.session_id and self._generations.get(key, 0) == generation:
-            self.sessions.set(key, {
-                "session_id": result.session_id,
-                "fingerprint": self._fingerprint,
-                "agents_hash": agents_hash,
-                "memory_hash": memory_hash,
-            })
+            self._save_session(key, result.session_id, agents_hash, memory_hash)
 
         self._schedule_consolidation()
 
         response_text = result.text or "I couldn't generate a response."
         return (response_text, list(self._found_images))
+
+    def _log_turn(self, result: TurnResult, elapsed_ms: int) -> None:
+        tokens = (
+            f"in={result.input_tokens}, out={result.output_tokens}, "
+            f"cache_read={result.cache_read_tokens}, "
+            f"cache_create={result.cache_creation_tokens}"
+        )
+        turns = result.num_turns or 1
+        if self.backend.bills_per_token and result.cost_usd is not None:
+            logger.info(
+                "Agent done: {turns} turns, {ms}ms, cost ${cost:.4f} ({tokens})",
+                turns=turns, ms=elapsed_ms, cost=result.cost_usd, tokens=tokens,
+            )
+        else:
+            # Subscription-billed backends, or backends that don't report cost.
+            logger.info(
+                "Agent done: {turns} turns, {ms}ms ({tokens})",
+                turns=turns, ms=elapsed_ms, tokens=tokens,
+            )
+
+    def _ack_notes(self, key: str, seen: int) -> None:
+        """Drop the first *seen* pending notes, the ones this turn carried.
+        Only after the turn succeeded, and only those: a reminder delivered
+        during the turn stays queued for the next message."""
+        pending = self._pending_notes.get(key)
+        if pending:
+            del pending[:seen]
+
+    def _save_session(self, key: str, session_id: str, agents_hash: str, memory_hash: str) -> None:
+        self.sessions.set(key, {
+            "session_id": session_id,
+            "fingerprint": self._fingerprint,
+            "agents_hash": agents_hash,
+            "memory_hash": memory_hash,
+        })
 
     def _close_sync_only(self) -> None:
         for task in (getattr(self, "_sync_task", None), self._consolidation_task):

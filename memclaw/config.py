@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.resources
 import os
-import shutil
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
