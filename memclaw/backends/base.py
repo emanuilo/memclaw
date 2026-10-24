@@ -169,7 +169,8 @@ class AgentBackend(Protocol):
         system_prompt: str,
         user_message: str,
     ) -> str:
-        """Single-turn, tool-free LLM call. Returns the response text."""
+        """Single-turn, tool-free LLM call. Returns the response text; raises
+        if the call failed, rather than returning an error message as text."""
         ...
 
     async def run_turn(

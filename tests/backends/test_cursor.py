@@ -408,6 +408,18 @@ class TestCursorAgentBackendRuns:
         assert mock_prompt.await_args.kwargs["client"] is client
 
     @pytest.mark.asyncio
+    async def test_run_one_shot_empty_result_raises(self, tmp_path):
+        backend = _backend(tmp_path)
+        client = _make_client()
+
+        with _patched(backend, client), patch(
+            "cursor_sdk.AsyncAgent.prompt", new_callable=AsyncMock
+        ) as mock_prompt:
+            mock_prompt.return_value = SimpleNamespace(result="")
+            with pytest.raises(RuntimeError, match="no text"):
+                await backend.run_one_shot(system_prompt="S", user_message="U")
+
+    @pytest.mark.asyncio
     async def test_run_one_shot_missing_key_raises(self, tmp_path):
         backend = CursorAgentBackend(_make_config(tmp_path))
         with pytest.raises(RuntimeError, match="CURSOR_API_KEY"):

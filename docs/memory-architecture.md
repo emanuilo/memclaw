@@ -105,7 +105,7 @@ Daily files accumulate over time. Consolidation is a periodic process that disti
 
 **When it runs:**
 
-- Automatically, in the background after a reply, once a past day has notes that aren't consolidated yet — in practice after your first message of the next day you wrote in (days without notes cost nothing; after a few quiet days it catches up in one call). `consolidation_threshold` (default 1) raises the number of pending days to wait for. At most one consolidation runs at a time; a failure is logged and retried after a reply an hour or more later.
+- Automatically, in the background after a reply, once a past day has notes that aren't consolidated yet — in practice after your first message of the next day you wrote in (days without notes cost nothing; after a few quiet days it catches up in one call). `consolidation_threshold` (default 1) raises the number of pending days to wait for. At most one consolidation runs at a time; a failure is logged and retried after a reply an hour or more later. A failed backend call (network down, auth, rate limit) is a failure, not a reply: the error text the CLI returns is never written to MEMORY.md, and the consolidation marker doesn't move.
 - Manually, via the `memclaw consolidate` CLI command (which forces it regardless of count).
 
 Today's file is never consolidated: it is still being written to, and marking it done would skip everything saved later that day. It is picked up once the day is over.

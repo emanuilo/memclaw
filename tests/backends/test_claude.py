@@ -20,7 +20,8 @@ from memclaw.backends.claude_models import ModelInfo
 pytestmark = pytest.mark.usefixtures("isolate_claude_env")
 
 
-def _mock_sdk_client(text: str, *, session_id: str = "test", costs=None):
+def _mock_sdk_client(text: str, *, session_id: str = "test", costs=None,
+                     error: str | None = None, is_error: bool = False):
     """Build a fake ClaudeSDKClient context that yields one AssistantMessage
     followed by a ResultMessage. Returns (ctx_factory, client_mock).
     """
@@ -29,12 +30,13 @@ def _mock_sdk_client(text: str, *, session_id: str = "test", costs=None):
     assistant = AssistantMessage(
         content=[TextBlock(text=text)],
         model="claude-sonnet-5-5",
+        error=error,
     )
     result = ResultMessage(
         subtype="result",
         duration_ms=10,
         duration_api_ms=8,
-        is_error=False,
+        is_error=is_error,
         num_turns=1,
         session_id=session_id,
         total_cost_usd=None,
@@ -171,6 +173,26 @@ class TestRunOneShot:
         # The user message reached the SDK exactly once.
         assert client.query.await_count == 1
         assert client.query.await_args.args[0] == "hi"
+
+    @pytest.mark.asyncio
+    async def test_api_error_text_raises(self, claude_config):
+        """The CLI reports a failed call as assistant text ("API Error: ...");
+        it must not come back as the answer."""
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
+        ctx_factory, _client = _mock_sdk_client(
+            "API Error: Connection refused", error="unknown", is_error=True,
+        )
+        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=ctx_factory):
+            with pytest.raises(RuntimeError, match="Connection refused"):
+                await backend.run_one_shot(system_prompt="s", user_message="u")
+
+    @pytest.mark.asyncio
+    async def test_error_result_raises(self, claude_config):
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
+        ctx_factory, _client = _mock_sdk_client("partial", is_error=True)
+        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=ctx_factory):
+            with pytest.raises(RuntimeError):
+                await backend.run_one_shot(system_prompt="s", user_message="u")
 
 
 def _executor(cfg):

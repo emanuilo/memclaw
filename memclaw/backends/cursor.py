@@ -540,7 +540,8 @@ class CursorAgentBackend(ModelSelectionMixin):
             raise RuntimeError(f"Cursor SDK error: {exc.message}") from exc
         text = extract_run_text(result)
         if not text.strip():
-            return "I couldn't generate a response."
+            # Consolidation would write a placeholder reply over MEMORY.md.
+            raise RuntimeError("Cursor SDK one-shot returned no text")
         return text
 
     async def run_turn(

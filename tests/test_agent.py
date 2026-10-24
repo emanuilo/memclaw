@@ -827,6 +827,24 @@ class TestConsolidationSafety:
         agent.close()
 
     @pytest.mark.asyncio
+    async def test_failed_backend_call_leaves_memory_untouched(
+        self, cfg: MemclawConfig, fake_backend: FakeBackend,
+    ):
+        agent = _make_agent(cfg, fake_backend)
+        _daily(cfg, date(2025, 3, 1), "note")
+        before = cfg.memory_file.read_text()
+
+        async def one_shot(**kwargs):
+            raise RuntimeError("Claude one-shot failed (unknown): API Error: Connection refused")
+
+        fake_backend.run_one_shot = one_shot
+        with pytest.raises(RuntimeError):
+            await agent._maybe_consolidate(force=True)
+        assert cfg.memory_file.read_text() == before
+        assert not (cfg.memory_dir / "meta.json").exists()
+        agent.close()
+
+    @pytest.mark.asyncio
     async def test_code_fence_is_stripped(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         fake_backend.one_shot_response = "```markdown\n## Facts\n- x\n```"
         agent = _make_agent(cfg, fake_backend)

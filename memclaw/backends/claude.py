@@ -640,16 +640,26 @@ class ClaudeAgentBackend(ModelSelectionMixin):
         options = self._options(model=model, effort=effort, system_prompt=system_prompt, max_turns=1)
 
         result_text = ""
+        error: str | None = None
         async with ClaudeSDKClient(options=options) as client:
             await client.query(user_message)
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
+                    if msg.error:
+                        error = msg.error
                     for block in msg.content:
                         if isinstance(block, TextBlock):
                             result_text += block.text
                 elif isinstance(msg, ResultMessage):
+                    if msg.is_error:
+                        error = error or msg.subtype
                     if msg.result and not result_text:
                         result_text = msg.result
+        # A failed call (network, auth, rate limit) still comes back as text,
+        # e.g. "API Error: Connection refused"; it must never be taken as the
+        # answer, or consolidation writes it over MEMORY.md.
+        if error:
+            raise RuntimeError(f"Claude one-shot failed ({error}): {result_text[:200]}")
         return result_text
 
     async def run_turn(
