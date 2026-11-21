@@ -526,7 +526,7 @@ class ToolExecutor:
             if fire_at.tzinfo is not None:
                 fire_at = fire_at.astimezone().replace(tzinfo=None)
         elif interval:
-            from datetime import timedelta
+            from datetime import timedelta  # noqa: PLC0415 - known violation, to fix: move to top
             fire_at = datetime.now() + timedelta(seconds=interval)
         else:
             return "Provide either fire_at or interval_seconds (or both)."

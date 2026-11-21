@@ -116,7 +116,7 @@ class SlackHandlers:
     @staticmethod
     def _strip_mention(text: str) -> str:
         """Remove bot mention tags like <@U123ABC> from the start of messages."""
-        import re
+        import re  # noqa: PLC0415 - known violation, to fix: move to top
         return re.sub(r"^\s*<@[A-Z0-9]+>\s*", "", text).strip()
 
     # ------------------------------------------------------------------

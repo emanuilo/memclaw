@@ -56,9 +56,134 @@ cursor = [
 dev = [
     "pytest>=9.0.0",
     "pytest-asyncio>=1.0.0",
-    "ruff>=0.9.0",
+    "ruff>=0.12.0",
+    "import-linter>=2.12",
     "cursor-sdk>=0.1.4,<0.2",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["memclaw"]
+
+[tool.ruff.lint]
+# Pin the rule set so a newer ruff (CI installs the latest) doesn't turn on
+# new default rules. These are ruff's defaults.
+select = ["E4", "E7", "E9", "F"]
+# PLC0415: imports go at the top of the file. Keeps lazy imports deliberate
+# and visible: each one needs `# noqa: PLC0415 - <reason>`. (Hidden cycles are
+# caught by lint-imports, which also sees function-local imports.)
+# RUF100: a `# noqa` that no longer suppresses anything fails, so they can't
+# go stale.
+extend-select = ["PLC0415", "RUF100"]
+
+[tool.ruff.lint.per-file-ignores]
+# - cli.py: each subcommand loads only what it needs, so `memclaw chat` doesn't
+#   pull in the Telegram/Slack/WhatsApp SDKs. Nothing imports cli.
+# - tests: imports inside tests are normal (patching, optional deps).
+"memclaw/cli.py" = ["PLC0415"]
+"tests/**" = ["PLC0415"]
+
+# ---------------------------------------------------------------------------
+# Module-structure rules, checked by `lint-imports` (import-linter) in CI.
+# Run locally with:  lint-imports
+#
+# Known violations are listed under "# known violation, to fix:" inside each
+# contract's ignore_imports. They are grandfathered, not approved: fix them one
+# at a time and delete the line. A line whose import no longer exists makes
+# lint-imports fail, so the list can't go stale.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "memclaw"
+# Needed so the "chat SDKs" contract below can see third-party packages.
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "layers"
+name = "Layers: a module may only import modules in layers BELOW it (entry points -> agent -> backends -> tools -> core -> config)"
+type = "layers"
+containers = ["memclaw"]
+layers = [
+    # Entry point: the `memclaw` command.
+    "cli",
+    # Front-ends started by the CLI: the chat bots and the interactive setup
+    # wizard. Independent (`|`): bots don't run the wizard and vice versa.
+    "bot | setup",
+    # Platform-agnostic assistant: wires backends, tools and storage together.
+    "agent",
+    # AI agent backends (Claude, Cursor) and their MCP plumbing.
+    "backends",
+    # The memory tools the agent can call.
+    "tools",
+    # Independent building blocks (`|`: they don't import each other).
+    "search | store | reminders | sessions | memory_refs | prompts | openai_health",
+    # SQLite + embeddings index, used by search.
+    "index",
+    # Settings read from the environment. Imports nothing from memclaw.
+    "config",
+]
+# Every top-level module must be placed in a layer above; a new module fails
+# lint-imports until someone decides where it belongs.
+exhaustive = true
+# Data files (AGENTS.md, Cursor hook script) copied out at runtime, not code
+# that is imported. Covered by its own contract below.
+exhaustive_ignores = ["defaults"]
+ignore_imports = [
+    # known violation, to fix: backends import the setup wizard (a cycle,
+    # since setup imports backends; hidden by function-local imports).
+    "memclaw.backends.model_selection -> memclaw.setup",  # update_env_file
+    "memclaw.backends.claude -> memclaw.setup",           # _masked_input
+    "memclaw.backends.cursor -> memclaw.setup",           # _masked_input
+]
+
+[[tool.importlinter.contracts]]
+id = "no-cycles-in-subpackages"
+name = "No circular imports between modules inside a subpackage (e.g. memclaw.backends, memclaw.bot)"
+type = "acyclic_siblings"
+# Top-level modules are already kept acyclic by the layers contract; this
+# covers the modules inside each subpackage, at any depth.
+ancestors = ["memclaw.*"]
+
+[[tool.importlinter.contracts]]
+id = "chat-platforms-independent"
+name = "Chat platforms are independent: the Telegram, Slack and WhatsApp handlers never import each other (share code via memclaw.bot or lower layers)"
+type = "independence"
+modules = [
+    "memclaw.bot.handlers",           # Telegram
+    "memclaw.bot.slack_handlers",
+    "memclaw.bot.whatsapp_handlers",
+]
+
+[[tool.importlinter.contracts]]
+id = "chat-sdks-only-in-bot"
+name = "Chat-platform SDKs (telegram, slack_bolt, neonize) are only imported inside memclaw.bot"
+type = "protected"
+protected_modules = ["telegram", "slack_bolt", "neonize"]
+allowed_importers = ["memclaw.bot"]
+ignore_imports = [
+    # known violation, to fix: the Telegram bot is wired up in cli.py
+    # (_run_telegram), while Slack and WhatsApp are wired up in memclaw.bot.
+    "memclaw.cli -> telegram",  # lines 186-188
+]
+
+[[tool.importlinter.contracts]]
+id = "defaults-standalone"
+name = "memclaw.defaults imports nothing from memclaw (its Cursor hook script is copied to ~/.memclaw and run on its own)"
+type = "forbidden"
+source_modules = ["memclaw.defaults"]
+forbidden_modules = ["memclaw.*"]
+
+[[tool.importlinter.contracts]]
+id = "backend-internals-private"
+name = "Only memclaw.backends itself imports the concrete backends (everyone else goes through memclaw.backends / memclaw.backends.base)"
+type = "protected"
+protected_modules = [
+    "memclaw.backends.claude",
+    "memclaw.backends.claude_models",
+    "memclaw.backends.cursor",
+    "memclaw.backends.cursor_hooks",
+    "memclaw.backends.cursor_sdk_adapter",
+    "memclaw.backends.mcp_bridge",
+    "memclaw.backends.mcp_tools",
+    "memclaw.backends.model_selection",
+    "memclaw.backends.tool_policy",
+]
+allowed_importers = ["memclaw.backends"]

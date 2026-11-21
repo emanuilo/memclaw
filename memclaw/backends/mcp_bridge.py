@@ -65,7 +65,7 @@ class HttpMcpServer:
     def config(self) -> HttpMcpServerConfig | None:
         if not self.is_running or self._port <= 0:
             return None
-        from cursor_sdk import HttpMcpServerConfig
+        from cursor_sdk import HttpMcpServerConfig  # noqa: PLC0415 - optional dep cursor-sdk
 
         return HttpMcpServerConfig(
             url=f"http://{self._host}:{self._port}/mcp",

@@ -68,7 +68,7 @@ class ModelSelectionMixin:
 
     def _apply_model(self, model: str, effort: str | None) -> None:
         """Use *model* / *effort* from the next turn on and save them."""
-        from ..setup import update_env_file  # local import — setup imports backends
+        from ..setup import update_env_file  # noqa: PLC0415 - known violation, to fix: setup cycle
 
         logger.info(
             "{b} model: {m} effort: {e} -> {m2} effort: {e2}",

@@ -73,7 +73,7 @@ async def report_tool_step(
     """Call *on_tool* for a tool call; a failing callback never fails the turn."""
     if on_tool is None:
         return
-    from ..tools import describe_tool_call  # local import — tools imports a lot
+    from ..tools import describe_tool_call  # noqa: PLC0415 - known violation, to fix: move to top
 
     try:
         await on_tool(ToolStep(index, name, describe_tool_call(name, args)))

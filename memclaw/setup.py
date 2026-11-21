@@ -142,7 +142,7 @@ def _masked_input(prompt_text: str, *, visible: int = 4) -> str:
     and '*' for everything after. Used for API keys and other config values
     during the wizard so pasted secrets don't sit in the scrollback in clear.
     """
-    import sys
+    import sys  # noqa: PLC0415 - known violation, to fix: move to top
 
     console.print(prompt_text, end=": ")
     sys.stdout.flush()
@@ -154,8 +154,8 @@ def _masked_input(prompt_text: str, *, visible: int = 4) -> str:
         return line
 
     try:
-        import termios
-        import tty
+        import termios  # noqa: PLC0415 - POSIX-only
+        import tty  # noqa: PLC0415 - POSIX-only
     except ImportError:
         # Non-POSIX (e.g. Windows): fall back to unmasked input.
         return input()
@@ -334,9 +334,9 @@ def run_setup(*, reconfigure: bool = False, memory_dir: Path | str | None = None
     # right now, not when their first voice message silently disappears.
     api_key = values.get("OPENAI_API_KEY")
     if api_key:
-        import asyncio
+        import asyncio  # noqa: PLC0415 - known violation, to fix: move to top
 
-        from .openai_health import print_probe_report, probe_openai
+        from .openai_health import print_probe_report, probe_openai  # noqa: PLC0415 - known violation, to fix: move to top
 
         console.print("\n[cyan]Checking OpenAI model access...[/cyan]")
         try:

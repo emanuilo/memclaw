@@ -48,7 +48,7 @@ def _installed_hook_version(script_path: Path) -> int | None:
 
 
 def _write_hook_policy(hooks_dir: Path, memory_dir: Path) -> None:
-    from ..config import MemclawConfig
+    from ..config import MemclawConfig  # noqa: PLC0415 - known violation, to fix: move to top
 
     cfg = MemclawConfig(memory_dir=memory_dir)
     policy_path = hooks_dir / _HOOK_POLICY_JSON

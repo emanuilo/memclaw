@@ -120,8 +120,8 @@ async def probe_openai(api_key: str) -> ProbeReport:
 
 def print_probe_report(report: ProbeReport, console) -> None:
     """Render a probe report as a Rich table-ish summary."""
-    from rich.panel import Panel
-    from rich.text import Text
+    from rich.panel import Panel  # noqa: PLC0415 - known violation, to fix: move to top
+    from rich.text import Text  # noqa: PLC0415 - known violation, to fix: move to top
 
     body = Text()
     for outcome in report:

@@ -363,7 +363,7 @@ class ClaudeAgentBackend(ModelSelectionMixin):
             drop_key = "CLAUDE_CODE_OAUTH_TOKEN"
 
         current = existing.get(env_key, "")
-        from ..setup import _masked_input  # local import — setup imports backends
+        from ..setup import _masked_input  # noqa: PLC0415 - known violation, to fix: setup cycle
         answer = _masked_input(f"{label} (required)")
         value = answer or current
         if not value:
