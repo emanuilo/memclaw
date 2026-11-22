@@ -5,10 +5,9 @@ from pathlib import Path
 
 import click
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
 
-from .bot import PLATFORMS
+from .bot import chosen_platform
 from .config import MemclawConfig, reload_env_file
 from .memory import HybridSearch, MemoryIndex, MemoryStore
 from .setup import needs_setup, print_logo, print_probe_report, run_setup
@@ -79,80 +78,7 @@ def cli(ctx, memory_dir):
         config = ctx.obj["config"]
         _require_backend_auth(config)
         _require_openai(config)
-
-        platform = PLATFORMS.get(config.platform)
-        if platform is not None:
-            platform.run(config)
-        else:
-            asyncio.run(_interactive(config))
-
-
-# ------------------------------------------------------------------
-# Interactive (terminal) mode
-# ------------------------------------------------------------------
-
-async def _interactive(config: MemclawConfig):
-    import sys
-
-    from loguru import logger
-
-    from .agent import MemclawAgent
-
-    logger.remove()
-    logger.add(
-        sys.stderr,
-        level="INFO",
-        format="<green>{time:HH:mm:ss}</green> | <level>{level:<8}</level> | <level>{message}</level>",
-    )
-
-    console.print(
-        Panel(
-            "[bold]Memclaw[/bold] — Your Personal Memory Vault\n\n"
-            "Type your thoughts, questions, or commands.\n"
-            "Type [bold]/new[/bold] to start a fresh conversation, "
-            "[bold]/quit[/bold] to exit.",
-            title="memclaw",
-            border_style="bright_cyan",
-        )
-    )
-
-    agent = MemclawAgent(config)
-
-    # Spec #9: run a full index sync once at startup
-    with console.status("[cyan]Syncing index...[/cyan]"):
-        await agent.start()
-
-    try:
-        while True:
-            try:
-                user_input = console.input("[bold green]> [/bold green]")
-            except (EOFError, KeyboardInterrupt):
-                break
-
-            stripped = user_input.strip()
-            if stripped.lower() in ("/quit", "/exit", "quit", "exit"):
-                break
-            if not stripped:
-                continue
-            if stripped.lower() == "/new":
-                await agent.reset_conversation()
-                console.print("[cyan]Started a new conversation.[/cyan]\n")
-                continue
-
-            try:
-                with console.status("[cyan]Thinking...[/cyan]"):
-                    response, _images = await agent.handle(stripped)
-            except Exception as e:
-                console.print(f"\n[red]Error:[/red] {e}\n")
-                continue
-
-            if response:
-                console.print()
-                console.print(Markdown(response))
-            console.print()
-    finally:
-        await agent.aclose()
-        console.print("\nGoodbye! Your memories are safe.")
+        chosen_platform(config).run(config)
 
 
 # ------------------------------------------------------------------

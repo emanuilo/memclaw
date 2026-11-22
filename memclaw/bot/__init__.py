@@ -1,9 +1,10 @@
-"""The chat apps Memclaw runs on.
+"""The places Memclaw chats in: the chat apps and the terminal.
 
-Each platform is one module here (`telegram.py`, `slack.py`, `whatsapp.py`)
-that only does that app's I/O: receive a message, download its media, send
-the reply. What happens in between (voice to text, link summaries, the
-prompt, the agent call, reminders) is shared, in `inbound.py`.
+Each platform is one module here. The chat apps' (`telegram.py`,
+`slack.py`, `whatsapp.py`) only do that app's I/O: receive a message,
+download its media, send the reply. What happens in between (voice to text,
+link summaries, the prompt, the agent call, reminders) is shared, in
+`inbound.py`. `terminal.py` is the chat in the shell that runs `memclaw`.
 
 Each platform module has a `run(config)` that starts it. The bare `memclaw`
 command and the setup wizard find the platforms in `PLATFORMS` below, so
@@ -30,7 +31,7 @@ console = Console()
 
 @dataclass(frozen=True)
 class Platform:
-    """A chat app; its code is the module `memclaw/bot/<name>.py`."""
+    """A place to chat in; its code is the module `memclaw/bot/<name>.py`."""
 
     name: str
     label: str  # shown by the setup wizard
@@ -47,8 +48,17 @@ PLATFORMS: dict[str, Platform] = {
         Platform("telegram", "Telegram"),
         Platform("whatsapp", "WhatsApp"),
         Platform("slack", "Slack"),
+        Platform("terminal", "Terminal chat"),
     )
 }
+
+# What the bare `memclaw` starts when MEMCLAW_PLATFORM is empty or unknown.
+DEFAULT_PLATFORM = "terminal"
+
+
+def chosen_platform(config: MemclawConfig) -> Platform:
+    """The platform *config* names (MEMCLAW_PLATFORM), else the terminal."""
+    return PLATFORMS.get(config.platform) or PLATFORMS[DEFAULT_PLATFORM]
 
 
 def mask_user_id(user_id: str | int) -> str:
@@ -71,12 +81,13 @@ def require_setting(value: str, env_var: str) -> None:
         raise SystemExit(1)
 
 
-def log_to(log_file: Path) -> None:
-    """Log INFO to the terminal and DEBUG to *log_file* (rotated)."""
+def log_to(log_file: Path | None = None) -> None:
+    """Log INFO to the terminal and, with a *log_file*, DEBUG to it (rotated)."""
     logger.remove()
     logger.add(
         sys.stderr,
         level="INFO",
         format="<green>{time:HH:mm:ss}</green> | <level>{level:<8}</level> | <level>{message}</level>",
     )
-    logger.add(str(log_file), rotation="10 MB", retention="7 days", level="DEBUG")
+    if log_file is not None:
+        logger.add(str(log_file), rotation="10 MB", retention="7 days", level="DEBUG")

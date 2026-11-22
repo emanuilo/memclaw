@@ -171,7 +171,8 @@ layers = [
     # report. It lists the chat platforms from memclaw.bot's registry and
     # lets the chosen backend ask its own questions.
     "setup",
-    # The chat bots (memclaw.bot): one module per chat app, plus what they share.
+    # Where Memclaw chats (memclaw.bot): one module per chat app and one for
+    # the terminal, plus what they share.
     "bot",
     # Platform-agnostic assistant: wires backends, tools and storage together.
     "agent",
@@ -209,12 +210,13 @@ ancestors = ["memclaw.*"]
 
 [[tool.importlinter.contracts]]
 id = "chat-platforms-independent"
-name = "Chat platforms are independent: the Telegram, Slack and WhatsApp modules never import each other (share code via memclaw.bot.inbound or lower layers)"
+name = "Chat platforms are independent: the Telegram, Slack, WhatsApp and terminal modules never import each other (share code via memclaw.bot.inbound or lower layers)"
 type = "independence"
 modules = [
     "memclaw.bot.telegram",
     "memclaw.bot.slack",
     "memclaw.bot.whatsapp",
+    "memclaw.bot.terminal",
 ]
 
 [[tool.importlinter.contracts]]
@@ -225,6 +227,7 @@ protected_modules = [
     "memclaw.bot.telegram",
     "memclaw.bot.slack",
     "memclaw.bot.whatsapp",
+    "memclaw.bot.terminal",
 ]
 allowed_importers = ["memclaw.bot"]
 

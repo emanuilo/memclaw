@@ -65,13 +65,10 @@ def print_logo() -> None:
     console.print()
 
 
-# Supported front-end platforms (name, label) in display order: the chat
-# apps of memclaw.bot, then the terminal. The first one is also the default
-# when nothing has been configured yet.
-PLATFORMS: list[tuple[str, str]] = [
-    *((p.name, p.label) for p in CHAT_PLATFORMS.values()),
-    ("terminal", "Terminal chat"),
-]
+# Supported front-end platforms (name, label) in display order, from
+# memclaw.bot's registry. The first one is also the default when nothing has
+# been configured yet.
+PLATFORMS: list[tuple[str, str]] = [(p.name, p.label) for p in CHAT_PLATFORMS.values()]
 
 
 def questions(platform: str | None = None) -> list[Setting]:
