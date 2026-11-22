@@ -1,12 +1,14 @@
 """Tests for the shared numbered picker and the setup pickers built on it."""
 from __future__ import annotations
 
+import io
 from unittest.mock import MagicMock, patch
 
+import pytest
 from rich.panel import Panel
 
 from memclaw import setup
-from memclaw.prompts import choose
+from memclaw.prompts import _read_masked, choose
 
 
 def _choose(answer: str, **kwargs):
@@ -38,6 +40,28 @@ class TestChoose:
     def test_footer_goes_under_the_rows(self):
         _, panel, _ = _choose("1", title="t", rows=["a"], footer="[dim]note[/dim]")
         assert panel.renderable == "[bold]1)[/bold] a\n\n[dim]note[/dim]"
+
+
+class TestMaskedKeys:
+    """The key loop masked_input runs on a real terminal."""
+
+    def _read(self, keys: str, visible: int = 4) -> tuple[str, str]:
+        out = io.StringIO()
+        with patch("sys.stdin", io.StringIO(keys)), patch("sys.stdout", out):
+            value = _read_masked(visible)
+        return value, out.getvalue()
+
+    def test_echoes_the_first_chars_then_stars(self):
+        assert self._read("sk-abcdef\n") == ("sk-abcdef", "sk-a*****")
+
+    def test_backspace_deletes_and_control_keys_are_ignored(self):
+        value, echo = self._read("ab\x7f\x7f\x7fc\x01d\r")
+        assert value == "cd"
+        assert echo == "ab\b \b\b \bcd"
+
+    def test_ctrl_c_interrupts(self):
+        with pytest.raises(KeyboardInterrupt):
+            self._read("ab\x03")
 
 
 class TestSetupPickers:

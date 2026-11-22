@@ -21,17 +21,17 @@ if TYPE_CHECKING:
 
 DEFAULT_BACKEND = "claude"
 
-REGISTRY: dict[str, type] = {
+REGISTRY: dict[str, type[AgentBackend]] = {
     ClaudeAgentBackend.name: ClaudeAgentBackend,
     CursorAgentBackend.name: CursorAgentBackend,
 }
 
 
-def list_backends() -> list[type]:
+def list_backends() -> list[type[AgentBackend]]:
     return list(REGISTRY.values())
 
 
-def get_backend_class(name: str) -> type:
+def get_backend_class(name: str) -> type[AgentBackend]:
     """Look up a backend class by short name. Raises ValueError if unknown."""
     cls = REGISTRY.get(name)
     if cls is None:

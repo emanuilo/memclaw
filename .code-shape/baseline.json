@@ -4,14 +4,11 @@
     "complexipy": {
       "cognitive-complexity|memclaw/backends/claude.py|ClaudeAgentBackend._query": 39,
       "cognitive-complexity|memclaw/backends/claude.py|ClaudeAgentBackend.run_one_shot": 23,
-      "cognitive-complexity|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 24,
-      "cognitive-complexity|memclaw/prompts.py|masked_input": 16
+      "cognitive-complexity|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 24
     },
     "mypy": {
       "type-errors|memclaw/backends/claude.py|": 1,
-      "type-errors|memclaw/backends/mcp_bridge.py|": 1,
-      "type-errors|memclaw/cli.py|": 2,
-      "type-errors|memclaw/setup.py|": 5
+      "type-errors|memclaw/backends/mcp_bridge.py|": 1
     },
     "pylint": {
       "class-attributes|memclaw/agent.py|MemclawAgent": 17,
