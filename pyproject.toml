@@ -99,8 +99,6 @@ tests = "tests"
 # is copied out of the package and run on its own, so it reads its env itself.
 config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
 baseline = ".code-shape/baseline.json"
-# Names a library uses by reflection, which vulture would call dead code.
-dead_code_whitelist = ["vulture_whitelist.py"]
 
 [tool.shape.banned_api]
 # Outside systems should be reached through one module each. Existing direct
@@ -115,6 +113,12 @@ dead_code_whitelist = ["vulture_whitelist.py"]
 deptry = ["--optional-dependencies-dev-groups", "dev", "--extend-exclude", "docs", "--per-rule-ignores", "DEP002=aiohttp"]
 # - functions registered by decorator are called by their framework, not by name.
 vulture = ["--ignore-decorators", "@cli.command,@*.event,@server.list_tools,@server.call_tool"]
+
+[tool.vulture]
+# Names a library uses by reflection, which vulture would call dead code.
+ignore_names = [
+    "should_exit",  # uvicorn reads Server.should_exit; backends/mcp_bridge.py only sets it
+]
 
 [tool.shape.concepts]
 # The ideas a change is usually about (tracked in `code-shape report`, never a
