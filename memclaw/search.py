@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import math
 import re
-import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 import numpy as np
-from loguru import logger
 
 from .config import MemclawConfig
 from .index import MemoryIndex
@@ -98,35 +96,18 @@ class HybridSearch:
     ) -> list[tuple[int, float]]:
         # Spec #8 Phase 1: use the cached embedding matrix while the chunks
         # haven't changed, avoiding repeated deserialization from SQLite.
-        current_count, max_id = self.index.db.execute(
-            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM chunks WHERE embedding IS NOT NULL"
-        ).fetchone()
-
-        if current_count == 0:
+        version = self.index.embeddings_version()
+        if version[0] == 0:
             return []
 
-        if (
-            self._embedding_cache is not None
-            and (current_count, max_id) == self._cache_key
-        ):
-            matrix, ids = self._embedding_cache
-        else:
-            rows = self.index.db.execute(
-                "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL"
-            ).fetchall()
-
+        if self._embedding_cache is None or version != self._cache_key:
+            rows = self.index.chunk_embeddings()
             if not rows:
                 return []
-
-            ids = []
-            embeddings = []
-            for chunk_id, blob in rows:
-                ids.append(chunk_id)
-                embeddings.append(MemoryIndex.deserialize_embedding(blob))
-
-            matrix = np.stack(embeddings)
-            self._embedding_cache = (matrix, ids)
-            self._cache_key = (current_count, max_id)
+            ids = [chunk_id for chunk_id, _ in rows]
+            self._embedding_cache = (np.stack([emb for _, emb in rows]), ids)
+            self._cache_key = version
+        matrix, ids = self._embedding_cache
 
         norms = np.linalg.norm(matrix, axis=1)
         q_norm = np.linalg.norm(query_embedding)
@@ -157,16 +138,7 @@ class HybridSearch:
         fts_query = self._fts_query(query)
         if fts_query is None:
             return []
-        try:
-            rows = self.index.db.execute(
-                """SELECT rowid, rank FROM chunks_fts
-                   WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?""",
-                (fts_query, -1 if limit is None else limit),
-            ).fetchall()
-        except sqlite3.Error as exc:
-            logger.warning("Keyword search failed for {q!r}: {exc}", q=fts_query, exc=exc)
-            return []
-
+        rows = self.index.keyword_matches(fts_query, limit)
         if not rows:
             return []
 
@@ -186,57 +158,41 @@ class HybridSearch:
         limit: int,
         file_filter: str | None = None,
     ) -> list[SearchResult]:
+        combined = self._combine(_normalise(vector_hits), dict(keyword_hits))
+        return self._load(combined, limit, file_filter)
+
+    def _combine(
+        self, v_scores: dict[int, float], k_scores: dict[int, float],
+    ) -> list[tuple[int, float, str]]:
+        """(chunk id, weighted score, match type) for every hit, best first."""
         vw = self.config.memory.vector_weight
         tw = self.config.memory.text_weight
-
-        # Normalise vector scores to 0-1
-        if vector_hits:
-            max_v = max(s for _, s in vector_hits)
-            min_v = min(s for _, s in vector_hits)
-            range_v = max_v - min_v
-            v_scores = {
-                cid: (s - min_v) / range_v if range_v > 0 else 1.0
-                for cid, s in vector_hits
-            }
-        else:
-            v_scores = {}
-
-        k_scores = dict(keyword_hits)
-
-        all_ids = set(v_scores) | set(k_scores)
         combined: list[tuple[int, float, str]] = []
-        for cid in all_ids:
-            vs = v_scores.get(cid, 0.0)
-            ks = k_scores.get(cid, 0.0)
-            final = vw * vs + tw * ks
-            if cid in v_scores and cid in k_scores:
-                match_type = "hybrid"
-            elif cid in v_scores:
-                match_type = "vector"
-            else:
-                match_type = "keyword"
-            combined.append((cid, final, match_type))
-
+        for cid in set(v_scores) | set(k_scores):
+            final = vw * v_scores.get(cid, 0.0) + tw * k_scores.get(cid, 0.0)
+            combined.append((cid, final, _match_type(cid in v_scores, cid in k_scores)))
         combined.sort(key=lambda x: x[1], reverse=True)
+        return combined
 
+    def _load(
+        self, combined: list[tuple[int, float, str]], limit: int, file_filter: str | None,
+    ) -> list[SearchResult]:
+        """The first *limit* of *combined* whose file path contains
+        *file_filter*, as SearchResults."""
         results: list[SearchResult] = []
         for cid, score, match_type in combined:
             if len(results) >= limit:
                 break
-            row = self.index.db.execute(
-                "SELECT file_path, line_start, line_end, content FROM chunks WHERE id = ?",
-                (cid,),
-            ).fetchone()
-            if row and (file_filter is None or file_filter in row[0]):
+            chunk = self.index.get_chunk(cid)
+            if chunk and (file_filter is None or file_filter in chunk.file_path):
                 results.append(SearchResult(
-                    file_path=row[0],
-                    line_start=row[1],
-                    line_end=row[2],
-                    content=row[3],
+                    file_path=chunk.file_path,
+                    line_start=chunk.line_start,
+                    line_end=chunk.line_end,
+                    content=chunk.content,
                     score=score,
                     match_type=match_type,
                 ))
-
         return results
 
     # ------------------------------------------------------------------
@@ -332,3 +288,22 @@ class HybridSearch:
             selected.append(remaining.pop(best_idx))
 
         return selected
+
+
+def _normalise(vector_hits: list[tuple[int, float]]) -> dict[int, float]:
+    """Vector scores scaled to 0-1 (all 1.0 when they are equal)."""
+    if not vector_hits:
+        return {}
+    max_v = max(s for _, s in vector_hits)
+    min_v = min(s for _, s in vector_hits)
+    range_v = max_v - min_v
+    return {
+        cid: (s - min_v) / range_v if range_v > 0 else 1.0
+        for cid, s in vector_hits
+    }
+
+
+def _match_type(in_vector: bool, in_keyword: bool) -> str:
+    if in_vector and in_keyword:
+        return "hybrid"
+    return "vector" if in_vector else "keyword"

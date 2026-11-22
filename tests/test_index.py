@@ -237,3 +237,35 @@ class TestIndexScope:
         await idx.store_platform_image("whatsapp", "wa-1", "a cat")
         await idx.store_platform_image("telegram", "tg-1", "a dog")
         assert idx.get_stats()["images"] == 2
+
+
+class TestSearchQueries:
+    """The queries HybridSearch runs through the index (it has no SQL of its own)."""
+
+    @pytest.mark.asyncio
+    async def test_chunks_and_their_embeddings(self, cfg: MemclawConfig, idx: MemoryIndex):
+        assert idx.embeddings_version() == (0, 0)
+        assert idx.chunk_embeddings() == []
+        path = cfg.memory_subdir / "2026-01-01.md"
+        path.write_text("## 10:00 - Note\n\nmy dog is called Max\n\n---\n")
+        await idx.index_file(path)
+
+        [(chunk_id, emb)] = idx.chunk_embeddings()
+        assert idx.embeddings_version() == (1, chunk_id)
+        assert emb.dtype == np.float32
+        chunk = idx.get_chunk(chunk_id)
+        assert (chunk.file_path, chunk.line_start, chunk.line_end) == (str(path), 0, 4)
+        assert "my dog is called Max" in chunk.content
+        assert idx.get_chunk(chunk_id + 1) is None
+
+    @pytest.mark.asyncio
+    async def test_keyword_matches(self, cfg: MemclawConfig, idx: MemoryIndex):
+        path = cfg.memory_subdir / "2026-01-01.md"
+        path.write_text("## 10:00 - Note\n\nmy dog is called Max\n\n---\n")
+        await idx.index_file(path)
+        [(chunk_id, rank)] = idx.keyword_matches('"max"', limit=None)
+        assert idx.get_chunk(chunk_id) is not None and rank < 0
+        assert idx.keyword_matches('"nothing"', limit=5) == []
+
+    def test_a_malformed_keyword_query_finds_nothing(self, idx: MemoryIndex):
+        assert idx.keyword_matches('"unterminated', limit=5) == []
