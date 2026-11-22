@@ -1,4 +1,4 @@
-"""Tests for the shared numbered picker and the setup pickers built on it."""
+"""Tests for the terminal prompts: the numbered picker and masked input."""
 from __future__ import annotations
 
 import io
@@ -7,14 +7,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.panel import Panel
 
-from memclaw import setup
-from memclaw.prompts import _read_masked, choose
+from memclaw.terminal_input import _read_masked, choose
 
 
 def _choose(answer: str, **kwargs):
     """Run `choose` with Prompt.ask mocked. Returns (index, panel, prompt kwargs)."""
     console = MagicMock()
-    with patch("memclaw.prompts.Prompt.ask", return_value=answer) as ask:
+    with patch("memclaw.terminal_input.Prompt.ask", return_value=answer) as ask:
         index = choose(console, **kwargs)
     panel = next(c.args[0] for c in console.print.call_args_list
                  if c.args and isinstance(c.args[0], Panel))
@@ -62,20 +61,3 @@ class TestMaskedKeys:
     def test_ctrl_c_interrupts(self):
         with pytest.raises(KeyboardInterrupt):
             self._read("ab\x03")
-
-
-class TestSetupPickers:
-    def test_platform_defaults_to_the_saved_one(self):
-        with patch("memclaw.prompts.Prompt.ask", return_value="3") as ask:
-            platform = setup._select_platform({"MEMCLAW_PLATFORM": "whatsapp"})
-        expected = [name for name, _ in setup.PLATFORMS].index("whatsapp") + 1
-        assert ask.call_args.kwargs["default"] == str(expected)
-        assert platform == setup.PLATFORMS[2][0]
-
-    def test_backend_defaults_to_the_saved_one(self):
-        backends = setup.list_backends()
-        with patch("memclaw.prompts.Prompt.ask", return_value="2") as ask:
-            name = setup._select_backend({"AGENT_BACKEND": "cursor"})
-        expected = [cls.name for cls in backends].index("cursor") + 1
-        assert ask.call_args.kwargs["default"] == str(expected)
-        assert name == backends[1].name

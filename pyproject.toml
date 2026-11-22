@@ -144,7 +144,7 @@ ignore_names = [
 "images" = { terms = ["image_save", "image_search", "platform_image"], home = "memclaw/memory/index.py" }
 "agent tools" = { terms = ["TOOL_DEFINITIONS", "ToolExecutor"], home = "memclaw/tools.py" }
 "conversations / sessions" = { terms = ["SessionStore", "session_key", "reset_session"], home = "memclaw/sessions.py" }
-"setup wizard" = { terms = ["run_setup", "wizard", "needs_setup"], home = "memclaw/setup.py" }
+"setup wizard" = { terms = ["run_setup", "wizard", "needs_setup"], home = "memclaw/setup/wizard.py" }
 "links" = { terms = ["LinkProcessor", "process_links"], home = "memclaw/bot/links.py" }
 
 # ---------------------------------------------------------------------------
@@ -167,8 +167,9 @@ containers = ["memclaw"]
 layers = [
     # Entry point: the `memclaw` command.
     "cli",
-    # The interactive setup wizard. It lists the chat platforms from
-    # memclaw.bot's registry.
+    # Setting up from the terminal (memclaw.setup): the wizard and the doctor
+    # report. It lists the chat platforms from memclaw.bot's registry and
+    # lets the chosen backend ask its own questions.
     "setup",
     # The chat bots (memclaw.bot): one module per chat app, plus what they share.
     "bot",
@@ -184,7 +185,7 @@ layers = [
     # it, so it doesn't import backends.
     "memory",
     # Independent building blocks (`|`: they don't import each other).
-    "reminders | sessions | prompts | instructions",
+    "reminders | sessions | terminal_input | instructions",
     # The OpenAI adapter (embeddings, transcription, chat), used by the
     # memory index and bot.
     "openai_client",
@@ -271,6 +272,13 @@ layers = [
 ]
 # A new module inside memclaw.memory must be placed in a layer above.
 exhaustive = true
+
+[[tool.importlinter.contracts]]
+id = "setup-via-package"
+name = "Only memclaw.setup imports its own modules: everyone else uses what memclaw.setup exports (run_setup, needs_setup, print_logo, print_probe_report)"
+type = "protected"
+protected_modules = ["memclaw.setup.doctor", "memclaw.setup.wizard"]
+allowed_importers = ["memclaw.setup"]
 
 [[tool.importlinter.contracts]]
 id = "defaults-standalone"

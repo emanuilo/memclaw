@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from memclaw import setup
 from memclaw.config import MemclawConfig, all_settings
+from memclaw.setup import wizard as setup
 
 
 def _envs(settings) -> list[str]:
@@ -64,7 +64,7 @@ def wizard(tmp_path: Path, monkeypatch):
                 patch("memclaw.backends.ClaudeAgentBackend.wizard_setup", return_value=backend), \
                 patch.object(setup, "_select_platform", return_value=platform), \
                 patch.object(setup, "masked_input", side_effect=_answer), \
-                patch.object(setup, "_check_openai"):
+                patch.object(setup, "check_openai"):
             setup.run_setup(config)
         return env_file.read_text(), prompts
 
@@ -104,3 +104,20 @@ class TestRunSetup:
         with pytest.raises(SystemExit):
             wizard(["sk-openai-1234", "", ""], "telegram")
         assert not (tmp_path / ".env").exists()
+
+
+class TestSetupPickers:
+    def test_platform_defaults_to_the_saved_one(self):
+        with patch("memclaw.terminal_input.Prompt.ask", return_value="3") as ask:
+            platform = setup._select_platform({"MEMCLAW_PLATFORM": "whatsapp"})
+        expected = [name for name, _ in setup.PLATFORMS].index("whatsapp") + 1
+        assert ask.call_args.kwargs["default"] == str(expected)
+        assert platform == setup.PLATFORMS[2][0]
+
+    def test_backend_defaults_to_the_saved_one(self):
+        backends = setup.list_backends()
+        with patch("memclaw.terminal_input.Prompt.ask", return_value="2") as ask:
+            name = setup._select_backend({"AGENT_BACKEND": "cursor"})
+        expected = [cls.name for cls in backends].index("cursor") + 1
+        assert ask.call_args.kwargs["default"] == str(expected)
+        assert name == backends[1].name

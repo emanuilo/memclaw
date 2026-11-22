@@ -1,8 +1,9 @@
-"""Shared interactive prompts for the setup wizard.
+"""Asking the user something in the terminal: a numbered choice, masked input.
 
-Lives outside setup.py so backends can import it at module level: setup.py
-imports the backend registry, so backends importing setup.py would be
-circular.
+Used by the setup wizard (memclaw.setup) and by the backends, which ask
+their own questions there (`wizard_setup`). It sits in a layer below the
+backends, not inside memclaw.setup: setup imports the backend registry, so
+backends importing setup would import upward.
 """
 
 from __future__ import annotations
