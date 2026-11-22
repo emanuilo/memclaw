@@ -63,8 +63,8 @@ def masked_input(console: "Console", prompt_text: str, *, visible: int = 4) -> s
         return line
 
     try:
-        import termios  # noqa: PLC0415 - POSIX-only
-        import tty  # noqa: PLC0415 - POSIX-only
+        import termios  # POSIX-only
+        import tty  # POSIX-only
     except ImportError:
         # Non-POSIX (e.g. Windows): fall back to unmasked input.
         return input()
