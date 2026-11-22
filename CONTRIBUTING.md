@@ -54,6 +54,8 @@ CI runs it on every PR. Locally:
 
 **The baseline.** `.code-shape-baseline.json` lists the problems memclaw already had when the kit was adopted, so only new ones fail. It may only shrink. Never edit it by hand and don't re-run `code-shape baseline` to accept a new problem: fix the code, then run `code-shape tighten`. `# noqa` comments don't silence these checks, and the limits under `[tool.shape]` in `pyproject.toml` aren't raised to make a change pass. If a rule seems wrong for your case, say so in the PR.
 
+**Unused code that isn't.** If the unused-code check (vulture) reports a name that a library uses by reflection (e.g. uvicorn reading `Server.should_exit`), add it to `vulture_whitelist.py` with a one-line reason. Make sure nothing could call it first: unused code is usually really unused. Agents ask a human before adding a line.
+
 **Hooks.** Turn on the git hook once per clone, and a commit that fails the check is stopped with the report:
 
 ```bash

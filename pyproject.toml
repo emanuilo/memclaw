@@ -98,6 +98,8 @@ tests = "tests"
 # The only modules that may read environment variables. The Cursor hook script
 # is copied out of the package and run on its own, so it reads its env itself.
 config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
+# Names a library uses by reflection, which vulture would call dead code.
+dead_code_whitelist = ["vulture_whitelist.py"]
 
 [tool.shape.banned_api]
 # Outside systems should be reached through one module each. Existing direct
@@ -111,9 +113,7 @@ config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
 #   it at runtime and slack-bolt doesn't declare it.
 deptry = ["--optional-dependencies-dev-groups", "dev", "--extend-exclude", "docs", "--per-rule-ignores", "DEP002=aiohttp"]
 # - functions registered by decorator are called by their framework, not by name.
-# - names a library reads that memclaw only sets (the whitelist):
-#   should_exit = uvicorn.Server's stop flag (backends/mcp_bridge.py).
-vulture = ["--ignore-decorators", "@cli.command,@*.event,@server.list_tools,@server.call_tool", "--ignore-names", "should_exit"]
+vulture = ["--ignore-decorators", "@cli.command,@*.event,@server.list_tools,@server.call_tool"]
 
 [tool.shape.concepts]
 # The ideas a change is usually about (tracked in `code-shape report`, never a
