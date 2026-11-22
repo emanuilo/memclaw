@@ -9,6 +9,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from ..config import MemclawConfig
 from .mcp_tools import MCP_SERVER_NAME
 from .tool_policy import CURSOR_PRETOOLUSE_MATCHER, HOOKS_VERSION, hook_policy_payload
 
@@ -48,8 +49,6 @@ def _installed_hook_version(script_path: Path) -> int | None:
 
 
 def _write_hook_policy(hooks_dir: Path, memory_dir: Path) -> None:
-    from ..config import MemclawConfig  # noqa: PLC0415 - known violation, to fix: move to top
-
     cfg = MemclawConfig(memory_dir=memory_dir)
     policy_path = hooks_dir / _HOOK_POLICY_JSON
     policy_path.write_text(

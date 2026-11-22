@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, ClassVar
 
 from loguru import logger
 
+from ..config import update_env_file
+
 if TYPE_CHECKING:
     from ..config import MemclawConfig
     from .claude_models import ModelInfo
@@ -68,8 +70,6 @@ class ModelSelectionMixin:
 
     def _apply_model(self, model: str, effort: str | None) -> None:
         """Use *model* / *effort* from the next turn on and save them."""
-        from ..setup import update_env_file  # noqa: PLC0415 - known violation, to fix: setup cycle
-
         logger.info(
             "{b} model: {m} effort: {e} -> {m2} effort: {e2}",
             b=self._label, m=self._model, e=self._effort, m2=model, e2=effort,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -10,11 +11,11 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .backends import DEFAULT_BACKEND, get_backend_class, list_backends
-from .prompts import choose
+from .config import ENV_FILE, read_env_file, write_env_file
+from .openai_health import print_probe_report, probe_openai
+from .prompts import choose, masked_input
 
 console = Console()
-
-ENV_FILE = Path.home() / ".memclaw" / ".env"
 
 # Wordmark generated with pyfiglet font "ansi_shadow". Split into two halves
 # so each can be colored independently (white for "mem", cyan for "claw")
@@ -137,94 +138,6 @@ def _mask(value: str) -> str:
     return value[:4] + "..." + value[-4:]
 
 
-def _masked_input(prompt_text: str, *, visible: int = 4) -> str:
-    """Read a line from stdin, echoing only the first `visible` chars verbatim
-    and '*' for everything after. Used for API keys and other config values
-    during the wizard so pasted secrets don't sit in the scrollback in clear.
-    """
-    import sys  # noqa: PLC0415 - known violation, to fix: move to top
-
-    console.print(prompt_text, end=": ")
-    sys.stdout.flush()
-
-    if not sys.stdin.isatty():
-        line = sys.stdin.readline().rstrip("\n")
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-        return line
-
-    try:
-        import termios  # noqa: PLC0415 - POSIX-only
-        import tty  # noqa: PLC0415 - POSIX-only
-    except ImportError:
-        # Non-POSIX (e.g. Windows): fall back to unmasked input.
-        return input()
-
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    buf: list[str] = []
-    try:
-        tty.setcbreak(fd)
-        while True:
-            ch = sys.stdin.read(1)
-            if ch in ("\r", "\n"):
-                break
-            if ch == "\x03":  # Ctrl-C
-                raise KeyboardInterrupt
-            if ch in ("\x7f", "\b"):
-                if buf:
-                    buf.pop()
-                    sys.stdout.write("\b \b")
-                    sys.stdout.flush()
-                continue
-            if ord(ch) < 32:
-                continue
-            buf.append(ch)
-            display = ch if len(buf) <= visible else "*"
-            sys.stdout.write(display)
-            sys.stdout.flush()
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-
-    return "".join(buf)
-
-
-def _load_existing() -> dict[str, str]:
-    """Load existing values from ~/.memclaw/.env."""
-    values: dict[str, str] = {}
-    if not ENV_FILE.exists():
-        return values
-    for line in ENV_FILE.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            key, _, val = line.partition("=")
-            values[key.strip()] = val.strip()
-    return values
-
-
-def update_env_file(values: dict[str, str], drop_keys: list[str] | tuple[str, ...] = ()) -> None:
-    """Merge *values* into ~/.memclaw/.env and remove *drop_keys*.
-
-    Keys are written in their existing order, new ones appended; a key with
-    an empty value is removed, matching how the wizard writes the file.
-    """
-    merged = _load_existing()
-    merged.update(values)
-    for key in drop_keys:
-        merged.pop(key, None)
-    _write_env(merged)
-
-
-def _write_env(values: dict[str, str]) -> None:
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"{k}={v}" for k, v in values.items() if v]
-    ENV_FILE.write_text("\n".join(lines) + "\n")
-
-
 def needs_setup() -> bool:
     """Return True if first-run setup is needed."""
     return not ENV_FILE.exists()
@@ -238,7 +151,7 @@ def run_setup(*, reconfigure: bool = False, memory_dir: Path | str | None = None
                      instead of "welcome". The set of keys asked is identical
                      either way -- it depends only on the chosen platform.
     """
-    existing = _load_existing()
+    existing = read_env_file()
 
     if reconfigure:
         console.print(
@@ -283,7 +196,7 @@ def run_setup(*, reconfigure: bool = False, memory_dir: Path | str | None = None
             prompt_text = f"{label} (required)"
         else:
             prompt_text = f"{label} (optional)"
-        answer = _masked_input(prompt_text)
+        answer = masked_input(console, prompt_text)
         if answer:
             values[env_key] = answer
         elif current:
@@ -317,7 +230,7 @@ def run_setup(*, reconfigure: bool = False, memory_dir: Path | str | None = None
             raise SystemExit(1)
 
     # Write to ~/.memclaw/.env
-    _write_env(values)
+    write_env_file(values)
 
     # Sync the current process env with the freshly-written .env. Without this,
     # MemclawConfig.__post_init__ would still see stale values (e.g. an OAuth
@@ -334,10 +247,6 @@ def run_setup(*, reconfigure: bool = False, memory_dir: Path | str | None = None
     # right now, not when their first voice message silently disappears.
     api_key = values.get("OPENAI_API_KEY")
     if api_key:
-        import asyncio  # noqa: PLC0415 - known violation, to fix: move to top
-
-        from .openai_health import print_probe_report, probe_openai  # noqa: PLC0415 - known violation, to fix: move to top
-
         console.print("\n[cyan]Checking OpenAI model access...[/cyan]")
         try:
             report = asyncio.run(probe_openai(api_key))

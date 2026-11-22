@@ -86,10 +86,8 @@ extend-select = ["PLC0415", "RUF100"]
 # Module-structure rules, checked by `lint-imports` (import-linter) in CI.
 # Run locally with:  lint-imports
 #
-# Known violations are listed under "# known violation, to fix:" inside each
-# contract's ignore_imports. They are grandfathered, not approved: fix them one
-# at a time and delete the line. A line whose import no longer exists makes
-# lint-imports fail, so the list can't go stale.
+# Don't add ignore_imports to silence a broken contract: fix the import, or
+# move the module to another layer if the new dependency is legitimate.
 # ---------------------------------------------------------------------------
 [tool.importlinter]
 root_package = "memclaw"
@@ -126,13 +124,6 @@ exhaustive = true
 # Data files (AGENTS.md, Cursor hook script) copied out at runtime, not code
 # that is imported. Covered by its own contract below.
 exhaustive_ignores = ["defaults"]
-ignore_imports = [
-    # known violation, to fix: backends import the setup wizard (a cycle,
-    # since setup imports backends; hidden by function-local imports).
-    "memclaw.backends.model_selection -> memclaw.setup",  # update_env_file
-    "memclaw.backends.claude -> memclaw.setup",           # _masked_input
-    "memclaw.backends.cursor -> memclaw.setup",           # _masked_input
-]
 
 [[tool.importlinter.contracts]]
 id = "no-cycles-in-subpackages"
@@ -158,11 +149,6 @@ name = "Chat-platform SDKs (telegram, slack_bolt, neonize) are only imported ins
 type = "protected"
 protected_modules = ["telegram", "slack_bolt", "neonize"]
 allowed_importers = ["memclaw.bot"]
-ignore_imports = [
-    # known violation, to fix: the Telegram bot is wired up in cli.py
-    # (_run_telegram), while Slack and WhatsApp are wired up in memclaw.bot.
-    "memclaw.cli -> telegram",  # lines 186-188
-]
 
 [[tool.importlinter.contracts]]
 id = "defaults-standalone"

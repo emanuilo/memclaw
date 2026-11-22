@@ -741,7 +741,7 @@ class TestCursorModelSelection:
     @pytest.fixture(autouse=True)
     def _env_file(self, tmp_path, monkeypatch):
         self.env_file = tmp_path / ".env"
-        monkeypatch.setattr("memclaw.setup.ENV_FILE", self.env_file)
+        monkeypatch.setattr("memclaw.config.ENV_FILE", self.env_file)
 
     def _env(self) -> str:
         return self.env_file.read_text() if self.env_file.exists() else ""

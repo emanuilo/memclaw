@@ -17,7 +17,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import httpx
 from loguru import logger
+from rich.prompt import Prompt
 
+from ..config import MemclawConfig
+from ..prompts import masked_input
 from .base import ProgressCallback, TurnResult
 from .claude_models import ModelInfo
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks
@@ -28,7 +31,6 @@ from .model_selection import ModelSelectionMixin
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from ..config import MemclawConfig
     from ..tools import ToolExecutor
 
 _DEFAULT_MODEL = "composer-2.5"
@@ -238,10 +240,8 @@ class CursorAgentBackend(ModelSelectionMixin):
         *,
         memory_dir: Path | str | None = None,
     ) -> tuple[dict[str, str], list[str]]:
-        from ..setup import _masked_input  # noqa: PLC0415 - known violation, to fix: setup cycle
-
         current = existing.get("CURSOR_API_KEY", os.environ.get("CURSOR_API_KEY", ""))
-        answer = _masked_input("Cursor API key (required)")
+        answer = masked_input(console, "Cursor API key (required)")
         value = answer or current
         if not value:
             console.print("[red]Error:[/red] Cursor API key is required.")
@@ -251,8 +251,6 @@ class CursorAgentBackend(ModelSelectionMixin):
         drop_keys = list(_DROP_KEYS)
 
         model_current = existing.get("CURSOR_MODEL", os.environ.get("CURSOR_MODEL", ""))
-        from rich.prompt import Prompt  # noqa: PLC0415 - known violation, to fix: move to top
-
         model_answer = Prompt.ask(
             r"Cursor model \[composer-2.5 is default, optional]",
             default="",
@@ -265,8 +263,6 @@ class CursorAgentBackend(ModelSelectionMixin):
                 drop_keys.append("CURSOR_EFFORT")
         elif model_current:
             values["CURSOR_MODEL"] = model_current
-
-        from ..config import MemclawConfig  # noqa: PLC0415 - known violation, to fix: move to top
 
         cfg = MemclawConfig(memory_dir=Path(memory_dir)) if memory_dir else MemclawConfig()
         if not ensure_cursor_hooks(cfg.memory_dir):

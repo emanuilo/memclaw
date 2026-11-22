@@ -426,7 +426,7 @@ class TestPersistentSessions:
     async def test_model_change_reconnects_resuming_the_session(
         self, claude_config, tmp_path, monkeypatch,
     ):
-        monkeypatch.setattr("memclaw.setup.ENV_FILE", tmp_path / ".env")
+        monkeypatch.setattr("memclaw.config.ENV_FILE", tmp_path / ".env")
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         backend._models = [_model_info("claude-opus-5", effort_levels=["low", "medium"])]
         fake = _FakeClients()
@@ -461,7 +461,7 @@ class TestModelSelection:
     def env_file(self, tmp_path, monkeypatch):
         path = tmp_path / ".env"
         path.write_text("OPENAI_API_KEY=k\nCLAUDE_EFFORT=high\n")
-        monkeypatch.setattr("memclaw.setup.ENV_FILE", path)
+        monkeypatch.setattr("memclaw.config.ENV_FILE", path)
         return path
 
     MODELS = [
@@ -895,7 +895,7 @@ def _wizard(*, answers, credential="", existing=None, models=None,
 
     with patch("memclaw.prompts.Prompt.ask",
                side_effect=lambda *a, **k: next(answer_iter)), \
-            patch("memclaw.setup._masked_input", return_value=credential), \
+            patch("memclaw.backends.claude.masked_input", return_value=credential), \
             patch("memclaw.backends.claude.fetch_models", fetch):
         values, drops = ClaudeAgentBackend.wizard_setup(MagicMock(), existing or {})
     return values, drops, fetch

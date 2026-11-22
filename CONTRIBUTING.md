@@ -52,11 +52,7 @@ The rules (contracts) live under `[tool.importlinter]` in `pyproject.toml`:
 
 Ruff flags imports inside functions (`PLC0415`) so lazy imports stay deliberate and visible. If you need one (e.g. an optional dependency like `cursor-sdk`), add `# noqa: PLC0415 - <reason>`. Hidden cycles are caught by `lint-imports`, which sees function-local imports too.
 
-Existing violations are marked `known violation, to fix:` in `pyproject.toml` and in `# noqa: PLC0415` comments. Don't add new ones; fix the import instead. When you fix one, delete its line or comment (`lint-imports` and ruff both fail on ones that no longer match anything).
-
 If a new dependency between modules is legitimate, move the module to another layer in the same PR; don't add an ignore line.
-
-The main known violation is `backends` importing `setup` (a cycle). It will be fixed by moving `update_env_file` from `setup.py` to `config.py` and `_masked_input` to `prompts.py`.
 
 ## Making Changes
 
