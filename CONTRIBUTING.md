@@ -42,7 +42,7 @@ All tests should pass before submitting a PR. The test suite mocks external API 
 
 - **Sizes**: files (500 lines), classes (300), folders (12 modules, 4000 lines), nesting of folders.
 - **Functions and classes**: complexity, length, number of arguments, variables, attributes and public methods.
-- **Coupling**: environment variables or `.env` files read outside `config.py`, the OpenAI SDK or SQLite used outside their modules, private members (`obj._x`) used from outside, copy-pasted code, import cycles, modules that import too many others.
+- **Coupling**: environment variables or `.env` files read outside `config.py`, the OpenAI SDK or SQLite used outside their modules, private members (`obj._x`) used from outside, copy-pasted code, import cycles, modules that import too many others (more than 8 memclaw modules).
 - **Hygiene**: unused code, dependencies in `pyproject.toml` vs. what the code imports, and type errors (mypy).
 - **memclaw's layout rules** (see below).
 

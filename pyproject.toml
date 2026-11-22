@@ -90,7 +90,8 @@ select = ["E4", "E7", "E9", "F"]
 # hooks. Known violations are listed in .code-shape/baseline.json: only new or
 # worse ones fail. Never edit the baseline by hand; fix the code, then run
 # `code-shape tighten`. The kit's default limits apply (see its
-# templates/shape.toml); don't raise one to make a change pass.
+# templates/shape.toml) unless [tool.shape.limits] below sets a stricter
+# one; don't raise one to make a change pass.
 # ---------------------------------------------------------------------------
 [tool.shape]
 packages = ["memclaw"]
@@ -101,6 +102,11 @@ tests = "tests"
 # run on its own, so it reads its env itself.
 config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
 baseline = ".code-shape/baseline.json"
+
+[tool.shape.limits]
+# Lower than the kit's 12: no module imports more than 8 memclaw modules
+# (the agent and the Cursor backend are at 8, cli at 5), so hold it there.
+fan_out = 8
 
 [tool.shape.banned_api]
 # Outside systems should be reached through one module each. Existing direct
