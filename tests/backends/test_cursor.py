@@ -37,7 +37,7 @@ from memclaw.backends.cursor_sdk_adapter import (
 )
 from memclaw.backends.mcp_bridge import HttpMcpServer
 from memclaw.backends.cursor_hooks import cursor_hooks_installed
-from memclaw.config import MemclawConfig
+from memclaw.config import ClaudeSettings, CursorSettings, MemclawConfig, OpenAISettings
 
 
 @pytest.fixture(autouse=True)
@@ -56,11 +56,9 @@ def _make_config(
 ) -> MemclawConfig:
     return MemclawConfig(
         memory_dir=tmp_path / "m",
-        openai_api_key="test-openai-key",
-        anthropic_api_key="test-anthropic-key",
-        cursor_api_key=cursor_api_key,
-        cursor_model=cursor_model,
-        cursor_effort=cursor_effort,
+        openai=OpenAISettings(api_key="test-openai-key"),
+        claude=ClaudeSettings(api_key="test-anthropic-key"),
+        cursor=CursorSettings(api_key=cursor_api_key, model=cursor_model, effort=cursor_effort),
     )
 
 

@@ -186,8 +186,8 @@ class HybridSearch:
         limit: int,
         file_filter: str | None = None,
     ) -> list[SearchResult]:
-        vw = self.config.vector_weight
-        tw = self.config.text_weight
+        vw = self.config.memory.vector_weight
+        tw = self.config.memory.text_weight
 
         # Normalise vector scores to 0-1
         if vector_hits:
@@ -253,7 +253,7 @@ class HybridSearch:
         retain their full score.  If ``decay_half_life_days`` is 0, decay is
         disabled entirely.
         """
-        half_life = self.config.decay_half_life_days
+        half_life = self.config.memory.decay_half_life_days
         if half_life <= 0:
             return results
 
@@ -302,7 +302,7 @@ class HybridSearch:
         if not candidates:
             return []
 
-        mmr_lambda = self.config.mmr_lambda
+        mmr_lambda = self.config.memory.mmr_lambda
         selected: list[SearchResult] = []
 
         # Work with a mutable copy so we can remove picked items

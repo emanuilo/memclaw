@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from memclaw.config import MemclawConfig
+from memclaw.config import ClaudeSettings, MemclawConfig
 
 E2E_ENABLED = os.environ.get("MEMCLAW_E2E") == "1"
 E2E_MODEL = os.environ.get("MEMCLAW_E2E_MODEL", "claude-haiku-5-5")
@@ -59,8 +59,7 @@ def agent_vault(tmp_path: Path, monkeypatch) -> MemclawConfig:
     return MemclawConfig(
         memory_dir=tmp_path / "vault",
         agent_backend="claude",
-        claude_model=E2E_MODEL,
-        claude_consolidation_model=E2E_CONSOLIDATION_MODEL,
+        claude=ClaudeSettings(model=E2E_MODEL, consolidation_model=E2E_CONSOLIDATION_MODEL),
     )
 
 

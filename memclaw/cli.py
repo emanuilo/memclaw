@@ -9,7 +9,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from .bot import mask_user_id
-from .config import MemclawConfig
+from .config import MemclawConfig, reload_env_file
 from .index import MemoryIndex
 from .search import HybridSearch
 from .setup import needs_setup, print_logo, run_setup
@@ -43,7 +43,7 @@ def _require_backend_auth(config: MemclawConfig) -> None:
 
 
 def _require_openai(config: MemclawConfig) -> None:
-    if not config.openai_api_key:
+    if not config.openai.api_key:
         console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
@@ -52,10 +52,9 @@ def _require_openai(config: MemclawConfig) -> None:
 def _ensure_setup(ctx):
     """Run first-time setup if ~/.memclaw/.env doesn't exist, then reload config."""
     if needs_setup():
-        run_setup(memory_dir=ctx.obj.get("memory_dir"))
+        run_setup(ctx.obj["config"])
         # Reload .env so newly saved keys are picked up
-        from dotenv import load_dotenv
-        load_dotenv(Path.home() / ".memclaw" / ".env", override=True)
+        reload_env_file()
         memory_dir = ctx.obj.get("memory_dir")
         config = MemclawConfig(memory_dir=memory_dir) if memory_dir else MemclawConfig()
         ctx.obj["config"] = config
@@ -183,7 +182,7 @@ def _setup_bot_logging(log_file: Path) -> None:
 def _run_telegram(config: MemclawConfig) -> None:
     from .bot.handlers import build_application
 
-    if not config.telegram_bot_token:
+    if not config.telegram.bot_token:
         console.print("[red]Error:[/red] TELEGRAM_BOT_TOKEN is not set.")
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
@@ -192,7 +191,7 @@ def _run_telegram(config: MemclawConfig) -> None:
 
     app = build_application(config)
 
-    allowed = config.allowed_user_ids_list
+    allowed = config.telegram.allowed_user_ids_list
     masked = [mask_user_id(u) for u in allowed] if allowed else "all"
     console.print(
         f"[green]Starting Memclaw Telegram bot...[/green]  "
@@ -208,7 +207,7 @@ def _run_whatsapp(config: MemclawConfig) -> None:
 
     _setup_bot_logging(config.memory_dir / "whatsapp.log")
 
-    openai_client = AsyncOpenAI(api_key=config.openai_api_key)
+    openai_client = AsyncOpenAI(api_key=config.openai.api_key)
     bot_ = WhatsAppBot(config, openai_client)
 
     console.print("[green]Starting Memclaw WhatsApp bot[/green]  (self-notes only)")
@@ -231,23 +230,23 @@ def _run_slack(config: MemclawConfig) -> None:
 
     from .bot.slack_handlers import SlackHandlers
 
-    if not config.slack_bot_token:
+    if not config.slack.bot_token:
         console.print("[red]Error:[/red] SLACK_BOT_TOKEN is not set.")
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
-    if not config.slack_app_token:
+    if not config.slack.app_token:
         console.print("[red]Error:[/red] SLACK_APP_TOKEN is not set.")
         console.print("Run [bold]memclaw configure[/bold] to set it.")
         raise SystemExit(1)
 
     _setup_bot_logging(config.memory_dir / "slack.log")
 
-    openai_client = AsyncOpenAI(api_key=config.openai_api_key)
+    openai_client = AsyncOpenAI(api_key=config.openai.api_key)
     handlers = SlackHandlers(config, openai_client)
 
     console.print(
         f"[green]Starting Memclaw Slack bot (Socket Mode)...[/green]  "
-        f"(allowed channels: {config.slack_allowed_channels_list or 'all'})"
+        f"(allowed channels: {config.slack.allowed_channels_list or 'all'})"
     )
 
     async def _run():
@@ -406,7 +405,7 @@ def status(ctx):
 def configure(ctx):
     """Update API keys, agent backend, and front-end platform."""
     print_logo()
-    run_setup(reconfigure=True, memory_dir=ctx.obj.get("memory_dir"))
+    run_setup(ctx.obj["config"], reconfigure=True)
 
 
 @cli.command()
@@ -419,7 +418,7 @@ def doctor(ctx):
     _require_openai(config)
 
     with console.status("[cyan]Probing OpenAI...[/cyan]"):
-        report = asyncio.run(probe_openai(config.openai_api_key))
+        report = asyncio.run(probe_openai(config.openai.api_key))
     print_probe_report(report, console)
     if not report.all_ok:
         raise SystemExit(1)

@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar
 
 from claude_agent_sdk import (
@@ -30,6 +28,7 @@ from claude_agent_sdk import (
     tool,
 )
 from loguru import logger
+from ..config import process_environment
 from ..prompts import choose, masked_input
 from ..tools import TOOL_DEFINITIONS
 from .base import ProgressCallback, TurnResult, report_tool_step
@@ -40,7 +39,7 @@ from .model_selection import ModelSelectionMixin
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from ..config import MemclawConfig
+    from ..config import ClaudeSettings, MemclawConfig
     from ..tools import ToolExecutor
 
 
@@ -92,16 +91,16 @@ def _claude_auth_mode(config: "MemclawConfig") -> str:
     against the Claude plan, no per-message cost), "api_key" when only
     ANTHROPIC_API_KEY is set, or "" when neither is set.
     """
-    if config.claude_code_oauth_token:
+    if config.claude.oauth_token:
         return "subscription"
-    if config.anthropic_api_key:
+    if config.claude.api_key:
         return "api_key"
     return ""
 
 
 def _resolve_model(config: "MemclawConfig") -> str:
     """The configured model, or the built-in default when unset."""
-    return (config.claude_model or "").strip() or _DEFAULT_MODEL
+    return (config.claude.model or "").strip() or _DEFAULT_MODEL
 
 
 def _prices_per_m(model: str) -> tuple[float, float]:
@@ -125,7 +124,7 @@ def _resolve_effort(config: "MemclawConfig") -> str | None:
     settled in the wizard and by /model — they store no level for a model
     that reports none.
     """
-    effort = (config.claude_effort or "").strip().lower()
+    effort = (config.claude.effort or "").strip().lower()
     if effort in SDK_EFFORT_LEVELS:
         return effort
     return _DEFAULT_EFFORT if _resolve_model(config) == _DEFAULT_MODEL else None
@@ -137,8 +136,8 @@ def _resolve_consolidation(config: "MemclawConfig") -> tuple[str, str | None]:
     `_resolve_effort`, an unknown level counts as unset, and an unset level
     means the default effort only on the default model (another model may
     not take an effort at all)."""
-    model = (config.claude_consolidation_model or "").strip() or _DEFAULT_CONSOLIDATION_MODEL
-    effort = (config.claude_consolidation_effort or "").strip().lower()
+    model = (config.claude.consolidation_model or "").strip() or _DEFAULT_CONSOLIDATION_MODEL
+    effort = (config.claude.consolidation_effort or "").strip().lower()
     if effort in SDK_EFFORT_LEVELS:
         return model, effort
     if model == _DEFAULT_CONSOLIDATION_MODEL:
@@ -163,8 +162,8 @@ def _fit_effort(levels: list[str], preferred: str) -> str | None:
 def _credential(config: "MemclawConfig") -> str:
     """The credential matching `_claude_auth_mode`."""
     if _claude_auth_mode(config) == "subscription":
-        return config.claude_code_oauth_token
-    return config.anthropic_api_key
+        return config.claude.oauth_token
+    return config.claude.api_key
 
 
 def _build_env(config: "MemclawConfig") -> dict[str, str]:
@@ -178,7 +177,7 @@ def _build_env(config: "MemclawConfig") -> dict[str, str]:
     - api_key      → ANTHROPIC_API_KEY, billed against Console credits.
     """
     env = {
-        k: v for k, v in os.environ.items()
+        k: v for k, v in process_environment().items()
         if k not in (
             "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
             "CLAUDE_CODE_OAUTH_TOKEN",
@@ -188,9 +187,9 @@ def _build_env(config: "MemclawConfig") -> dict[str, str]:
     }
     mode = _claude_auth_mode(config)
     if mode == "subscription":
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = config.claude_code_oauth_token
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = config.claude.oauth_token
     elif mode == "api_key":
-        env["ANTHROPIC_API_KEY"] = config.anthropic_api_key
+        env["ANTHROPIC_API_KEY"] = config.claude.api_key
     return env
 
 
@@ -277,7 +276,7 @@ class ClaudeAgentBackend(ModelSelectionMixin):
     """Claude Agent SDK implementation of the AgentBackend protocol."""
 
     _label = "Claude"
-    _env_prefix = "CLAUDE"
+    _settings_group = "claude"
     name: ClassVar[str] = "claude"
     display_name: ClassVar[str] = "Claude Agent SDK"
     supports_model_selection: ClassVar[bool] = True
@@ -327,7 +326,7 @@ class ClaudeAgentBackend(ModelSelectionMixin):
         console: "Console",
         existing: dict[str, str],
         *,
-        memory_dir: Path | str | None = None,
+        config: "MemclawConfig",
     ) -> tuple[dict[str, str], list[str]]:
         """Ask whether to use a subscription or API key, then prompt the
         chosen credential. Returns (values_to_save, env_keys_to_drop).
@@ -373,7 +372,7 @@ class ClaudeAgentBackend(ModelSelectionMixin):
         drop_keys = [drop_key]
 
         model_values, model_drops = cls._ask_model_and_effort(
-            console, existing, auth_mode=auth_mode, credential=value,
+            console, existing, auth_mode=auth_mode, credential=value, settings=config.claude,
         )
         values.update(model_values)
         drop_keys.extend(model_drops)
@@ -387,6 +386,7 @@ class ClaudeAgentBackend(ModelSelectionMixin):
         *,
         auth_mode: str,
         credential: str,
+        settings: "ClaudeSettings",
     ) -> tuple[dict[str, str], list[str]]:
         """Ask which model to run and, if it supports one, which effort level.
 
@@ -400,12 +400,8 @@ class ClaudeAgentBackend(ModelSelectionMixin):
         """
         # Like CURSOR_MODEL, a value exported only in the shell still counts
         # as the current one, so accepting the defaults never replaces it.
-        current_model = (
-            existing.get("CLAUDE_MODEL") or os.environ.get("CLAUDE_MODEL", "")
-        ).strip() or _DEFAULT_MODEL
-        current_effort = (
-            existing.get("CLAUDE_EFFORT") or os.environ.get("CLAUDE_EFFORT", "")
-        ).strip().lower()
+        current_model = (existing.get("CLAUDE_MODEL") or settings.model).strip() or _DEFAULT_MODEL
+        current_effort = (existing.get("CLAUDE_EFFORT") or settings.effort).strip().lower()
 
         def _keep_current(reason: str) -> tuple[dict[str, str], list[str]]:
             console.print(

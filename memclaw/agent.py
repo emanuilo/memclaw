@@ -349,7 +349,7 @@ class MemclawAgent:
         ]
         if not unconsolidated:
             return False
-        if len(unconsolidated) < self.config.consolidation_threshold and not force:
+        if len(unconsolidated) < self.config.memory.consolidation_threshold and not force:
             return False
 
         daily_text, included = self._daily_text(unconsolidated)

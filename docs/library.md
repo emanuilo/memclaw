@@ -29,4 +29,18 @@ async def main():
 asyncio.run(main())
 ```
 
+`MemclawConfig()` reads its settings from the environment and `~/.memclaw/.env`, like the `memclaw` command. To set them in code, pass the group they belong to; anything you leave out is still read from the environment:
+
+```python
+from memclaw.config import MemclawConfig, MemorySettings, OpenAISettings
+
+config = MemclawConfig(
+    openai=OpenAISettings(api_key="sk-..."),
+    memory=MemorySettings(mmr_lambda=0.5),
+)
+print(config.memory.vector_weight)   # 0.7, the default
+```
+
+The groups are `openai`, `memory`, `claude`, `cursor`, `telegram` and `slack`; `agent_backend` and `platform` sit on `MemclawConfig` itself. See `memclaw/config.py`.
+
 See [Memory Architecture](memory-architecture.md) for how chunking, hybrid search, decay and MMR work, and the settings that tune them.

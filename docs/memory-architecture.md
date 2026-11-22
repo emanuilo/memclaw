@@ -252,21 +252,21 @@ When you ask "show me that photo of the sunset," the agent runs `image_search`: 
 
 ## Configuration Reference
 
-All memory-related settings live in `MemclawConfig`:
+All memory-related settings live in `MemclawConfig` (`memclaw/config.py`), most of them in its `memory` group. Pass them when you build one, e.g. `MemclawConfig(memory=MemorySettings(mmr_lambda=0.5))`, or set them on it (`config.memory.mmr_lambda = 0.5`):
 
 | Setting | Default | What it controls |
 |---------|---------|-----------------|
 | `memory_dir` | `~/.memclaw` | Root directory for all storage |
-| `embedding_model` | `text-embedding-3-small` | OpenAI model for embeddings |
-| `chunk_target_words` | `300` | Target size for text chunks |
-| `chunk_overlap_words` | `60` | Overlap between adjacent chunks |
-| `vector_weight` | `0.7` | Weight for vector search in hybrid merge |
-| `text_weight` | `0.3` | Weight for keyword search in hybrid merge |
-| `decay_half_life_days` | `30` | Days until a daily memory's score halves (0 = disabled) |
-| `mmr_lambda` | `0.7` | Relevance vs. diversity trade-off in MMR (1.0 = pure relevance) |
-| `consolidation_threshold` | `1` | Past days with unconsolidated notes before auto-consolidation (1 = after each day) |
-| `claude_consolidation_model` | `claude-opus-5-5` | Claude model for consolidation (`CLAUDE_CONSOLIDATION_MODEL`) |
-| `claude_consolidation_effort` | `medium` | Effort for consolidation (`CLAUDE_CONSOLIDATION_EFFORT`) |
+| `memory.embedding_model` | `text-embedding-3-small` | OpenAI model for embeddings |
+| `memory.chunk_target_words` | `300` | Target size for text chunks |
+| `memory.chunk_overlap_words` | `60` | Overlap between adjacent chunks |
+| `memory.vector_weight` | `0.7` | Weight for vector search in hybrid merge |
+| `memory.text_weight` | `0.3` | Weight for keyword search in hybrid merge |
+| `memory.decay_half_life_days` | `30` | Days until a daily memory's score halves (0 = disabled) |
+| `memory.mmr_lambda` | `0.7` | Relevance vs. diversity trade-off in MMR (1.0 = pure relevance) |
+| `memory.consolidation_threshold` | `1` | Past days with unconsolidated notes before auto-consolidation (1 = after each day) |
+| `claude.consolidation_model` | `claude-opus-5-5` | Claude model for consolidation (`CLAUDE_CONSOLIDATION_MODEL`) |
+| `claude.consolidation_effort` | `medium` | Effort for consolidation (`CLAUDE_CONSOLIDATION_EFFORT`) |
 
 ---
 

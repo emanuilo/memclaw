@@ -142,7 +142,7 @@ class MemoryIndex:
     @property
     def openai(self) -> AsyncOpenAI:
         if self._openai is None:
-            self._openai = AsyncOpenAI(api_key=self.config.openai_api_key)
+            self._openai = AsyncOpenAI(api_key=self.config.openai.api_key)
         return self._openai
 
     # ------------------------------------------------------------------
@@ -163,7 +163,7 @@ class MemoryIndex:
         start = 0
         heading = ""
         words = 0
-        target = self.config.chunk_target_words
+        target = self.config.memory.chunk_target_words
 
         def flush(end: int) -> None:
             content = "\n".join(current).strip()
@@ -193,7 +193,7 @@ class MemoryIndex:
                 for j in range(len(current) - 1, -1, -1):
                     overlap_words += len(current[j].split())
                     keep = j
-                    if overlap_words >= self.config.chunk_overlap_words:
+                    if overlap_words >= self.config.memory.chunk_overlap_words:
                         break
                 current = current[keep:] if keep > 0 else []
                 start = i - len(current) + 1
@@ -213,7 +213,7 @@ class MemoryIndex:
         if not texts:
             return []
 
-        model = self.config.embedding_model
+        model = self.config.memory.embedding_model
 
         # Compute content hashes and check cache
         hashes = [hashlib.sha256(t.encode()).hexdigest() for t in texts]

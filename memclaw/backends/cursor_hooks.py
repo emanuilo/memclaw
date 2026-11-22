@@ -53,7 +53,7 @@ def _write_hook_policy(hooks_dir: Path, memory_dir: Path) -> None:
     policy_path = hooks_dir / _HOOK_POLICY_JSON
     policy_path.write_text(
         json.dumps(
-            hook_policy_payload(mcp_http_port=cfg.mcp_http_port),
+            hook_policy_payload(mcp_http_port=cfg.cursor.mcp_http_port),
             indent=2,
         )
         + "\n",

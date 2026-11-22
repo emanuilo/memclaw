@@ -4,12 +4,12 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from memclaw.config import MemclawConfig
+from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
 from memclaw.store import MemoryStore
 
 
 def _make_store(tmp_path: Path) -> tuple[MemoryStore, MemclawConfig]:
-    cfg = MemclawConfig(memory_dir=tmp_path / "m", openai_api_key="k", anthropic_api_key="k")
+    cfg = MemclawConfig(memory_dir=tmp_path / "m", openai=OpenAISettings(api_key="k"), claude=ClaudeSettings(api_key="k"))
     return MemoryStore(cfg), cfg
 
 

@@ -1,5 +1,9 @@
 # Upgrading
 
+## Library: grouped settings (next release)
+
+Nothing changes for the `memclaw` command or your `.env`. In the library, `MemclawConfig`'s settings moved into groups: `MemclawConfig(openai_api_key="k")` is now `MemclawConfig(openai=OpenAISettings(api_key="k"))`, and `config.slack_bot_token` is `config.slack.bot_token`, `config.mmr_lambda` is `config.memory.mmr_lambda`, and so on. `memory_dir`, `agent_backend` and `platform` stay where they were. See [Using Memclaw as a Library](library.md).
+
 ## From 2.x to 3.0
 
 ```bash

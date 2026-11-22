@@ -10,7 +10,6 @@ agent by id.
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -19,7 +18,7 @@ import httpx
 from loguru import logger
 from rich.prompt import Prompt
 
-from ..config import MemclawConfig
+from ..config import set_environment
 from ..prompts import masked_input
 from .base import ProgressCallback, TurnResult
 from .claude_models import ModelInfo
@@ -31,6 +30,7 @@ from .model_selection import ModelSelectionMixin
 if TYPE_CHECKING:
     from rich.console import Console
 
+    from ..config import MemclawConfig
     from ..tools import ToolExecutor
 
 _DEFAULT_MODEL = "composer-2.5"
@@ -50,16 +50,16 @@ _EFFORT_PARAM_HINTS = ("effort", "reasoning")
 
 
 def _cursor_api_key(config: "MemclawConfig") -> str:
-    return (config.cursor_api_key or os.environ.get("CURSOR_API_KEY", "")).strip()
+    return config.cursor.api_key.strip()
 
 
 def _cursor_model(config: "MemclawConfig") -> str:
-    model = (config.cursor_model or os.environ.get("CURSOR_MODEL", "")).strip()
+    model = config.cursor.model.strip()
     return model or _DEFAULT_MODEL
 
 
 def _cursor_effort(config: "MemclawConfig") -> str | None:
-    effort = (config.cursor_effort or os.environ.get("CURSOR_EFFORT", "")).strip()
+    effort = config.cursor.effort.strip()
     return effort or None
 
 
@@ -187,7 +187,7 @@ class CursorAgentBackend(ModelSelectionMixin):
     """Cursor Python SDK implementation of the AgentBackend protocol."""
 
     _label = "Cursor"
-    _env_prefix = "CURSOR"
+    _settings_group = "cursor"
     name: ClassVar[str] = "cursor"
     display_name: ClassVar[str] = "Cursor SDK"
     supports_model_selection: ClassVar[bool] = True
@@ -198,7 +198,8 @@ class CursorAgentBackend(ModelSelectionMixin):
         self._model = _cursor_model(config)
         self._effort = _cursor_effort(config)
         self._cwd = str(config.memory_dir)
-        os.environ["MEMCLAW_MEMORY_DIR"] = self._cwd
+        # Read by the Cursor hook script, which runs in a child process.
+        set_environment({"MEMCLAW_MEMORY_DIR": self._cwd})
         self.bills_per_token = True
         self._mcp_server = HttpMcpServer()
         self._client: Any = None  # the shared bridge client, launched lazily
@@ -238,9 +239,9 @@ class CursorAgentBackend(ModelSelectionMixin):
         console: "Console",
         existing: dict[str, str],
         *,
-        memory_dir: Path | str | None = None,
+        config: "MemclawConfig",
     ) -> tuple[dict[str, str], list[str]]:
-        current = existing.get("CURSOR_API_KEY", os.environ.get("CURSOR_API_KEY", ""))
+        current = existing.get("CURSOR_API_KEY", config.cursor.api_key)
         answer = masked_input(console, "Cursor API key (required)")
         value = answer or current
         if not value:
@@ -250,7 +251,7 @@ class CursorAgentBackend(ModelSelectionMixin):
         values: dict[str, str] = {"CURSOR_API_KEY": value}
         drop_keys = list(_DROP_KEYS)
 
-        model_current = existing.get("CURSOR_MODEL", os.environ.get("CURSOR_MODEL", ""))
+        model_current = existing.get("CURSOR_MODEL", config.cursor.model)
         model_answer = Prompt.ask(
             r"Cursor model \[composer-2.5 is default, optional]",
             default="",
@@ -264,9 +265,8 @@ class CursorAgentBackend(ModelSelectionMixin):
         elif model_current:
             values["CURSOR_MODEL"] = model_current
 
-        cfg = MemclawConfig(memory_dir=Path(memory_dir)) if memory_dir else MemclawConfig()
-        if not ensure_cursor_hooks(cfg.memory_dir):
-            status = cursor_hooks_status(cfg.memory_dir)
+        if not ensure_cursor_hooks(config.memory_dir):
+            status = cursor_hooks_status(config.memory_dir)
             logger.warning(
                 "Cursor tool-restriction hooks are not ready ({status}). "
                 "Built-in Cursor tools may be used until hooks are installed.",
@@ -302,7 +302,7 @@ class CursorAgentBackend(ModelSelectionMixin):
     async def _ensure_mcp_server(self, tool_executor: "ToolExecutor") -> None:
         await self._mcp_server.start(
             tool_executor,
-            port=self.config.mcp_http_port,
+            port=self.config.cursor.mcp_http_port,
         )
 
     # -- Bridge ------------------------------------------------------------

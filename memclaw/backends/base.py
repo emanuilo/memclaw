@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 from loguru import logger
@@ -125,7 +124,7 @@ class AgentBackend(Protocol):
         console: "Console",
         existing: dict[str, str],
         *,
-        memory_dir: Path | str | None = None,
+        config: "MemclawConfig",
     ) -> tuple[dict[str, str], list[str]]:
         """Interactively collect this backend's env-var values.
 
@@ -136,8 +135,8 @@ class AgentBackend(Protocol):
         Args:
             console: Rich console for output / prompts.
             existing: env-var values already loaded from ``.env``.
-            memory_dir: Active Memclaw memory directory (from ``--memory-dir``),
-                or the default when omitted.
+            config: The active config (``--memory-dir``, and the current
+                values, including ones set only in the shell).
 
         Returns:
             A `(values, drop_keys)` pair.

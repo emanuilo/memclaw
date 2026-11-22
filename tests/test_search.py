@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from memclaw.config import MemclawConfig
+from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
 from memclaw.index import MemoryIndex
 from memclaw.search import HybridSearch, SearchResult
 
@@ -35,8 +35,8 @@ def _result(
 def cfg(tmp_path: Path) -> MemclawConfig:
     return MemclawConfig(
         memory_dir=tmp_path / "m",
-        openai_api_key="k",
-        anthropic_api_key="k",
+        openai=OpenAISettings(api_key="k"),
+        claude=ClaudeSettings(api_key="k"),
     )
 
 
@@ -90,7 +90,7 @@ class TestTemporalDecay:
 
     def test_decay_disabled_when_zero(self, cfg: MemclawConfig, idx: MemoryIndex):
         """When decay_half_life_days=0, no decay is applied."""
-        cfg.decay_half_life_days = 0
+        cfg.memory.decay_half_life_days = 0
         hs = HybridSearch(cfg, idx)
         old_date = (date.today() - timedelta(days=365)).isoformat()
         results = [_result(file_path=f"memory/{old_date}.md", score=1.0)]
@@ -316,7 +316,7 @@ class TestMergeScores:
         )
         cid = idx.db.execute("SELECT id FROM chunks").fetchone()[0]
         results = hs._merge([(cid, 0.42)], [], limit=5)
-        assert results[0].score == pytest.approx(hs.config.vector_weight)
+        assert results[0].score == pytest.approx(hs.config.memory.vector_weight)
 
 
 class TestCacheInvalidation:
