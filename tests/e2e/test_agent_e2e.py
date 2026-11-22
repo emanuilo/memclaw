@@ -76,7 +76,7 @@ async def test_conversation_resumes_after_restart(agent_vault):
             "to memory, just keep it in this conversation. Reply 'ok'.",
             chat_id="7",
         )
-        first = agent.sessions.get("e2e:7", agent._fingerprint)
+        first = agent.sessions.saved("e2e:7")
     finally:
         await agent.aclose()
     assert first is not None
@@ -85,7 +85,7 @@ async def test_conversation_resumes_after_restart(agent_vault):
     try:
         reply, _ = await agent.handle("What was the secret word?", chat_id="7")
         assert "tangerine" in reply.lower()
-        assert agent.sessions.get("e2e:7", agent._fingerprint)["session_id"] == first["session_id"]
+        assert agent.sessions.saved("e2e:7")["session_id"] == first["session_id"]
     finally:
         await agent.aclose()
 

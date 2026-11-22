@@ -21,6 +21,7 @@ Each chat's conversation lives in the agent backend's own session (for Claude, a
 - If a session can't be resumed (deleted, created on another machine, ...), a warning is logged and a fresh session starts.
 - Each saved session records a **fingerprint** of the code-level instructions (the system-prompt template and the backend). A resumed session keeps its original system prompt, so a session created under different instructions (e.g. after an upgrade that changed the template) is not resumed; the chat starts fresh.
 - `/new` (Telegram command; a message of exactly `/new` in Slack, WhatsApp and the terminal) closes that chat's session and forgets its id. Your memories are untouched.
+- The agent keeps this bookkeeping (session keys, the saved sessions, the reminders a chat hasn't seen yet, `/new`) in `ChatSessions`, `memclaw/sessions.py`.
 - `/model` and `/effort` (Telegram) switch the model or effort level, and the conversation is kept. Claude sessions reconnect on their next message, resuming the same session with the new settings; Cursor passes the model with every message, so its agents just use it. For Cursor, `/effort` is available only on models that expose a reasoning/effort parameter.
 
 **What this means in practice:**

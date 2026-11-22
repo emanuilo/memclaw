@@ -11,9 +11,7 @@
       "type-errors|memclaw/backends/mcp_bridge.py|": 1
     },
     "pylint": {
-      "class-attributes|memclaw/agent.py|MemclawAgent": 17,
       "class-attributes|memclaw/backends/cursor.py|CursorAgentBackend": 13,
-      "too-many-locals|memclaw/agent.py|MemclawAgent._handle": 18,
       "too-many-locals|memclaw/backends/claude.py|ClaudeAgentBackend.wizard_setup": 17,
       "too-many-locals|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 19
     },
