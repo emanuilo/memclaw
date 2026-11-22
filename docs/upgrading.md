@@ -6,6 +6,8 @@ Nothing changes for the `memclaw` command or your `.env`. In the library, `Memcl
 
 The store, index and search moved into the `memclaw.memory` package: `from memclaw.store import MemoryStore`, `from memclaw.index import MemoryIndex` and `from memclaw.search import HybridSearch, SearchResult` are now `from memclaw.memory import MemoryStore, MemoryIndex, HybridSearch, SearchResult`. They work as before.
 
+A custom agent backend's `run_turn` now takes `run_turn(request, tool_executor)`, where `request` is a `memclaw.backends.TurnRequest` holding the fields that used to be keyword arguments (`system_prompt`, `context`, `user_message`, `session_key`, `resume_session_id`, ...). `ModelInfo` lives in `memclaw.backends.model_selection`.
+
 ## From 2.x to 3.0
 
 ```bash
