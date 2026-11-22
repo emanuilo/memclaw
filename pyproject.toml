@@ -105,7 +105,7 @@ baseline = ".code-shape/baseline.json"
 [tool.shape.banned_api]
 # Outside systems should be reached through one module each. Existing direct
 # uses are in the baseline; new ones fail.
-"openai" = { msg = "Don't import the OpenAI SDK in another module. Call the existing code that uses it (memclaw/index.py for embeddings), or move the call there; the goal is one OpenAI adapter module.", allowed = ["memclaw/index.py"] }
+"openai" = { msg = "Only memclaw/openai_client.py imports the OpenAI SDK. Call OpenAIClient (embed, transcribe, chat), or add the call there.", allowed = ["memclaw/openai_client.py"] }
 "sqlite3" = { msg = "Only the storage modules (memclaw/index.py, memclaw/reminders.py) open SQLite; call their methods instead.", allowed = ["memclaw/index.py", "memclaw/reminders.py"] }
 # Settings come from memclaw/config.py only (config_modules above bans os.environ elsewhere); .env files too.
 "dotenv" = { msg = "Only memclaw/config.py loads .env files. Use its read_env_file / update_env_file / reload_env_file, or add a setting there and read it from MemclawConfig.", allowed = ["memclaw/config.py"] }
@@ -172,9 +172,11 @@ layers = [
     # The memory tools the agent can call.
     "tools",
     # Independent building blocks (`|`: they don't import each other).
-    "search | store | reminders | sessions | memory_refs | prompts | openai_health",
+    "search | store | reminders | sessions | memory_refs | prompts",
     # SQLite + embeddings index, used by search.
     "index",
+    # The OpenAI adapter (embeddings, transcription, chat), used by index and bot.
+    "openai_client",
     # Settings read from the environment. Imports nothing from memclaw.
     "config",
 ]
@@ -209,6 +211,13 @@ name = "Chat-platform SDKs (telegram, slack_bolt, neonize) are only imported ins
 type = "protected"
 protected_modules = ["telegram", "slack_bolt", "neonize"]
 allowed_importers = ["memclaw.bot"]
+
+[[tool.importlinter.contracts]]
+id = "openai-only-in-adapter"
+name = "Only memclaw.openai_client imports the OpenAI SDK (everyone else calls OpenAIClient)"
+type = "protected"
+protected_modules = ["openai"]
+allowed_importers = ["memclaw.openai_client"]
 
 [[tool.importlinter.contracts]]
 id = "defaults-standalone"

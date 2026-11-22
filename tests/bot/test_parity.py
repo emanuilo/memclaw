@@ -64,8 +64,10 @@ AGENT_HOMES = [TELEGRAM, SLACK, WHATSAPP]
 
 def make_bot(module, config, openai):
     """Construct the platform's bot object the way its launcher does."""
+    from memclaw.openai_client import OpenAIClient
+
     cls = {TELEGRAM: "MessageHandlers", SLACK: "SlackHandlers", WHATSAPP: "WhatsAppBot"}
-    return getattr(module, cls[module.__name__])(config, openai)
+    return getattr(module, cls[module.__name__])(config, OpenAIClient(config.openai.api_key))
 
 
 def attach_telegram(bot, tg_bot):
@@ -74,7 +76,8 @@ def attach_telegram(bot, tg_bot):
 
 
 def install_openai(monkeypatch, fake):
-    """Make *fake* the OpenAI SDK client the bots use (passed in by make_bot here)."""
+    """Make *fake* the OpenAI SDK client the bots use."""
+    monkeypatch.setattr("memclaw.openai_client.AsyncOpenAI", lambda **kwargs: fake)
 
 
 # ── Fakes shared by every platform ───────────────────────────────────────

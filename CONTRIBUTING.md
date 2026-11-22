@@ -66,10 +66,11 @@ Claude Code uses `.claude/settings.json` automatically: when Claude runs `git co
 
 **memclaw's layout rules** are the import-linter contracts under `[tool.importlinter]` in `pyproject.toml`. `code-shape check` runs them (on their own: `lint-imports`):
 
-- **Layers**: `cli` → `bot` / `setup` → `agent` → `backends` → `tools` → core modules (`search`, `store`, `reminders`, …) → `index` → `config`. A module may import from layers below it, never above. A new top-level module must be added to a layer.
+- **Layers**: `cli` → `bot` / `setup` → `agent` → `backends` → `tools` → core modules (`search`, `store`, `reminders`, …) → `index` → `openai_client` → `config`. A module may import from layers below it, never above. A new top-level module must be added to a layer.
 - **No cycles inside subpackages** such as `memclaw.backends` and `memclaw.bot`.
 - **Chat platforms are independent**: the Telegram (`bot/handlers.py`), Slack and WhatsApp handlers never import each other. Put shared code in `memclaw/bot/` or a lower layer.
 - **Chat SDKs stay in `memclaw.bot`**: only `memclaw.bot` imports `telegram`, `slack_bolt` or `neonize`.
+- **One OpenAI adapter**: only `openai_client.py` imports `openai`; everyone else calls `OpenAIClient`.
 - **Backends are swappable**: only `memclaw.backends` itself imports the concrete backend modules (`claude.py`, `cursor.py`, …). Everyone else goes through `memclaw.backends` / `memclaw.backends.base`.
 - **`memclaw.defaults` stands alone**: the Cursor hook script there is copied out and run on its own, so it can't import memclaw.
 

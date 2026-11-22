@@ -13,7 +13,6 @@ import hashlib
 import time
 
 from loguru import logger
-from openai import AsyncOpenAI
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
@@ -30,6 +29,7 @@ from ..agent import MemclawAgent
 from ..backends import AgentBackend
 from ..backends.base import ToolStep
 from ..config import MemclawConfig
+from ..openai_client import OpenAIClient
 from ..reminders import ReminderScheduler
 from . import mask_user_id
 from .link_processor import LinkProcessor
@@ -180,7 +180,7 @@ async def _resolve_model_arg(backend: AgentBackend, arg: str) -> str:
 class MessageHandlers:
     """Routes every Telegram message through the unified Memclaw agent."""
 
-    def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
+    def __init__(self, config: MemclawConfig, openai_client: OpenAIClient):
         self.config = config
         self.openai_client = openai_client
         self.scheduler = ReminderScheduler(config)
@@ -446,9 +446,8 @@ class MessageHandlers:
         voice_bytes = await file.download_as_bytearray()
 
         try:
-            transcription = await self.openai_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=("voice.ogg", bytes(voice_bytes), "audio/ogg"),
+            text = await self.openai_client.transcribe(
+                bytes(voice_bytes), filename="voice.ogg", mime_type="audio/ogg",
             )
         except Exception as exc:
             logger.exception("Whisper transcription failed: {exc}", exc=exc)
@@ -458,7 +457,6 @@ class MessageHandlers:
                 "your OpenAI key has access to the whisper-1 model."
             )
             return
-        text = transcription.text
         logger.info(f"Transcribed: {text}")
 
         # Process links
@@ -493,8 +491,7 @@ def build_application(config: MemclawConfig) -> Application:
     handler and command menu, wired into a python-telegram-bot Application.
     """
     async def post_init(application: Application) -> None:
-        openai_client = AsyncOpenAI(api_key=config.openai.api_key)
-        handlers = MessageHandlers(config, openai_client)
+        handlers = MessageHandlers(config, OpenAIClient(config.openai.api_key))
         application.bot_data["handlers"] = handlers
 
         await handlers.agent.start()

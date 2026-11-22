@@ -1,3 +1,5 @@
+"""Link summaries: find the URLs in a message, fetch each page and summarize it."""
+
 from __future__ import annotations
 
 import re
@@ -6,14 +8,15 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 from loguru import logger
-from openai import AsyncOpenAI
+
+from ..openai_client import OpenAIClient
 
 
 class LinkProcessor:
     """Extract URLs from text, fetch page content, and generate summaries."""
 
-    def __init__(self, openai_client: AsyncOpenAI):
-        self.openai_client = openai_client
+    def __init__(self, openai: OpenAIClient):
+        self.openai = openai
         self._url_re = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)
 
     def extract_urls(self, text: str) -> list[str]:
@@ -72,22 +75,16 @@ class LinkProcessor:
 
     async def summarize(self, content: str, url: str) -> str:
         try:
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-5-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Summarize this web content concisely. "
-                            "Focus on main points. Keep it under 50 tokens."
-                        ),
-                    },
-                    {"role": "user", "content": f"Summarize content from {url}:\n\n{content}"},
-                ],
-                reasoning_effort="low",
-                max_completion_tokens=300,
-            )
-            return response.choices[0].message.content or ""
+            return await self.openai.chat([
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarize this web content concisely. "
+                        "Focus on main points. Keep it under 50 tokens."
+                    ),
+                },
+                {"role": "user", "content": f"Summarize content from {url}:\n\n{content}"},
+            ])
         except Exception as e:
             return f"Could not summarize: {e}"
 

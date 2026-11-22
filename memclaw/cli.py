@@ -12,7 +12,7 @@ from .bot import mask_user_id
 from .config import MemclawConfig, reload_env_file
 from .index import MemoryIndex
 from .search import HybridSearch
-from .setup import needs_setup, print_logo, run_setup
+from .setup import needs_setup, print_logo, print_probe_report, run_setup
 from .store import MemoryStore
 
 console = Console()
@@ -201,14 +201,12 @@ def _run_telegram(config: MemclawConfig) -> None:
 
 
 def _run_whatsapp(config: MemclawConfig) -> None:
-    from openai import AsyncOpenAI
-
     from .bot.whatsapp_handlers import WhatsAppBot
+    from .openai_client import OpenAIClient
 
     _setup_bot_logging(config.memory_dir / "whatsapp.log")
 
-    openai_client = AsyncOpenAI(api_key=config.openai.api_key)
-    bot_ = WhatsAppBot(config, openai_client)
+    bot_ = WhatsAppBot(config, OpenAIClient(config.openai.api_key))
 
     console.print("[green]Starting Memclaw WhatsApp bot[/green]  (self-notes only)")
     if not config.whatsapp_session_db.exists():
@@ -226,9 +224,8 @@ def _run_whatsapp(config: MemclawConfig) -> None:
 
 
 def _run_slack(config: MemclawConfig) -> None:
-    from openai import AsyncOpenAI
-
     from .bot.slack_handlers import SlackHandlers
+    from .openai_client import OpenAIClient
 
     if not config.slack.bot_token:
         console.print("[red]Error:[/red] SLACK_BOT_TOKEN is not set.")
@@ -241,8 +238,7 @@ def _run_slack(config: MemclawConfig) -> None:
 
     _setup_bot_logging(config.memory_dir / "slack.log")
 
-    openai_client = AsyncOpenAI(api_key=config.openai.api_key)
-    handlers = SlackHandlers(config, openai_client)
+    handlers = SlackHandlers(config, OpenAIClient(config.openai.api_key))
 
     console.print(
         f"[green]Starting Memclaw Slack bot (Socket Mode)...[/green]  "
@@ -412,7 +408,7 @@ def configure(ctx):
 @click.pass_context
 def doctor(ctx):
     """Check that your OpenAI key can reach every model Memclaw uses."""
-    from .openai_health import print_probe_report, probe_openai
+    from .openai_client import probe_openai
 
     config: MemclawConfig = ctx.obj["config"]
     _require_openai(config)

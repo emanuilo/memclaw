@@ -15,12 +15,12 @@ from pathlib import Path
 
 import httpx
 from loguru import logger
-from openai import AsyncOpenAI
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from ..agent import MemclawAgent
 from ..config import MemclawConfig
+from ..openai_client import OpenAIClient
 from ..reminders import ReminderScheduler
 from . import mask_user_id
 from .link_processor import LinkProcessor
@@ -32,7 +32,7 @@ _IMAGE_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp
 class SlackHandlers:
     """Routes every Slack message through the unified Memclaw agent."""
 
-    def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
+    def __init__(self, config: MemclawConfig, openai_client: OpenAIClient):
         self.config = config
         self.openai_client = openai_client
         self.scheduler = ReminderScheduler(config)
@@ -211,9 +211,8 @@ class SlackHandlers:
         ext = _mime_to_ext(mime) or ".m4a"
 
         try:
-            transcription = await self.openai_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=(f"audio{ext}", audio_bytes, mime),
+            text = await self.openai_client.transcribe(
+                audio_bytes, filename=f"audio{ext}", mime_type=mime,
             )
         except Exception as exc:
             logger.exception("Whisper transcription failed: {exc}", exc=exc)
@@ -226,7 +225,6 @@ class SlackHandlers:
                 thread_ts=thread_ts,
             )
             return
-        text = transcription.text
         logger.info("Transcribed Slack audio: {t}", t=text)
 
         link_info = ""

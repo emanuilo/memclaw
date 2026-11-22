@@ -15,7 +15,6 @@ import uuid
 from pathlib import Path
 
 from loguru import logger
-from openai import AsyncOpenAI
 
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
@@ -23,6 +22,7 @@ from neonize.utils.jid import build_jid
 
 from ..agent import MemclawAgent
 from ..config import MemclawConfig
+from ..openai_client import OpenAIClient
 from ..reminders import ReminderScheduler
 from . import mask_user_id
 from .link_processor import LinkProcessor
@@ -31,7 +31,7 @@ from .link_processor import LinkProcessor
 class WhatsAppBot:
     """Personal WhatsApp bot backed by neonize + MemclawAgent."""
 
-    def __init__(self, config: MemclawConfig, openai_client: AsyncOpenAI):
+    def __init__(self, config: MemclawConfig, openai_client: OpenAIClient):
         self.config = config
         self.openai_client = openai_client
         self.scheduler = ReminderScheduler(config)
@@ -211,9 +211,8 @@ class WhatsAppBot:
         ext = _mime_to_ext(mime_type) or ".ogg"
 
         try:
-            transcription = await self.openai_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=(f"voice{ext}", audio_bytes, mime_type),
+            text = await self.openai_client.transcribe(
+                audio_bytes, filename=f"voice{ext}", mime_type=mime_type,
             )
         except Exception as exc:
             logger.exception("Whisper transcription failed: {exc}", exc=exc)
@@ -224,7 +223,6 @@ class WhatsAppBot:
                 ev,
             )
             return
-        text = transcription.text
         logger.info("Transcribed WhatsApp voice: {t}", t=text)
 
         link_info = ""
