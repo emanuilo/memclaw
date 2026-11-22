@@ -6,7 +6,6 @@
       "cognitive-complexity|memclaw/backends/claude.py|ClaudeAgentBackend.run_one_shot": 23
     },
     "pylint": {
-      "class-attributes|memclaw/backends/cursor.py|CursorAgentBackend": 13,
       "too-many-locals|memclaw/backends/claude.py|ClaudeAgentBackend.wizard_setup": 17
     },
     "ruff": {
@@ -15,9 +14,7 @@
     },
     "sizes": {
       "class-lines|memclaw/backends/claude.py|ClaudeAgentBackend": 488,
-      "class-lines|memclaw/backends/cursor.py|CursorAgentBackend": 406,
-      "file-lines|memclaw/backends/claude.py|": 762,
-      "file-lines|memclaw/backends/cursor.py|": 590
+      "file-lines|memclaw/backends/claude.py|": 762
     }
   },
   "version": 1

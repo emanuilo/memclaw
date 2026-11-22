@@ -321,9 +321,9 @@ type = "protected"
 protected_modules = [
     "memclaw.backends.claude",
     "memclaw.backends.claude_models",
+    # A package: its modules (agents, backend, bridge, configure, hooks,
+    # sdk_adapter) are protected with it.
     "memclaw.backends.cursor",
-    "memclaw.backends.cursor_hooks",
-    "memclaw.backends.cursor_sdk_adapter",
     "memclaw.backends.mcp_bridge",
     "memclaw.backends.mcp_tools",
     "memclaw.backends.model_selection",

@@ -20,13 +20,14 @@ from cursor_sdk import (
 
 from memclaw.backends.base import TurnRequest, TurnResult
 from memclaw.backends import REGISTRY, get_backend_class
-from memclaw.backends.cursor import (
-    CursorAgentBackend,
-    _agent_options,
-    _build_combined_prompt,
-    _build_user_message,
+from memclaw.backends.cursor import CursorAgentBackend
+from memclaw.backends.cursor.agents import (
+    ChatAgent,
+    agent_options,
+    build_combined_prompt,
+    build_user_message,
 )
-from memclaw.backends.cursor_sdk_adapter import (
+from memclaw.backends.cursor.sdk_adapter import (
     RunUsageTracker,
     accumulate_usage,
     assistant_message_text,
@@ -36,7 +37,7 @@ from memclaw.backends.cursor_sdk_adapter import (
     record_interaction_usage,
 )
 from memclaw.backends.mcp_bridge import HttpMcpServer
-from memclaw.backends.cursor_hooks import cursor_hooks_installed
+from memclaw.backends.cursor.hooks import cursor_hooks_installed
 from memclaw.config import ClaudeSettings, CursorSettings, MemclawConfig, OpenAISettings
 
 
@@ -121,7 +122,7 @@ class TestCursorAgentBackendConfig:
 
 class TestPromptBuilding:
     def test_agent_options_loads_project_setting_sources(self):
-        options = _agent_options(
+        options = agent_options(
             api_key="test",
             cwd="/tmp/memclaw",
             model="composer-2.5",
@@ -146,7 +147,7 @@ class TestPromptBuilding:
         assert args == {"file_path": "x.md"}
 
     def test_combined_prompt_includes_system_and_user(self):
-        prompt = _build_combined_prompt(
+        prompt = build_combined_prompt(
             system_prompt="You are Memclaw.",
             user_message="Hello",
         )
@@ -155,19 +156,19 @@ class TestPromptBuilding:
         assert "---" in prompt
 
     def test_follow_up_message_has_no_system_prompt(self):
-        message = _build_user_message(
+        message = build_user_message(
             system_prompt="", context="<context>c</context>", user_message="Hi",
         )
         assert message == "<context>c</context>\n\nHi"
 
     def test_image_uses_sdk_image(self):
-        message = _build_user_message(
+        message = build_user_message(
             system_prompt="Sys",
             user_message="Look at this",
             image_b64="abc123",
             image_media_type="image/png",
         )
-        assert message.text == _build_combined_prompt(
+        assert message.text == build_combined_prompt(
             system_prompt="Sys",
             user_message="Look at this",
         )
@@ -438,7 +439,7 @@ def _make_client(*, create=None, resume=None, process=None):
 def _patched(backend, *clients):
     """Run *backend* against mock bridge clients (one per launch) and a stub MCP server."""
     with patch.object(
-        backend, "_launch_client", new_callable=AsyncMock, side_effect=list(clients),
+        backend._bridge, "launch", new_callable=AsyncMock, side_effect=list(clients),
     ) as launch, patch.object(
         backend, "_ensure_mcp_server", new_callable=AsyncMock
     ), patch.object(
@@ -516,7 +517,7 @@ class TestCursorAgentBackendRuns:
             "cursor_sdk.AsyncClient.launch_bridge", new_callable=AsyncMock,
             return_value=MagicMock(_owned_bridge=None),
         ) as launch:
-            await backend._launch_client()
+            await backend._bridge.launch()
         argv = launch.await_args.args[0]
         assert argv[:2] == ["/bin/sh", "-c"]
         assert argv[3] == backend._cwd
@@ -693,7 +694,7 @@ class TestCursorAgentBackendRuns:
         agent.close.assert_awaited_once()
         client.aclose.assert_awaited_once()
         stop_mcp.assert_awaited_once()
-        assert backend._client is None
+        assert backend._bridge.client is None
 
     @pytest.mark.asyncio
     async def test_run_turn_applies_cost_fallback(self, tmp_path):
@@ -761,6 +762,31 @@ class TestCursorAgentBackendRuns:
             mock_stop.assert_awaited_once()
 
 
+class TestAgentStartHooks:
+    @staticmethod
+    async def _start(backend):
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(f"{m.record['level'].name} {m.record['message']}"))
+        try:
+            with patch.object(backend, "_ensure_mcp_server", new_callable=AsyncMock):
+                await backend.on_agent_start(MagicMock())
+        finally:
+            logger.remove(sink)
+        return lines
+
+    @pytest.mark.asyncio
+    async def test_installs_the_hooks_and_logs_their_status(self, tmp_path):
+        backend = _backend(tmp_path)
+        lines = await self._start(backend)
+        assert cursor_hooks_installed(backend.config.memory_dir)
+        assert lines == [
+            "INFO Cursor tool-restriction hooks: ready (memclaw MCP provider='memclaw', "
+            "setting_sources=project)",
+        ]
+
+
 class TestBridgeRobustness:
     @pytest.mark.asyncio
     async def test_dead_bridge_is_relaunched_before_the_next_call(self, tmp_path):
@@ -768,54 +794,52 @@ class TestBridgeRobustness:
         dead = _make_client(process=MagicMock(returncode=1))
         fresh = _make_client()
         with patch.object(
-            backend, "_launch_client", new_callable=AsyncMock, side_effect=[dead, fresh],
+            backend._bridge, "launch", new_callable=AsyncMock, side_effect=[dead, fresh],
         ):
-            assert await backend._get_client() is dead
-            assert await backend._get_client() is fresh
+            assert await backend._bridge.get() is dead
+            assert await backend._bridge.get() is fresh
         dead.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_running_bridge_is_reused(self, tmp_path):
         backend = _backend(tmp_path)
         alive = _make_client(process=MagicMock(returncode=None))
-        with patch.object(backend, "_launch_client", new_callable=AsyncMock, side_effect=[alive]):
-            assert await backend._get_client() is alive
-            assert await backend._get_client() is alive
+        with patch.object(backend._bridge, "launch", new_callable=AsyncMock, side_effect=[alive]):
+            assert await backend._bridge.get() is alive
+            assert await backend._bridge.get() is alive
 
     def test_timeout_is_not_a_dead_bridge(self):
-        from memclaw.backends.cursor import _bridge_failed
+        from memclaw.backends.cursor.bridge import bridge_failed
 
         def raised_from(cause):
             exc = RuntimeError("run failed")
             exc.__cause__ = cause
             return exc
 
-        assert _bridge_failed(raised_from(httpx.ConnectError("refused")))
-        assert not _bridge_failed(raised_from(httpx.ReadTimeout("slow")))
-        assert not _bridge_failed(RuntimeError("agent error"))
+        assert bridge_failed(raised_from(httpx.ConnectError("refused")))
+        assert not bridge_failed(raised_from(httpx.ReadTimeout("slow")))
+        assert not bridge_failed(RuntimeError("agent error"))
 
     @pytest.mark.asyncio
     async def test_drain_survives_a_line_over_64_kib(self):
-        from memclaw.backends.cursor import _drain_stderr
+        from memclaw.backends.cursor.bridge import drain_stderr
 
         stream = asyncio.StreamReader()
         stream.feed_data(b"x" * 200_000 + b"\nok\n")
         stream.feed_eof()
-        await _drain_stderr(stream)  # reads to EOF without raising
+        await drain_stderr(stream)  # reads to EOF without raising
         assert stream.at_eof()
 
     @pytest.mark.asyncio
     async def test_shutdown_tolerates_a_session_added_meanwhile(self, tmp_path):
-        from memclaw.backends.cursor import _Session
-
         backend = _backend(tmp_path)
         backend._mcp_server = MagicMock(stop=AsyncMock())
 
         async def close_and_add(session):
-            backend._sessions.setdefault("late", _Session())
+            backend._sessions.setdefault("late", ChatAgent())
 
-        backend._sessions["a"] = _Session()
-        with patch.object(backend, "_close_agent", side_effect=close_and_add):
+        backend._sessions["a"] = ChatAgent()
+        with patch.object(ChatAgent, "close", autospec=True, side_effect=close_and_add):
             await backend.on_agent_shutdown()
         assert backend._sessions == {}
 

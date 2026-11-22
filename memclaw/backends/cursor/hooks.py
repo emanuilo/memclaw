@@ -9,9 +9,9 @@ import shutil
 import sys
 from pathlib import Path
 
-from ..config import MemclawConfig
-from .mcp_tools import MCP_SERVER_NAME
-from .tool_policy import CURSOR_PRETOOLUSE_MATCHER, HOOKS_VERSION, hook_policy_payload
+from ...config import MemclawConfig
+from ..mcp_tools import MCP_SERVER_NAME
+from ..tool_policy import CURSOR_PRETOOLUSE_MATCHER, HOOKS_VERSION, hook_policy_payload
 
 _HOOKS_JSON = "hooks.json"
 _HOOK_SCRIPT = "allow_memclaw_tools.py"
