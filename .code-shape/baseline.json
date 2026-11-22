@@ -6,10 +6,6 @@
       "cognitive-complexity|memclaw/backends/claude.py|ClaudeAgentBackend.run_one_shot": 23,
       "cognitive-complexity|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 24
     },
-    "mypy": {
-      "type-errors|memclaw/backends/claude.py|": 1,
-      "type-errors|memclaw/backends/mcp_bridge.py|": 1
-    },
     "pylint": {
       "class-attributes|memclaw/backends/cursor.py|CursorAgentBackend": 13,
       "too-many-locals|memclaw/backends/claude.py|ClaudeAgentBackend.wizard_setup": 17,

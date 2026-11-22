@@ -32,7 +32,7 @@ from ..config import process_environment
 from ..terminal_input import choose, masked_input
 from ..tools import TOOL_DEFINITIONS
 from .base import ProgressCallback, TurnRequest, TurnResult, report_tool_step
-from .claude_models import SDK_EFFORT_LEVELS, fetch_models
+from .claude_models import SDK_EFFORT_LEVELS, fetch_models, sdk_effort
 from .mcp_tools import MCP_SERVER_NAME
 from .model_selection import ModelInfo, ModelSelectionMixin
 
@@ -508,7 +508,7 @@ class ClaudeAgentBackend(ModelSelectionMixin):
         return ClaudeAgentOptions(
             env=self._env,
             model=model,
-            effort=effort,
+            effort=sdk_effort(effort),
             system_prompt=system_prompt,
             # Don't load ~/.claude settings, plugins, CLAUDE.md or the user's
             # MCP servers: faster startup and nothing outside our control.

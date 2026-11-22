@@ -13,7 +13,7 @@ switches to a credential that can reach a different set of models.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -32,7 +32,15 @@ PAGE_LIMIT = 100
 # Optional[Literal["low", "medium", "high", "xhigh", "max"]]. The API may
 # report a level a newer SDK understands and ours does not, so anything
 # outside this set is dropped. Widen the tuple when the SDK gains a level.
-SDK_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
+SDK_EFFORT_LEVELS: tuple[EffortLevel, ...] = ("low", "medium", "high", "xhigh", "max")
+
+
+def sdk_effort(level: str | None) -> EffortLevel | None:
+    """*level* as the SDK's effort type. Every level Memclaw keeps is one of
+    SDK_EFFORT_LEVELS (checked where it is read or set), so this only
+    narrows the type; anything else would be None, i.e. no effort flag."""
+    return next((known for known in SDK_EFFORT_LEVELS if known == level), None)
 
 
 # ── Request building ────────────────────────────────────────────────
