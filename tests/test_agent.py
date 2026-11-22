@@ -406,32 +406,6 @@ class TestBackgroundConsolidation:
 
 
 # ────────────────────────────────────────────────────────────────────
-# Spec #3: MEMORY.md in the system prompt
-# ────────────────────────────────────────────────────────────────────
-
-class TestPermanentMemoryPrompt:
-    def test_small_memory_included_in_full(self, cfg: MemclawConfig):
-        from memclaw.agent import _load_permanent_memory
-
-        cfg.memory_file.write_text("## Key Facts\n\n- I like Python")
-        assert _load_permanent_memory(cfg) == "## Key Facts\n\n- I like Python"
-
-    def test_runaway_memory_is_truncated(self, cfg: MemclawConfig):
-        from memclaw.agent import _MEMORY_PROMPT_CHARS, _load_permanent_memory
-
-        cfg.memory_file.write_text("x" * (_MEMORY_PROMPT_CHARS + 100))
-        text = _load_permanent_memory(cfg)
-        assert len(text) < _MEMORY_PROMPT_CHARS + 100
-        assert "truncated" in text
-
-    def test_empty_memory(self, cfg: MemclawConfig):
-        from memclaw.agent import _load_permanent_memory
-
-        cfg.memory_file.write_text("")
-        assert _load_permanent_memory(cfg) == "(empty)"
-
-
-# ────────────────────────────────────────────────────────────────────
 # Spec #9: Startup and Background Sync
 # ────────────────────────────────────────────────────────────────────
 
@@ -733,13 +707,6 @@ class TestMemoryMdIsWrittenOnlyByConsolidation:
         assert cfg.memory_file.read_text() == before
         assert "Daisy Disk serial ABC-123" in cfg.daily_file().read_text()
         agent.close()
-
-class TestSystemPromptReferences:
-    def test_system_prompt_explains_references(self):
-        from memclaw.agent import _SYSTEM_PROMPT_TEMPLATE
-
-        assert "file_read" in _SYSTEM_PROMPT_TEMPLATE and "→ memory/" in _SYSTEM_PROMPT_TEMPLATE
-
 
 class TestReviewFixes:
     @pytest.mark.asyncio

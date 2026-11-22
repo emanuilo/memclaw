@@ -183,7 +183,7 @@ layers = [
     # through the backend the agent hands it, so it doesn't import backends.
     "memory",
     # Independent building blocks (`|`: they don't import each other).
-    "search | store | reminders | sessions | memory_refs | prompts",
+    "search | store | reminders | sessions | prompts | instructions",
     # SQLite + embeddings index, used by search.
     "index",
     # The OpenAI adapter (embeddings, transcription, chat), used by index and bot.
@@ -245,7 +245,7 @@ allowed_importers = ["memclaw.openai_client"]
 id = "memory-via-package"
 name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (e.g. Consolidator)"
 type = "protected"
-protected_modules = ["memclaw.memory.consolidation"]
+protected_modules = ["memclaw.memory.consolidation", "memclaw.memory.refs"]
 allowed_importers = ["memclaw.memory"]
 
 [[tool.importlinter.contracts]]

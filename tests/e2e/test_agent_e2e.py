@@ -10,7 +10,7 @@ import json
 import pytest
 
 from memclaw.agent import MemclawAgent
-from memclaw.memory_refs import check_references
+from memclaw.memory.refs import check_references
 from memclaw.openai_client import OpenAIClient
 
 from .conftest import days_ago, write_daily

@@ -25,7 +25,7 @@ from loguru import logger
 from ..config import MemclawConfig
 from ..index import MemoryIndex
 from ..store import MemoryStore
-from ..memory_refs import check_references
+from .refs import check_references
 
 # After a failed consolidation, wait this long before trying again rather
 # than retrying after every reply.

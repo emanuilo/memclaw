@@ -15,7 +15,6 @@ message instead.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,59 +25,19 @@ from .backends import AgentBackend, build_backend
 from .backends.base import ProgressCallback, TurnResult
 from .config import MemclawConfig
 from .index import MemoryIndex
+from .instructions import (
+    build_system_prompt,
+    content_hash,
+    instructions_fingerprint,
+    load_agent_instructions,
+    load_permanent_memory,
+)
 from .memory import Consolidator
 from .reminders import ReminderScheduler
 from .search import HybridSearch
 from .sessions import SessionStore
 from .store import MemoryStore
 from .tools import ToolExecutor
-
-# ── Prompts ──────────────────────────────────────────────────────────
-
-# Static for the whole session. Changing this template changes the session
-# fingerprint, so existing sessions start fresh instead of being resumed.
-_SYSTEM_PROMPT_TEMPLATE = """\
-{agent_instructions}
-
-=== REPLY FORMATTING ===
-Replies are delivered to messaging apps with limited markdown support. Use \
-ONLY this minimal syntax — anything else leaks as literal characters:
-- Bold: `*bold*` (single asterisk). NEVER use `**double asterisks**`.
-- Italic: `_italic_`.
-- Bullet lists: plain `- item` on its own line.
-- Paragraphs: separate with a blank line.
-- Headings (`#`, `##`, ...) are NOT supported — use a bold line on its own \
-(e.g. `*Section name*`) followed by a blank line instead.
-- No backticks or fenced code blocks.
-- No `[label](url)` links — write the bare URL.
-
-=== PER-MESSAGE CONTEXT ===
-Each user message starts with a <context> block added by Memclaw, not typed \
-by the user. It holds the current local time (use it for dates and \
-reminders), memories that may be relevant to that message, reminders that \
-were delivered to the user since their last message, and the new content of \
-AGENTS.md or MEMORY.md when either file changes — such an update supersedes \
-the version in this system prompt and any earlier update. Don't mention the \
-block itself to the user.
-
-=== PERMANENT MEMORY (MEMORY.md) ===
-An overview of the user. Lines ending in "→ memory/2026-04-18.md" (or \
-another file) point to the notes holding the details: when the user needs \
-a detail — an exact value, a number, instructions — open the note with \
-file_read and answer from it, rather than from the summary. memory_search \
-finds anything else.
-
-{permanent_memory}
-
-IMPORTANT: When the user gives you a behavioural instruction (e.g. "always respond \
-in Spanish", "be more formal", "never use emojis"), you MUST call the \
-update_instructions tool to save it. These are rules you should follow in every \
-future conversation.
-"""
-
-# Consolidation aims for ~6,000 characters of MEMORY.md;
-# this cap only guards against a runaway file.
-_MEMORY_PROMPT_CHARS = 20000
 
 # Per-turn memory search results. Kept small because every context block
 # stays in the session transcript.
@@ -87,37 +46,6 @@ _CONTEXT_SNIPPET_CHARS = 500
 
 # Session key for the interactive terminal (no chat id).
 _CLI_SESSION_KEY = "cli"
-
-
-def _load_agent_instructions(config: MemclawConfig) -> str:
-    agent_file = config.agent_file
-    if agent_file.exists():
-        return agent_file.read_text().strip()
-    return "You are Memclaw, a personal memory assistant."
-
-
-def _load_permanent_memory(config: MemclawConfig) -> str:
-    memory = config.memory_file.read_text().strip() if config.memory_file.exists() else ""
-    if not memory:
-        return "(empty)"
-    if len(memory) > _MEMORY_PROMPT_CHARS:
-        return memory[:_MEMORY_PROMPT_CHARS] + "\n\n[... truncated; use memory_search for more]"
-    return memory
-
-
-def _hash(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
-
-
-def instructions_fingerprint(backend_name: str) -> str:
-    """Hash of the code-level instructions a session is started with.
-
-    Claude Code keeps a session's original system prompt when it is resumed,
-    so a session started under a different template (or backend) must not be
-    resumed. AGENTS.md / MEMORY.md are tracked separately per session and
-    sent as updates instead, so editing them doesn't reset conversations.
-    """
-    return _hash(f"{backend_name}\0{_SYSTEM_PROMPT_TEMPLATE}")
 
 
 class MemclawAgent:
@@ -311,10 +239,10 @@ class MemclawAgent:
         key = self._session_key(chat_id)
         generation = self._generations.get(key, 0)
 
-        agent_instructions = _load_agent_instructions(self.config)
-        permanent_memory = _load_permanent_memory(self.config)
-        agents_hash = _hash(agent_instructions)
-        memory_hash = _hash(permanent_memory)
+        agent_instructions = load_agent_instructions(self.config)
+        permanent_memory = load_permanent_memory(self.config)
+        agents_hash = content_hash(agent_instructions)
+        memory_hash = content_hash(permanent_memory)
 
         # A resumed (or live) session has the AGENTS.md / MEMORY.md it last
         # saw; send whichever changed since, once.
@@ -333,15 +261,10 @@ class MemclawAgent:
             ),
         )
 
-        # Only used when the backend starts a new session.
-        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
-            agent_instructions=agent_instructions,
-            permanent_memory=permanent_memory,
-        )
-
         t0 = time.perf_counter()
         result = await self.backend.run_turn(
-            system_prompt=system_prompt,
+            # Only used when the backend starts a new session.
+            system_prompt=build_system_prompt(agent_instructions, permanent_memory),
             context=context,
             user_message=message,
             tool_executor=self._tools,
@@ -359,7 +282,7 @@ class MemclawAgent:
         # seen too, so they aren't sent back next turn. It never writes
         # MEMORY.md, so a change to it during the turn (a consolidation) is
         # still unseen and goes into the next message.
-        agents_hash = _hash(_load_agent_instructions(self.config))
+        agents_hash = content_hash(load_agent_instructions(self.config))
         self._ack_notes(key, len(notes))
         if result.session_id and self._generations.get(key, 0) == generation:
             self._save_session(key, result.session_id, agents_hash, memory_hash)
