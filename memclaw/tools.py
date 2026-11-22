@@ -10,9 +10,8 @@ from loguru import logger
 
 from .config import MemclawConfig
 from .index import MemoryIndex
+from .memory import HybridSearch, MemoryStore, SearchResult
 from .reminders import ReminderScheduler
-from .search import HybridSearch, SearchResult
-from .store import MemoryStore
 
 # ── Tool definitions (JSON schema) ───────────────────────────────────
 

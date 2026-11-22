@@ -18,9 +18,8 @@ import pytest
 
 from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
 from memclaw.index import MemoryIndex
-from memclaw.memory import Consolidator
+from memclaw.memory import Consolidator, MemoryStore
 from memclaw.memory.consolidation import _CONSOLIDATION_BUDGET_CHARS as BUDGET
-from memclaw.store import MemoryStore
 
 
 @pytest.fixture

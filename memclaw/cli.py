@@ -11,9 +11,8 @@ from rich.panel import Panel
 from .bot import PLATFORMS
 from .config import MemclawConfig, reload_env_file
 from .index import MemoryIndex
-from .search import HybridSearch
+from .memory import HybridSearch, MemoryStore
 from .setup import needs_setup, print_logo, print_probe_report, run_setup
-from .store import MemoryStore
 
 console = Console()
 

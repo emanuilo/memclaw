@@ -158,7 +158,7 @@ class TestChunking:
 
 class TestEntryChunking:
     def test_each_entry_is_its_own_chunk(self, cfg: MemclawConfig, idx: MemoryIndex):
-        from memclaw.store import MemoryStore
+        from memclaw.memory import MemoryStore
 
         store = MemoryStore(cfg)
         store.save("First entry about apples.")

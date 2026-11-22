@@ -132,7 +132,7 @@ ignore_names = [
 [tool.shape.concepts]
 # The ideas a change is usually about (tracked in `code-shape report`, never a
 # gate): words that name each one in code, and the module that should own it.
-"memory notes (daily files)" = { terms = ["MemoryStore", "daily_file", "memory_save"], home = "memclaw/store.py" }
+"memory notes (daily files)" = { terms = ["MemoryStore", "daily_file", "memory_save"], home = "memclaw/memory/notes.py" }
 "MEMORY.md + consolidation" = { terms = ["consolidat", "MEMORY\\.md", "permanent_memory"], home = "memclaw/memory/consolidation.py" }
 "search + index" = { terms = ["HybridSearch", "MemoryIndex", "embedding"], home = "memclaw/index.py" }
 "reminders" = { terms = ["remind"], home = "memclaw/reminders.py" }
@@ -178,12 +178,13 @@ layers = [
     "backends",
     # The memory tools the agent can call.
     "tools",
-    # The memory subsystem (memclaw.memory): MEMORY.md consolidation, the only
-    # writer of MEMORY.md. It builds on the modules below and reaches the LLM
-    # through the backend the agent hands it, so it doesn't import backends.
+    # The memory subsystem (memclaw.memory): the notes, search over them, and
+    # MEMORY.md consolidation (the only writer of MEMORY.md). It builds on the
+    # modules below and reaches the LLM through the backend the agent hands
+    # it, so it doesn't import backends.
     "memory",
     # Independent building blocks (`|`: they don't import each other).
-    "search | store | reminders | sessions | prompts | instructions",
+    "reminders | sessions | prompts | instructions",
     # SQLite + embeddings index, used by search.
     "index",
     # The OpenAI adapter (embeddings, transcription, chat), used by index and bot.
@@ -243,9 +244,14 @@ allowed_importers = ["memclaw.openai_client"]
 
 [[tool.importlinter.contracts]]
 id = "memory-via-package"
-name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (e.g. Consolidator)"
+name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (MemoryStore, HybridSearch, Consolidator, ...)"
 type = "protected"
-protected_modules = ["memclaw.memory.consolidation", "memclaw.memory.refs"]
+protected_modules = [
+    "memclaw.memory.consolidation",
+    "memclaw.memory.notes",
+    "memclaw.memory.refs",
+    "memclaw.memory.search",
+]
 allowed_importers = ["memclaw.memory"]
 
 [[tool.importlinter.contracts]]

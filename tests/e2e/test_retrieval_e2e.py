@@ -7,9 +7,8 @@ import pytest
 
 from memclaw.agent import MemclawAgent
 from memclaw.index import MemoryIndex
+from memclaw.memory import HybridSearch, MemoryStore
 from memclaw.openai_client import OpenAIClient
-from memclaw.search import HybridSearch
-from memclaw.store import MemoryStore
 from memclaw.tools import ToolExecutor
 
 from .conftest import days_ago, write_daily

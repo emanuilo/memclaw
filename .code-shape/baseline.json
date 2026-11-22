@@ -40,8 +40,7 @@
       "class-lines|memclaw/index.py|MemoryIndex": 345,
       "file-lines|memclaw/backends/claude.py|": 775,
       "file-lines|memclaw/backends/cursor.py|": 604,
-      "file-lines|memclaw/tools.py|": 577,
-      "package-files|memclaw/|": 13
+      "file-lines|memclaw/tools.py|": 576
     }
   },
   "version": 1

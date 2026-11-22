@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
-from memclaw.store import MemoryStore
+from memclaw.memory import MemoryStore
 
 
 def _make_store(tmp_path: Path) -> tuple[MemoryStore, MemclawConfig]:
