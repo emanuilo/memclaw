@@ -9,8 +9,11 @@ git clone https://github.com/emanuilo/memclaw.git
 cd memclaw
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -U pip
+pip install -e ".[dev]" --group shape
 ```
+
+(`--group shape` adds the code-shape checks, see [Code Shape](#code-shape). It needs pip 25.1+ and Python 3.11+. With uv: `uv sync --extra dev --group shape`.)
 
 Copy the environment template and fill in your keys:
 
@@ -33,15 +36,33 @@ All tests should pass before submitting a PR. The test suite mocks external API 
 - Keep functions focused and small
 - Run `ruff check .` before committing
 
-## Module Structure
+## Code Shape
 
-CI runs `lint-imports` ([import-linter](https://import-linter.readthedocs.io/)) to keep the modules loosely coupled. Run it locally before opening a PR:
+[code-shape-kit](https://github.com/emanuilo/code-shape-kit) keeps the structure of the code healthy. It checks:
+
+- **Sizes**: files (500 lines), classes (300), folders (12 modules, 4000 lines), nesting of folders.
+- **Functions and classes**: complexity, length, number of arguments, variables, attributes and public methods.
+- **Coupling**: environment variables read outside `config.py`, the OpenAI SDK or SQLite used outside their modules, private members (`obj._x`) used from outside, copy-pasted code, import cycles, modules that import too many others.
+- **Hygiene**: unused code, dependencies in `pyproject.toml` vs. what the code imports, and type errors (mypy).
+- **memclaw's layout rules** (see below).
+
+CI runs it on every PR. Locally:
+
+- `code-shape check`: the same check as CI. It fails on a new or worse problem, and also when something got better but the baseline wasn't updated.
+- `code-shape report`: writes `code-shape-report.md` with all the numbers, the worst offenders and git-history trends. It never fails.
+- `code-shape tighten`: after a fix, records the improvement in the baseline. Commit the baseline together with the fix.
+
+**The baseline.** `.code-shape-baseline.json` lists the problems memclaw already had when the kit was adopted, so only new ones fail. It may only shrink. Never edit it by hand and don't re-run `code-shape baseline` to accept a new problem: fix the code, then run `code-shape tighten`. `# noqa` comments don't silence these checks, and the limits under `[tool.shape]` in `pyproject.toml` aren't raised to make a change pass. If a rule seems wrong for your case, say so in the PR.
+
+**Hooks.** Turn on the git hook once per clone, and a commit that fails the check is stopped with the report:
 
 ```bash
-lint-imports
+git config core.hooksPath .githooks
 ```
 
-The rules (contracts) live under `[tool.importlinter]` in `pyproject.toml`:
+Claude Code uses `.claude/settings.json` automatically: when Claude runs `git commit`, the same check runs first and blocks the commit, so Claude sees what to fix. Both check the files in the working tree (stage everything you mean to commit) and take about 15 seconds.
+
+**memclaw's layout rules** are the import-linter contracts under `[tool.importlinter]` in `pyproject.toml`. `code-shape check` runs them (on their own: `lint-imports`):
 
 - **Layers**: `cli` → `bot` / `setup` → `agent` → `backends` → `tools` → core modules (`search`, `store`, `reminders`, …) → `index` → `config`. A module may import from layers below it, never above. A new top-level module must be added to a layer.
 - **No cycles inside subpackages** such as `memclaw.backends` and `memclaw.bot`.
@@ -49,8 +70,6 @@ The rules (contracts) live under `[tool.importlinter]` in `pyproject.toml`:
 - **Chat SDKs stay in `memclaw.bot`**: only `memclaw.bot` imports `telegram`, `slack_bolt` or `neonize`.
 - **Backends are swappable**: only `memclaw.backends` itself imports the concrete backend modules (`claude.py`, `cursor.py`, …). Everyone else goes through `memclaw.backends` / `memclaw.backends.base`.
 - **`memclaw.defaults` stands alone**: the Cursor hook script there is copied out and run on its own, so it can't import memclaw.
-
-Ruff flags imports inside functions (`PLC0415`) so lazy imports stay deliberate and visible. If you need one (e.g. an optional dependency like `cursor-sdk`), add `# noqa: PLC0415 - <reason>`. Hidden cycles are caught by `lint-imports`, which sees function-local imports too.
 
 If a new dependency between modules is legitimate, move the module to another layer in the same PR; don't add an ignore line.
 
@@ -61,7 +80,7 @@ If a new dependency between modules is legitimate, move the module to another la
 3. Make your changes
 4. Add or update tests as needed
 5. Run the test suite (`pytest`)
-6. Run the linter (`ruff check .`)
+6. Run the linter (`ruff check .`) and the shape check (`code-shape check`)
 7. Commit with a clear message (`git commit -m 'feat: add my feature'`)
 8. Push to your fork (`git push origin feature/my-feature`)
 9. Open a Pull Request
