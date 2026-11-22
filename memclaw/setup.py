@@ -18,6 +18,7 @@ from .config import (
     set_environment,
     write_env_file,
 )
+from .bot import PLATFORMS as CHAT_PLATFORMS
 from .openai_client import ProbeReport, probe_openai
 from .prompts import choose, masked_input
 
@@ -66,14 +67,14 @@ def print_logo() -> None:
     console.print()
 
 
-# Supported front-end platforms in display order. The first one is also the
-# default when nothing has been configured yet.
+# Supported front-end platforms (name, label) in display order: the chat
+# apps of memclaw.bot, then the terminal. The first one is also the default
+# when nothing has been configured yet.
 PLATFORMS: list[tuple[str, str]] = [
-    ("telegram", "Telegram"),
-    ("whatsapp", "WhatsApp"),
-    ("slack", "Slack"),
+    *((p.name, p.label) for p in CHAT_PLATFORMS.values()),
     ("terminal", "Terminal chat"),
 ]
+
 
 def questions(platform: str | None = None) -> list[Setting]:
     """The settings the wizard asks for (those declared with a `prompt=` in

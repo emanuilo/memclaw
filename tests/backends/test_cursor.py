@@ -856,7 +856,8 @@ class TestCursorModelSelection:
 
     @pytest.mark.asyncio
     async def test_model_and_effort_menus_list_cursor_models(self, tmp_path):
-        from memclaw.bot.handlers import effort_menu, model_menu, select_model
+        from memclaw.bot.commands import select_model
+        from memclaw.bot.telegram import effort_menu, model_menu
 
         backend = _backend(tmp_path)
         client = _make_client()

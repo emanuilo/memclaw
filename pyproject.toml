@@ -118,6 +118,11 @@ deptry = ["--optional-dependencies-dev-groups", "dev", "--extend-exclude", "docs
 # - functions registered by decorator are called by their framework, not by name.
 vulture = ["--ignore-decorators", "@cli.command,@*.event,@server.list_tools,@server.call_tool"]
 
+[[tool.mypy.overrides]]
+# neonize (WhatsApp) ships no type hints or stubs.
+module = ["neonize.*"]
+ignore_missing_imports = true
+
 [tool.vulture]
 # Names a library uses by reflection, which vulture would call dead code.
 ignore_names = [
@@ -134,13 +139,13 @@ ignore_names = [
 "settings storage (.env)" = { terms = ["read_env_file", "update_env_file", "write_env_file", "os\\.environ"], home = "memclaw/config.py" }
 "AI backends" = { terms = ["AgentBackend", "build_backend", "agent_backend", "AGENT_BACKEND"], home = "memclaw/backends/base.py" }
 "model / effort selection" = { terms = ["set_model", "set_effort", "list_models", "effort_levels"], home = "memclaw/backends/model_selection.py" }
-"chat platforms" = { terms = ["telegram", "slack", "whatsapp"], home = "memclaw/bot/handlers.py" }
-"voice transcription" = { terms = ["whisper", "transcri"], home = "memclaw/bot/handlers.py" }
+"chat platforms" = { terms = ["telegram", "slack", "whatsapp"], home = "memclaw/bot/__init__.py" }
+"voice transcription" = { terms = ["whisper", "transcri"], home = "memclaw/bot/inbound.py" }
 "images" = { terms = ["image_save", "image_search", "platform_image"], home = "memclaw/index.py" }
 "agent tools" = { terms = ["TOOL_DEFINITIONS", "ToolExecutor"], home = "memclaw/tools.py" }
 "conversations / sessions" = { terms = ["SessionStore", "session_key", "reset_session"], home = "memclaw/sessions.py" }
 "setup wizard" = { terms = ["run_setup", "wizard", "needs_setup"], home = "memclaw/setup.py" }
-"links" = { terms = ["LinkProcessor", "process_links"], home = "memclaw/bot/link_processor.py" }
+"links" = { terms = ["LinkProcessor", "process_links"], home = "memclaw/bot/links.py" }
 
 # ---------------------------------------------------------------------------
 # Module-structure rules (import-linter contracts): memclaw's own layout.
@@ -162,9 +167,11 @@ containers = ["memclaw"]
 layers = [
     # Entry point: the `memclaw` command.
     "cli",
-    # Front-ends started by the CLI: the chat bots and the interactive setup
-    # wizard. Independent (`|`): bots don't run the wizard and vice versa.
-    "bot | setup",
+    # The interactive setup wizard. It lists the chat platforms from
+    # memclaw.bot's registry.
+    "setup",
+    # The chat bots (memclaw.bot): one module per chat app, plus what they share.
+    "bot",
     # Platform-agnostic assistant: wires backends, tools and storage together.
     "agent",
     # AI agent backends (Claude, Cursor) and their MCP plumbing.
@@ -197,20 +204,31 @@ ancestors = ["memclaw.*"]
 
 [[tool.importlinter.contracts]]
 id = "chat-platforms-independent"
-name = "Chat platforms are independent: the Telegram, Slack and WhatsApp handlers never import each other (share code via memclaw.bot or lower layers)"
+name = "Chat platforms are independent: the Telegram, Slack and WhatsApp modules never import each other (share code via memclaw.bot.inbound or lower layers)"
 type = "independence"
 modules = [
-    "memclaw.bot.handlers",           # Telegram
-    "memclaw.bot.slack_handlers",
-    "memclaw.bot.whatsapp_handlers",
+    "memclaw.bot.telegram",
+    "memclaw.bot.slack",
+    "memclaw.bot.whatsapp",
 ]
 
 [[tool.importlinter.contracts]]
+id = "platforms-via-registry"
+name = "Only memclaw.bot imports the platform modules: everyone else starts a platform through memclaw.bot.PLATFORMS"
+type = "protected"
+protected_modules = [
+    "memclaw.bot.telegram",
+    "memclaw.bot.slack",
+    "memclaw.bot.whatsapp",
+]
+allowed_importers = ["memclaw.bot"]
+
+[[tool.importlinter.contracts]]
 id = "chat-sdks-only-in-bot"
-name = "Chat-platform SDKs (telegram, slack_bolt, neonize) are only imported inside memclaw.bot"
+name = "Chat-platform SDKs (telegram, slack_bolt, neonize) are only imported by the platform modules in memclaw.bot"
 type = "protected"
 protected_modules = ["telegram", "slack_bolt", "neonize"]
-allowed_importers = ["memclaw.bot"]
+allowed_importers = ["memclaw.bot.telegram", "memclaw.bot.slack", "memclaw.bot.whatsapp"]
 
 [[tool.importlinter.contracts]]
 id = "openai-only-in-adapter"

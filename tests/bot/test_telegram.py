@@ -1,59 +1,12 @@
-"""Tests for Telegram handlers — double storage prevention (spec #7) + typing indicator."""
+"""Telegram: the typing indicator, the "Working…" status message and the
+/new, /model and /effort commands. (What Telegram shares with the other
+platforms is tested in test_parity.py.)"""
 from __future__ import annotations
 
 import asyncio
-import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-
-# ────────────────────────────────────────────────────────────────────
-# Spec #7: Double Storage Prevention
-# ────────────────────────────────────────────────────────────────────
-
-class TestHandlerSourceCode:
-    """Static analysis tests — verify that handlers don't call store.save()
-    for voice transcriptions and link summaries."""
-
-    def test_handle_voice_no_store_save(self):
-        """handle_voice should NOT call store.save() for transcriptions."""
-        from memclaw.bot.handlers import MessageHandlers
-        source = inspect.getsource(MessageHandlers.handle_voice)
-        assert "store.save" not in source, (
-            "handle_voice still calls store.save — voice transcriptions "
-            "should be left for the agent to decide"
-        )
-
-    def test_handle_voice_has_not_saved_directive(self):
-        """handle_voice should include 'NOT been saved yet' in the prompt."""
-        from memclaw.bot.handlers import MessageHandlers
-        source = inspect.getsource(MessageHandlers.handle_voice)
-        assert "NOT been saved yet" in source
-
-    def test_handle_text_no_store_save(self):
-        """handle_text should NOT call store.save() for link summaries."""
-        from memclaw.bot.handlers import MessageHandlers
-        source = inspect.getsource(MessageHandlers.handle_text)
-        assert "store.save" not in source
-
-    def test_handle_text_has_not_saved_directive(self):
-        """handle_text should include 'NOT been saved yet' for links."""
-        from memclaw.bot.handlers import MessageHandlers
-        source = inspect.getsource(MessageHandlers.handle_text)
-        assert "NOT been saved yet" in source
-
-    def test_handle_photo_no_store_save(self):
-        """handle_photo should NOT call store.save() for link summaries."""
-        from memclaw.bot.handlers import MessageHandlers
-        source = inspect.getsource(MessageHandlers.handle_photo)
-        assert "store.save" not in source
-
-    def test_handle_photo_has_not_saved_directive(self):
-        """handle_photo should include 'NOT been saved yet' for links."""
-        from memclaw.bot.handlers import MessageHandlers
-        source = inspect.getsource(MessageHandlers.handle_photo)
-        assert "NOT been saved yet" in source
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -62,15 +15,7 @@ class TestHandlerSourceCode:
 
 class TestTypingIndicator:
     def _make_handlers(self):
-        from memclaw.bot.handlers import MessageHandlers
-
-        with patch.object(MessageHandlers, "__init__", lambda self, *a, **kw: None):
-            handlers = MessageHandlers.__new__(MessageHandlers)
-        handlers.agent = MagicMock()
-        handlers.config = MagicMock()
-        handlers.openai_client = MagicMock()
-        handlers.link_processor = MagicMock()
-        return handlers
+        return _telegram_handlers()
 
     @pytest.mark.asyncio
     async def test_typing_sent_during_processing(self):
@@ -78,9 +23,7 @@ class TestTypingIndicator:
         from telegram.constants import ChatAction
 
         handlers = self._make_handlers()
-        update = MagicMock()
-        update.effective_chat.id = 123
-        update.message.reply_text = AsyncMock()
+        update = _command_update(chat_id=123)
         context = MagicMock()
         context.bot.send_chat_action = AsyncMock()
         context.bot.send_photo = AsyncMock()
@@ -89,9 +32,9 @@ class TestTypingIndicator:
             await asyncio.sleep(0.05)
             return ("Response", [])
 
-        handlers.agent.handle = slow_handle
+        handlers.inbound.agent.handle = slow_handle
 
-        await handlers._send_with_typing(update, context, "Hi")
+        await handlers._send_with_typing(update.message, context, "Hi")
 
         context.bot.send_chat_action.assert_called()
         call_args = context.bot.send_chat_action.call_args
@@ -102,114 +45,16 @@ class TestTypingIndicator:
     async def test_response_sent_after_agent(self):
         """_send_with_typing should send the agent response via reply_text."""
         handlers = self._make_handlers()
-        update = MagicMock()
-        update.effective_chat.id = 123
-        update.message.reply_text = AsyncMock()
+        update = _command_update(chat_id=123)
         context = MagicMock()
         context.bot.send_chat_action = AsyncMock()
         context.bot.send_photo = AsyncMock()
 
-        handlers.agent.handle = AsyncMock(return_value=("Hello!", []))
+        handlers.inbound.agent.handle = AsyncMock(return_value=("Hello!", []))
 
-        await handlers._send_with_typing(update, context, "Hi")
+        await handlers._send_with_typing(update.message, context, "Hi")
 
         update.message.reply_text.assert_called_once_with("Hello!", parse_mode="Markdown")
-
-
-class TestAgentsFile:
-    """Verify AGENTS.md (the externalized system prompt) has the right content."""
-
-    def _read_agents(self, tmp_config) -> str:
-        agents_path = tmp_config.agent_file
-        assert agents_path.exists(), f"AGENTS.md not found at {agents_path}"
-        return agents_path.read_text()
-
-    def test_mentions_permanent_memory(self, tmp_config):
-        content = self._read_agents(tmp_config)
-        assert "MEMORY.md" in content
-        assert "memory_save" in content
-        assert "permanent=true" not in content
-
-    def test_mentions_not_saved_yet(self, tmp_config):
-        content = self._read_agents(tmp_config)
-        assert "NOT" in content
-        assert "saved" in content.lower()
-
-    def test_mentions_voice_not_saved(self, tmp_config):
-        content = self._read_agents(tmp_config)
-        assert "Voice message" in content
-
-    def test_mentions_link_not_saved(self, tmp_config):
-        content = self._read_agents(tmp_config)
-        assert "Link summary" in content
-
-    def test_has_user_instructions_section(self, tmp_config):
-        content = self._read_agents(tmp_config)
-        assert "User instructions" in content
-
-
-# ────────────────────────────────────────────────────────────────────
-# WhatsApp self-chat scoping (regression: outgoing DMs to friends
-# were being processed because IsFromMe alone matches them too)
-# ────────────────────────────────────────────────────────────────────
-
-class TestWhatsAppSelfChatOnly:
-    """Read whatsapp_handlers.py source directly to avoid needing neonize installed."""
-
-    def _source(self) -> str:
-        from pathlib import Path
-        path = Path(__file__).parent.parent / "memclaw" / "bot" / "whatsapp_handlers.py"
-        return path.read_text()
-
-    def test_check_sender_requires_self_chat(self):
-        """_check_sender must compare Chat.User to Sender.User, not just IsFromMe."""
-        import ast
-        src = self._source()
-        tree = ast.parse(src)
-        fn = next(
-            n for n in ast.walk(tree)
-            if isinstance(n, ast.FunctionDef) and n.name == "_check_sender"
-        )
-        body_src = ast.unparse(fn)
-        assert "Chat.User" in body_src and "Sender.User" in body_src, (
-            "_check_sender must require Chat.User == Sender.User to scope to the "
-            "self-chat — IsFromMe alone matches outgoing DMs to friends too"
-        )
-
-    def test_check_sender_behaviour(self):
-        """Simulate the three relevant cases against the real method."""
-        from types import SimpleNamespace
-        import ast
-
-        src = self._source()
-        tree = ast.parse(src)
-        fn = next(
-            n for n in ast.walk(tree)
-            if isinstance(n, ast.FunctionDef) and n.name == "_check_sender"
-        )
-        ns: dict = {}
-        exec(compile(ast.Module(body=[fn], type_ignores=[]), "<_check_sender>", "exec"), ns)
-        check = ns["_check_sender"]
-
-        def ev(*, is_group: bool, is_from_me: bool, chat_user: str, sender_user: str):
-            return SimpleNamespace(
-                Info=SimpleNamespace(MessageSource=SimpleNamespace(
-                    IsGroup=is_group,
-                    IsFromMe=is_from_me,
-                    Chat=SimpleNamespace(User=chat_user),
-                    Sender=SimpleNamespace(User=sender_user),
-                ))
-            )
-
-        self_note = ev(is_group=False, is_from_me=True, chat_user="me", sender_user="me")
-        out_to_friend = ev(is_group=False, is_from_me=True, chat_user="friend", sender_user="me")
-        in_from_friend = ev(is_group=False, is_from_me=False, chat_user="friend", sender_user="friend")
-        group = ev(is_group=True, is_from_me=True, chat_user="grp", sender_user="me")
-
-        assert check(None, self_note) is True
-        assert check(None, out_to_friend) is False, "outgoing DM to friend must be ignored"
-        assert check(None, in_from_friend) is False
-        assert check(None, group) is False
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -217,12 +62,14 @@ class TestWhatsAppSelfChatOnly:
 # ────────────────────────────────────────────────────────────────────
 
 def _telegram_handlers(*, allowed: bool = True):
-    from memclaw.bot.handlers import MessageHandlers
+    """A TelegramBot whose agent is a mock (no backend, no vault)."""
+    from memclaw.bot.inbound import Inbound
+    from memclaw.bot.telegram import TelegramBot
 
-    with patch.object(MessageHandlers, "__init__", lambda self, *a, **kw: None):
-        handlers = MessageHandlers.__new__(MessageHandlers)
-    handlers.agent = MagicMock()
-    handlers.agent.reset_conversation = AsyncMock()
+    handlers = TelegramBot.__new__(TelegramBot)
+    handlers.inbound = Inbound.__new__(Inbound)
+    handlers.inbound.agent = MagicMock()
+    handlers.inbound.agent.reset_conversation = AsyncMock()
     handlers.config = MagicMock()
     handlers.config.telegram.allowed_user_ids_list = [1] if allowed else []
     return handlers
@@ -231,7 +78,7 @@ def _telegram_handlers(*, allowed: bool = True):
 def _command_update(chat_id: int = 99):
     update = MagicMock()
     update.effective_user.id = 1
-    update.effective_chat.id = chat_id
+    update.message.chat_id = chat_id
     update.message.reply_text = AsyncMock()
     return update
 
@@ -280,7 +127,7 @@ class TestNewCommand:
         handlers = _telegram_handlers()
         update = _command_update(chat_id=99)
         await handlers.new_command(update, MagicMock())
-        handlers.agent.reset_conversation.assert_awaited_once_with("99")
+        handlers.inbound.agent.reset_conversation.assert_awaited_once_with("99")
         update.message.reply_text.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -288,32 +135,8 @@ class TestNewCommand:
         handlers = _telegram_handlers(allowed=False)
         update = _command_update()
         await handlers.new_command(update, MagicMock())
-        handlers.agent.reset_conversation.assert_not_awaited()
+        handlers.inbound.agent.reset_conversation.assert_not_awaited()
         update.message.reply_text.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_slack_new_message_resets_the_channel(self):
-        from memclaw.bot.slack_handlers import SlackHandlers
-
-        with patch.object(SlackHandlers, "__init__", lambda self, *a, **kw: None):
-            handlers = SlackHandlers.__new__(SlackHandlers)
-        handlers.config = MagicMock()
-        handlers.config.slack.allowed_channels_list = []
-        handlers.config.slack.allowed_users_list = []
-        handlers.agent = MagicMock()
-        handlers.agent.reset_conversation = AsyncMock()
-        handlers.agent.handle = AsyncMock()
-        say = AsyncMock()
-
-        await handlers._route_event(
-            {"channel": "C1", "user": "U1", "text": "<@UBOT> /new", "ts": "1.0"},
-            say, MagicMock(),
-        )
-
-        handlers.agent.reset_conversation.assert_awaited_once_with("C1")
-        handlers.agent.handle.assert_not_awaited()
-        say.assert_awaited_once()
-
 
 def _buttons(keyboard):
     return [(b.text, b.callback_data) for row in keyboard.inline_keyboard for b in row]
@@ -331,7 +154,7 @@ def _callback_update(data: str, *, allowed_user: int = 1):
 class TestModelCommand:
     @pytest.mark.asyncio
     async def test_menu_has_a_button_per_model(self):
-        from memclaw.bot.handlers import model_menu
+        from memclaw.bot.telegram import model_menu
 
         text, keyboard = await model_menu(_SelectableBackend())
         assert "Model: Claude Opus 5 (claude-opus-5)" in text
@@ -342,7 +165,7 @@ class TestModelCommand:
         ]
 
     def test_long_model_id_falls_back_to_a_hash(self):
-        from memclaw.bot.handlers import _model_key, model_callback_data
+        from memclaw.bot.telegram import _model_key, model_callback_data
 
         assert model_callback_data("x" * 70) == f"mi:{_model_key('x' * 70)}"
         assert len(model_callback_data("x" * 70).encode()) <= 64
@@ -351,7 +174,7 @@ class TestModelCommand:
     @pytest.mark.asyncio
     async def test_button_press_switches_and_edits_the_menu(self):
         handlers = _telegram_handlers()
-        handlers.agent.backend = backend = _SelectableBackend()
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
         update = _callback_update("m:claude-haiku-4-5")
 
         await handlers.handle_callback(update, MagicMock())
@@ -368,8 +191,8 @@ class TestModelCommand:
     @pytest.mark.asyncio
     async def test_index_button_press(self):
         handlers = _telegram_handlers()
-        handlers.agent.backend = backend = _SelectableBackend()
-        from memclaw.bot.handlers import _model_key
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
+        from memclaw.bot.telegram import _model_key
 
         await handlers.handle_callback(
             _callback_update(f"mi:{_model_key('claude-haiku-4-5')}"), MagicMock(),
@@ -379,7 +202,7 @@ class TestModelCommand:
     @pytest.mark.asyncio
     async def test_stale_button_alerts(self):
         handlers = _telegram_handlers()
-        handlers.agent.backend = backend = _SelectableBackend()
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
         update = _callback_update("m:claude-gone")
         await handlers.handle_callback(update, MagicMock())
         assert backend.model == "claude-opus-5"
@@ -389,7 +212,7 @@ class TestModelCommand:
     @pytest.mark.asyncio
     async def test_button_press_from_unknown_user_is_ignored(self):
         handlers = _telegram_handlers(allowed=False)
-        handlers.agent.backend = backend = _SelectableBackend()
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
         update = _callback_update("m:claude-haiku-4-5")
         await handlers.handle_callback(update, MagicMock())
         assert backend.model == "claude-opus-5"
@@ -398,7 +221,7 @@ class TestModelCommand:
     @pytest.mark.asyncio
     async def test_command_with_number_or_id(self):
         handlers = _telegram_handlers()
-        handlers.agent.backend = backend = _SelectableBackend()
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
         update = _command_update()
         context = MagicMock()
 
@@ -414,7 +237,7 @@ class TestModelCommand:
     @pytest.mark.asyncio
     async def test_bad_number_and_unknown_id(self):
         handlers = _telegram_handlers()
-        handlers.agent.backend = backend = _SelectableBackend()
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
         update = _command_update()
         context = MagicMock()
         for arg, expected in (("9", "no model number 9"), ("claude-nope", "Unknown model")):
@@ -425,7 +248,7 @@ class TestModelCommand:
 
     @pytest.mark.asyncio
     async def test_unsupported_backend(self):
-        from memclaw.bot.handlers import effort_menu, model_menu
+        from memclaw.bot.telegram import effort_menu, model_menu
 
         backend = MagicMock(supports_model_selection=False, display_name="Cursor SDK")
         text, keyboard = await model_menu(backend)
@@ -439,7 +262,7 @@ class TestModelCommand:
 class TestEffortCommand:
     @pytest.mark.asyncio
     async def test_menu_has_a_button_per_level(self):
-        from memclaw.bot.handlers import effort_menu
+        from memclaw.bot.telegram import effort_menu
 
         text, keyboard = await effort_menu(_SelectableBackend())
         assert "Effort: high" in text
@@ -449,7 +272,7 @@ class TestEffortCommand:
 
     @pytest.mark.asyncio
     async def test_model_without_effort_has_no_buttons(self):
-        from memclaw.bot.handlers import effort_menu
+        from memclaw.bot.telegram import effort_menu
 
         backend = _SelectableBackend()
         backend.model, backend.effort = "claude-haiku-4-5", None
@@ -460,7 +283,7 @@ class TestEffortCommand:
     @pytest.mark.asyncio
     async def test_button_press_sets_level(self):
         handlers = _telegram_handlers()
-        handlers.agent.backend = backend = _SelectableBackend()
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
         update = _callback_update("e:low")
         await handlers.handle_callback(update, MagicMock())
         assert backend.effort == "low"
@@ -470,7 +293,7 @@ class TestEffortCommand:
     @pytest.mark.asyncio
     async def test_command_sets_level(self):
         handlers = _telegram_handlers()
-        handlers.agent.backend = backend = _SelectableBackend()
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
         update = _command_update()
         context = MagicMock()
         context.args = ["low"]
@@ -480,7 +303,7 @@ class TestEffortCommand:
     @pytest.mark.asyncio
     async def test_rejected_level(self):
         handlers = _telegram_handlers()
-        handlers.agent.backend = backend = _SelectableBackend()
+        handlers.inbound.agent.backend = backend = _SelectableBackend()
         update = _command_update()
         context = MagicMock()
         context.args = ["max"]
@@ -493,7 +316,7 @@ class TestStepStatusMessage:
     @pytest.mark.asyncio
     async def test_status_message_is_sent_edited_and_deleted(self):
         from memclaw.backends.base import ToolStep
-        from memclaw.bot import handlers as handlers_mod
+        from memclaw.bot import telegram as handlers_mod
 
         handlers = _telegram_handlers()
         handlers._send_response = AsyncMock()
@@ -507,9 +330,9 @@ class TestStepStatusMessage:
             await on_tool(ToolStep(2, "memory_save", "Saving to memory"))
             return "Bruno", []
 
-        handlers.agent.handle = handle
+        handlers.inbound.agent.handle = handle
         with patch.object(handlers_mod, "STATUS_EDIT_INTERVAL_S", 0):
-            await handlers._send_with_typing(_command_update(), context, "hi")
+            await handlers._send_with_typing(_command_update().message, context, "hi")
 
         context.bot.send_message.assert_awaited_once()
         assert context.bot.send_message.await_args.args[1] == (
@@ -526,9 +349,9 @@ class TestStepStatusMessage:
         context = MagicMock()
         context.bot.send_message = AsyncMock()
         context.bot.send_chat_action = AsyncMock()
-        handlers.agent.handle = AsyncMock(return_value=("hello", []))
+        handlers.inbound.agent.handle = AsyncMock(return_value=("hello", []))
 
-        await handlers._send_with_typing(_command_update(), context, "hi")
+        await handlers._send_with_typing(_command_update().message, context, "hi")
         context.bot.send_message.assert_not_awaited()
 
 
