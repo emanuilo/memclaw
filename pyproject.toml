@@ -61,6 +61,17 @@ dev = [
     "cursor-sdk>=0.1.4,<0.2",
 ]
 
+# Development-only groups (PEP 735). Unlike the extras above they are not part
+# of the published package metadata, so they may use a git URL (PyPI rejects
+# those in extras). Install with `pip install -e ".[dev]" --group shape`
+# (pip >= 25.1) or `uv sync --extra dev --group shape`.
+[dependency-groups]
+# code-shape-kit: the `code-shape` checks (CI and pre-commit hooks). Its pinned
+# tools need Python 3.11+.
+shape = [
+    "code-shape-kit[tools] @ git+https://github.com/emanuilo/code-shape-kit@v0.1.1 ; python_version >= '3.11'",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["memclaw"]
 
