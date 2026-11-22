@@ -8,8 +8,8 @@ import numpy as np
 from loguru import logger
 
 from .chunking import Chunk, chunk_text
-from .config import MemclawConfig
-from .openai_client import OpenAIClient
+from ..config import MemclawConfig
+from ..openai_client import OpenAIClient
 
 
 def _create_schema(db: sqlite3.Connection) -> None:

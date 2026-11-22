@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config import MemclawConfig
-from ..index import MemoryIndex
+from .index import MemoryIndex
 
 # Keyword-query tokenizer: words and numbers (same notion of a token as
 # FTS5's unicode61 tokenizer). Very common words are dropped — they match

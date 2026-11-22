@@ -11,8 +11,7 @@ import numpy as np
 import pytest
 
 from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
-from memclaw.index import MemoryIndex
-from memclaw.memory import HybridSearch, MemoryStore, SearchResult
+from memclaw.memory import HybridSearch, MemoryIndex, MemoryStore, SearchResult
 
 
 class _FakeEmbeddings:

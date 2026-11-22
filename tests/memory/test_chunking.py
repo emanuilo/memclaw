@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memclaw.chunking import chunk_text
 from memclaw.config import MemclawConfig, MemorySettings
 from memclaw.memory import MemoryStore
+from memclaw.memory.chunking import chunk_text
 
 _DEFAULTS = MemorySettings()
 

@@ -10,8 +10,7 @@ from rich.panel import Panel
 
 from .bot import PLATFORMS
 from .config import MemclawConfig, reload_env_file
-from .index import MemoryIndex
-from .memory import HybridSearch, MemoryStore
+from .memory import HybridSearch, MemoryIndex, MemoryStore
 from .setup import needs_setup, print_logo, print_probe_report, run_setup
 
 console = Console()

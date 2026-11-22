@@ -6,8 +6,7 @@ from pathlib import Path
 import pytest
 
 from memclaw.agent import MemclawAgent
-from memclaw.index import MemoryIndex
-from memclaw.memory import HybridSearch, MemoryStore
+from memclaw.memory import HybridSearch, MemoryIndex, MemoryStore
 from memclaw.openai_client import OpenAIClient
 from memclaw.tools import ToolExecutor
 

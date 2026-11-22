@@ -23,7 +23,7 @@ from typing import Protocol
 from loguru import logger
 
 from ..config import MemclawConfig
-from ..index import MemoryIndex
+from .index import MemoryIndex
 from .notes import MemoryStore
 from .refs import check_references
 

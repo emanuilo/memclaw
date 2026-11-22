@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
-from memclaw.index import MemoryIndex
+from memclaw.memory import MemoryIndex
 
 
 @pytest.fixture

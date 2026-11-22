@@ -254,6 +254,20 @@ When you ask "show me that photo of the sunset," the agent runs `image_search`: 
 
 ---
 
+## Where the Code Lives
+
+All of the above is the `memclaw/memory/` package. Other code imports what its `__init__.py` exports (`MemoryStore`, `MemoryIndex`, `HybridSearch`, `SearchResult`, `Consolidator`), never the modules inside:
+
+| Module | What it does |
+|---|---|
+| `notes.py` | `MemoryStore`: appends entries to the daily files, lists the notes |
+| `chunking.py` | Splits a note into chunks (per entry, at headings, by size) |
+| `index.py` | `MemoryIndex`: the SQLite database (chunks, embeddings and their cache, the FTS5 index, the image registry). The only code here that runs SQL |
+| `search.py` | `HybridSearch`: the search pipeline (merge, decay, MMR). It reads the index through `MemoryIndex` methods |
+| `consolidation.py`, `refs.py` | `Consolidator`: writes MEMORY.md and checks its references |
+
+---
+
 ## Configuration Reference
 
 All memory-related settings live in `MemclawConfig` (`memclaw/config.py`), most of them in its `memory` group. Pass them when you build one, e.g. `MemclawConfig(memory=MemorySettings(mmr_lambda=0.5))`, or set them on it (`config.memory.mmr_lambda = 0.5`):

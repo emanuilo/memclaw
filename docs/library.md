@@ -5,8 +5,7 @@ The store, index and search work without the agent — only `OPENAI_API_KEY` is 
 ```python
 import asyncio
 from memclaw.config import MemclawConfig
-from memclaw.index import MemoryIndex
-from memclaw.memory import HybridSearch, MemoryStore
+from memclaw.memory import HybridSearch, MemoryIndex, MemoryStore
 
 async def main():
     config = MemclawConfig()

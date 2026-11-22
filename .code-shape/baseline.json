@@ -36,7 +36,7 @@
       "class-lines|memclaw/backends/cursor.py|CursorAgentBackend": 419,
       "file-lines|memclaw/backends/claude.py|": 775,
       "file-lines|memclaw/backends/cursor.py|": 604,
-      "file-lines|memclaw/tools.py|": 576
+      "file-lines|memclaw/tools.py|": 575
     }
   },
   "version": 1

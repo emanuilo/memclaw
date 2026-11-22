@@ -9,8 +9,7 @@ from typing import Any
 from loguru import logger
 
 from .config import MemclawConfig
-from .index import MemoryIndex
-from .memory import HybridSearch, MemoryStore, SearchResult
+from .memory import HybridSearch, MemoryIndex, MemoryStore, SearchResult
 from .reminders import ReminderScheduler
 
 # ── Tool definitions (JSON schema) ───────────────────────────────────
