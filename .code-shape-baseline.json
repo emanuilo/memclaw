@@ -12,10 +12,6 @@
       "cognitive-complexity|memclaw/search.py|HybridSearch._merge": 17,
       "cognitive-complexity|memclaw/setup.py|run_setup": 30
     },
-    "deptry": {
-      "dependencies|memclaw/backends/mcp_bridge.py|DEP003 starlette": null,
-      "dependencies|memclaw/backends/mcp_bridge.py|DEP003 uvicorn": null
-    },
     "mypy": {
       "type-errors|memclaw/agent.py|": 1,
       "type-errors|memclaw/backends/claude.py|": 1,
@@ -23,13 +19,12 @@
       "type-errors|memclaw/bot/handlers.py|": 30,
       "type-errors|memclaw/bot/whatsapp_handlers.py|": 3,
       "type-errors|memclaw/cli.py|": 2,
-      "type-errors|memclaw/index.py|": 1,
       "type-errors|memclaw/setup.py|": 5
     },
     "pylint": {
       "class-attributes|memclaw/agent.py|MemclawAgent": 18,
       "class-attributes|memclaw/backends/cursor.py|CursorAgentBackend": 13,
-      "class-attributes|memclaw/config.py|MemclawConfig": 29,
+      "class-attributes|memclaw/config.py|MemclawConfig": 28,
       "duplicate-code|memclaw/bot/slack_handlers.py|same code as memclaw/bot/whatsapp_handlers.py": 30,
       "too-many-locals|memclaw/agent.py|MemclawAgent._handle": 19,
       "too-many-locals|memclaw/backends/claude.py|ClaudeAgentBackend.wizard_setup": 17,
@@ -86,25 +81,13 @@
       "class-lines|memclaw/backends/cursor.py|CursorAgentBackend": 419,
       "class-lines|memclaw/bot/handlers.py|MessageHandlers": 309,
       "class-lines|memclaw/bot/slack_handlers.py|SlackHandlers": 306,
-      "class-lines|memclaw/index.py|MemoryIndex": 450,
+      "class-lines|memclaw/index.py|MemoryIndex": 422,
       "file-lines|memclaw/agent.py|": 699,
       "file-lines|memclaw/backends/claude.py|": 779,
       "file-lines|memclaw/backends/cursor.py|": 604,
       "file-lines|memclaw/bot/handlers.py|": 570,
       "file-lines|memclaw/tools.py|": 577,
       "package-files|memclaw/|": 13
-    },
-    "vulture": {
-      "dead-code|memclaw/backends/mcp_bridge.py|HttpMcpServer.__init__: _executor": null,
-      "dead-code|memclaw/backends/mcp_bridge.py|HttpMcpServer.start: _executor": null,
-      "dead-code|memclaw/backends/mcp_bridge.py|HttpMcpServer.stop: _executor": null,
-      "dead-code|memclaw/backends/mcp_bridge.py|HttpMcpServer.stop: should_exit": null,
-      "dead-code|memclaw/backends/mcp_bridge.py|_wait_until_listening: reader": null,
-      "dead-code|memclaw/config.py|MemclawConfig.images_dir: images_dir": null,
-      "dead-code|memclaw/config.py|MemclawConfig: embedding_dim": null,
-      "dead-code|memclaw/index.py|MemoryIndex.search_telegram_images: search_telegram_images": null,
-      "dead-code|memclaw/index.py|MemoryIndex.store_telegram_image: store_telegram_image": null,
-      "dead-code|memclaw/store.py|MemoryStore.get_all_content: get_all_content": null
     }
   },
   "version": 1

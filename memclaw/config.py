@@ -55,7 +55,6 @@ class MemclawConfig:
 
     memory_dir: Path = field(default_factory=lambda: Path.home() / ".memclaw")
     embedding_model: str = "text-embedding-3-small"
-    embedding_dim: int = 1536
     chunk_target_words: int = 300
     chunk_overlap_words: int = 60
     vector_weight: float = 0.7
@@ -188,12 +187,6 @@ class MemclawConfig:
     def daily_file(self, dt: date | None = None) -> Path:
         dt = dt or date.today()
         return self.memory_subdir / f"{dt.isoformat()}.md"
-
-    @property
-    def images_dir(self) -> Path:
-        d = self.memory_dir / "images"
-        d.mkdir(exist_ok=True)
-        return d
 
     @property
     def whatsapp_dir(self) -> Path:

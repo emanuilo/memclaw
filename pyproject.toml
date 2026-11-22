@@ -27,6 +27,9 @@ classifiers = [
 dependencies = [
     "claude-agent-sdk>=0.2.163,<0.3",
     "mcp>=1.23.0,<2",
+    # The MCP bridge (backends/mcp_bridge.py) serves HTTP with these directly.
+    "starlette>=0.27",
+    "uvicorn>=0.31.1",
     "openai>=1.0.0",
     "numpy>=1.24.0",
     "click>=8.0.0",
@@ -108,7 +111,9 @@ config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
 #   it at runtime and slack-bolt doesn't declare it.
 deptry = ["--optional-dependencies-dev-groups", "dev", "--extend-exclude", "docs", "--per-rule-ignores", "DEP002=aiohttp"]
 # - functions registered by decorator are called by their framework, not by name.
-vulture = ["--ignore-decorators", "@cli.command,@*.event,@server.list_tools,@server.call_tool"]
+# - names a library reads that memclaw only sets (the whitelist):
+#   should_exit = uvicorn.Server's stop flag (backends/mcp_bridge.py).
+vulture = ["--ignore-decorators", "@cli.command,@*.event,@server.list_tools,@server.call_tool", "--ignore-names", "should_exit"]
 
 [tool.shape.concepts]
 # The ideas a change is usually about (tracked in `code-shape report`, never a

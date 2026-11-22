@@ -258,7 +258,6 @@ All memory-related settings live in `MemclawConfig`:
 |---------|---------|-----------------|
 | `memory_dir` | `~/.memclaw` | Root directory for all storage |
 | `embedding_model` | `text-embedding-3-small` | OpenAI model for embeddings |
-| `embedding_dim` | `1536` | Dimension of embedding vectors |
 | `chunk_target_words` | `300` | Target size for text chunks |
 | `chunk_overlap_words` | `60` | Overlap between adjacent chunks |
 | `vector_weight` | `0.7` | Weight for vector search in hybrid merge |
