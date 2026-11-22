@@ -34,7 +34,7 @@ if ! output=$("$shape" check 2>&1); then
         printf '%s\n\n' "$output"
         echo "Commit blocked: code-shape check failed (details above)."
         echo "Fix what it reports (each item has a fix: line). If it says IMPROVED, run"
-        echo "\`code-shape tighten\` and commit .code-shape-baseline.json. Never edit the"
+        echo "\`code-shape tighten\` and commit .code-shape/baseline.json. Never edit the"
         echo "baseline by hand or raise a limit to make a commit pass."
     } >&2
     exit 1

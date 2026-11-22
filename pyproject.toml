@@ -71,7 +71,7 @@ dev = [
 # code-shape-kit: the `code-shape` checks (CI and pre-commit hooks). It needs
 # Python 3.11+ while memclaw also supports 3.10, hence the marker.
 shape = [
-    "code-shape-kit[tools] @ git+https://github.com/emanuilo/code-shape-kit@v0.1.2 ; python_version >= '3.11'",
+    "code-shape-kit[tools] @ git+https://github.com/emanuilo/code-shape-kit@v0.1.3 ; python_version >= '3.11'",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -87,7 +87,7 @@ select = ["E4", "E7", "E9", "F"]
 # ---------------------------------------------------------------------------
 # Code shape (sizes, complexity, coupling, dead code, dependencies, types),
 # checked by `code-shape check` (code-shape-kit) in CI and in the pre-commit
-# hooks. Known violations are listed in .code-shape-baseline.json: only new or
+# hooks. Known violations are listed in .code-shape/baseline.json: only new or
 # worse ones fail. Never edit the baseline by hand; fix the code, then run
 # `code-shape tighten`. The kit's default limits apply (see its
 # templates/shape.toml); don't raise one to make a change pass.
@@ -98,6 +98,7 @@ tests = "tests"
 # The only modules that may read environment variables. The Cursor hook script
 # is copied out of the package and run on its own, so it reads its env itself.
 config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
+baseline = ".code-shape/baseline.json"
 # Names a library uses by reflection, which vulture would call dead code.
 dead_code_whitelist = ["vulture_whitelist.py"]
 
