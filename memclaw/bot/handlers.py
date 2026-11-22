@@ -200,7 +200,7 @@ class MessageHandlers:
         self.agent.record_reminder_fired(text, chat_id)
 
     def _check_user(self, user_id: int) -> bool:
-        return user_id in self.config.allowed_user_ids_list
+        return user_id in self.config.telegram.allowed_user_ids_list
 
     async def _send_response(
         self,
@@ -493,7 +493,7 @@ def build_application(config: MemclawConfig) -> Application:
     handler and command menu, wired into a python-telegram-bot Application.
     """
     async def post_init(application: Application) -> None:
-        openai_client = AsyncOpenAI(api_key=config.openai_api_key)
+        openai_client = AsyncOpenAI(api_key=config.openai.api_key)
         handlers = MessageHandlers(config, openai_client)
         application.bot_data["handlers"] = handlers
 
@@ -520,7 +520,7 @@ def build_application(config: MemclawConfig) -> Application:
 
     app = (
         Application.builder()
-        .token(config.telegram_bot_token)
+        .token(config.telegram.bot_token)
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()

@@ -95,8 +95,10 @@ select = ["E4", "E7", "E9", "F"]
 [tool.shape]
 packages = ["memclaw"]
 tests = "tests"
-# The only modules that may read environment variables. The Cursor hook script
-# is copied out of the package and run on its own, so it reads its env itself.
+# The only modules that may read or set environment variables (os.environ,
+# os.getenv): every setting is declared in memclaw/config.py and passed down
+# from MemclawConfig. The Cursor hook script is copied out of the package and
+# run on its own, so it reads its env itself.
 config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
 baseline = ".code-shape/baseline.json"
 
@@ -105,6 +107,8 @@ baseline = ".code-shape/baseline.json"
 # uses are in the baseline; new ones fail.
 "openai" = { msg = "Don't import the OpenAI SDK in another module. Call the existing code that uses it (memclaw/index.py for embeddings), or move the call there; the goal is one OpenAI adapter module.", allowed = ["memclaw/index.py"] }
 "sqlite3" = { msg = "Only the storage modules (memclaw/index.py, memclaw/reminders.py) open SQLite; call their methods instead.", allowed = ["memclaw/index.py", "memclaw/reminders.py"] }
+# Settings come from memclaw/config.py only (config_modules above bans os.environ elsewhere); .env files too.
+"dotenv" = { msg = "Only memclaw/config.py loads .env files. Use its read_env_file / update_env_file / reload_env_file, or add a setting there and read it from MemclawConfig.", allowed = ["memclaw/config.py"] }
 
 [tool.shape.extra_args]
 # - dev tools live in the `dev` extra; docs/ holds a demo-capture script.

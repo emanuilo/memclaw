@@ -1,59 +1,114 @@
+"""Memclaw's settings, and the only module that reads the environment.
+
+Each setting is declared once, as a dataclass field made with `setting()`:
+its environment variable, its default, and the setup wizard's question if it
+asks one. `Settings.__post_init__` is the one loader: every field still at its
+default is filled from its environment variable, so an explicit constructor
+value wins. Plain fields (the memory tuning) aren't read from the environment.
+
+The settings are split into small groups hung off `MemclawConfig`
+(`config.openai`, `config.claude`, `config.slack`, ...).
+
+Adding a setting: add one `setting(...)` line to its group, a line to
+`.env.example` and a row to docs/configuration.md (tests/test_config.py fails
+until both are there). Add `prompt=` if the setup wizard should ask for it.
+
+Where a value comes from, highest first: the constructor, the process
+environment, a `.env` found by python-dotenv (searched upward from this file's
+folder; from the current folder in a REPL), then ~/.memclaw/.env.
+"""
+
 from __future__ import annotations
 
 import importlib.resources
 import os
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field, fields, replace
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
 ENV_FILE = Path.home() / ".memclaw" / ".env"
 
-# Load .env from current directory and ~/.memclaw/.env
+# Neither file overrides a variable already set in the environment.
 load_dotenv()
 load_dotenv(ENV_FILE)
 
 
-def read_env_file() -> dict[str, str]:
-    """Load existing values from ~/.memclaw/.env."""
-    values: dict[str, str] = {}
-    if not ENV_FILE.exists():
-        return values
-    for line in ENV_FILE.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            key, _, val = line.partition("=")
-            values[key.strip()] = val.strip()
-    return values
+# ── Declaring settings ──────────────────────────────────────────────
 
 
-def update_env_file(values: dict[str, str], drop_keys: list[str] | tuple[str, ...] = ()) -> None:
-    """Merge *values* into ~/.memclaw/.env and remove *drop_keys*.
+@dataclass(frozen=True)
+class Setting:
+    """What Memclaw knows about one setting, besides its default."""
 
-    Keys are written in their existing order, new ones appended; a key with
-    an empty value is removed, matching how the wizard writes the file.
-    """
-    merged = read_env_file()
-    merged.update(values)
-    for key in drop_keys:
-        merged.pop(key, None)
-    write_env_file(merged)
+    env: str  # the environment variable (and ~/.memclaw/.env key)
+    prompt: str | None = None  # the setup wizard's question; None = not asked by it
+    required: bool = False  # the wizard refuses an empty answer
+    secret: bool = False  # kept out of repr()
+    parse: Callable[[str], Any] = str  # environment text -> value
+    group: str = ""  # filled in by all_settings(): "general", "openai", "slack", ...
+    name: str = ""  # filled in by all_settings(): the field name
 
 
-def write_env_file(values: dict[str, str]) -> None:
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"{k}={v}" for k, v in values.items() if v]
-    ENV_FILE.write_text("\n".join(lines) + "\n")
+def setting(env: str, default: Any = "", **meta: Any) -> Any:
+    """A settings field read from *env*, defaulting to *default*. *meta* is the
+    rest of `Setting` (`prompt=`, `required=`, `secret=`, `parse=`)."""
+    info = Setting(env, **meta)
+    return field(default=default, repr=not info.secret, metadata={"setting": info})
+
+
+def _port(raw: str) -> int:
+    try:
+        port = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"must be an integer, got {raw.strip()!r}") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"must be between 1 and 65535, got {port}")
+    return port
+
+
+def _split(raw: str) -> list[str]:
+    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 @dataclass
-class MemclawConfig:
-    """Configuration for Memclaw memory assistant."""
+class Settings:
+    """Base of every settings group: the generic environment loader."""
 
-    memory_dir: Path = field(default_factory=lambda: Path.home() / ".memclaw")
+    def __post_init__(self) -> None:
+        for f in fields(self):
+            meta: Setting | None = f.metadata.get("setting")
+            if meta is None or getattr(self, f.name) != f.default:
+                continue
+            raw = os.environ.get(meta.env, "")
+            if not raw.strip():
+                continue
+            try:
+                setattr(self, f.name, meta.parse(raw))
+            except ValueError as exc:
+                raise ValueError(f"{meta.env} {exc}") from exc
+
+
+# ── The groups ──────────────────────────────────────────────────────
+
+
+@dataclass
+class OpenAISettings(Settings):
+    # Embeddings, link summaries, image descriptions and voice transcription.
+    api_key: str = setting(
+        "OPENAI_API_KEY", secret=True, required=True,
+        prompt="OpenAI API key (for embeddings + voice transcription)",
+    )
+
+
+@dataclass
+class MemorySettings(Settings):
+    """Indexing, search and consolidation tuning; not read from the
+    environment. Described in docs/memory-architecture.md."""
+
     embedding_model: str = "text-embedding-3-small"
     chunk_target_words: int = 300
     chunk_overlap_words: int = 60
@@ -61,97 +116,91 @@ class MemclawConfig:
     text_weight: float = 0.3
     decay_half_life_days: int = 30
     mmr_lambda: float = 0.7
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
-    claude_code_oauth_token: str = ""
-
-    # Which agent backend to use (see memclaw.backends.REGISTRY). Empty
-    # value resolves to the default backend at runtime.
-    agent_backend: str = ""
-
-    # Which front-end platform `memclaw` launches by default:
-    # "terminal", "telegram", "slack", or "whatsapp".
-    platform: str = ""
-
-    # Claude Agent SDK backend settings. Empty means "use the built-in
-    # default" -- see memclaw.backends.claude.
-    claude_model: str = ""
-    claude_effort: str = ""
-    # Model / effort for memory consolidation (a rare, one-shot call where
-    # a stronger model pays off). Empty means the built-in default.
-    claude_consolidation_model: str = ""
-    claude_consolidation_effort: str = ""
-
-    # Cursor SDK backend settings
-    cursor_api_key: str = ""
-    cursor_model: str = ""
-    cursor_effort: str = ""
-    mcp_http_port: int = 17373
-
-    # Memory consolidation: runs (after a reply) once this many past days
-    # have notes that aren't in MEMORY.md yet. 1 = after each day.
+    # Consolidation runs (after a reply) once this many past days have notes
+    # that aren't in MEMORY.md yet. 1 = after each day.
     consolidation_threshold: int = 1
 
-    # Telegram bot settings
-    telegram_bot_token: str = ""
-    allowed_user_ids: str = ""
 
-    # Slack bot settings
-    slack_bot_token: str = ""
-    slack_app_token: str = ""
-    slack_allowed_channels: str = ""
-    slack_allowed_users: str = ""
+@dataclass
+class ClaudeSettings(Settings):
+    """The Claude Agent SDK backend. Empty means the built-in default (see
+    memclaw.backends.claude), which also asks for these in the wizard."""
 
-    def __post_init__(self):
-        if not self.openai_api_key:
-            self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not self.anthropic_api_key:
-            self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not self.claude_code_oauth_token:
-            self.claude_code_oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-        if not self.agent_backend:
-            self.agent_backend = os.environ.get("AGENT_BACKEND", "")
-        if not self.platform:
-            self.platform = os.environ.get("MEMCLAW_PLATFORM", "")
-        if not self.claude_model:
-            self.claude_model = os.environ.get("CLAUDE_MODEL", "")
-        if not self.claude_effort:
-            self.claude_effort = os.environ.get("CLAUDE_EFFORT", "")
-        if not self.claude_consolidation_model:
-            self.claude_consolidation_model = os.environ.get("CLAUDE_CONSOLIDATION_MODEL", "")
-        if not self.claude_consolidation_effort:
-            self.claude_consolidation_effort = os.environ.get("CLAUDE_CONSOLIDATION_EFFORT", "")
-        if not self.cursor_api_key:
-            self.cursor_api_key = os.environ.get("CURSOR_API_KEY", "")
-        if not self.cursor_model:
-            self.cursor_model = os.environ.get("CURSOR_MODEL", "")
-        if not self.cursor_effort:
-            self.cursor_effort = os.environ.get("CURSOR_EFFORT", "")
-        env_mcp_port = os.environ.get("MEMCLAW_MCP_PORT", "").strip()
-        if env_mcp_port:
-            try:
-                port = int(env_mcp_port)
-            except ValueError as exc:
-                raise ValueError(
-                    f"MEMCLAW_MCP_PORT must be an integer, got {env_mcp_port!r}"
-                ) from exc
-            if not 1 <= port <= 65535:
-                raise ValueError(
-                    f"MEMCLAW_MCP_PORT must be between 1 and 65535, got {port}"
-                )
-            self.mcp_http_port = port
-        if not self.telegram_bot_token:
-            self.telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        if not self.allowed_user_ids:
-            self.allowed_user_ids = os.environ.get("ALLOWED_USER_IDS", "")
-        if not self.slack_bot_token:
-            self.slack_bot_token = os.environ.get("SLACK_BOT_TOKEN", "")
-        if not self.slack_app_token:
-            self.slack_app_token = os.environ.get("SLACK_APP_TOKEN", "")
-        if not self.slack_allowed_channels:
-            self.slack_allowed_channels = os.environ.get("SLACK_ALLOWED_CHANNELS", "")
-        if not self.slack_allowed_users:
-            self.slack_allowed_users = os.environ.get("SLACK_ALLOWED_USERS", "")
+    api_key: str = setting("ANTHROPIC_API_KEY", secret=True)
+    oauth_token: str = setting("CLAUDE_CODE_OAUTH_TOKEN", secret=True)
+    model: str = setting("CLAUDE_MODEL")
+    effort: str = setting("CLAUDE_EFFORT")
+    # Memory consolidation is a rare one-shot call where a stronger model pays off.
+    consolidation_model: str = setting("CLAUDE_CONSOLIDATION_MODEL")
+    consolidation_effort: str = setting("CLAUDE_CONSOLIDATION_EFFORT")
+
+
+@dataclass
+class CursorSettings(Settings):
+    """The Cursor SDK backend (memclaw.backends.cursor, which also asks for
+    these in the wizard)."""
+
+    api_key: str = setting("CURSOR_API_KEY", secret=True)
+    model: str = setting("CURSOR_MODEL")
+    effort: str = setting("CURSOR_EFFORT")
+    # The local MCP HTTP server that serves Memclaw's tools to the Cursor agent.
+    mcp_http_port: int = setting("MEMCLAW_MCP_PORT", 17373, parse=_port)
+
+
+@dataclass
+class TelegramSettings(Settings):
+    bot_token: str = setting(
+        "TELEGRAM_BOT_TOKEN", secret=True, required=True, prompt="Telegram bot token")
+    allowed_user_ids: str = setting(
+        "ALLOWED_USER_IDS", required=True, prompt="Allowed Telegram user IDs (comma-separated)")
+
+    @property
+    def allowed_user_ids_list(self) -> list[int]:
+        return [int(uid) for uid in _split(self.allowed_user_ids)]
+
+
+@dataclass
+class SlackSettings(Settings):
+    bot_token: str = setting(
+        "SLACK_BOT_TOKEN", secret=True, required=True, prompt="Slack bot token (xoxb-...)")
+    app_token: str = setting(
+        "SLACK_APP_TOKEN", secret=True, required=True,
+        prompt="Slack app-level token for Socket Mode (xapp-...)")
+    allowed_channels: str = setting(
+        "SLACK_ALLOWED_CHANNELS", prompt="Allowed Slack channel IDs (comma-separated)")
+    allowed_users: str = setting(
+        "SLACK_ALLOWED_USERS", prompt="Allowed Slack user IDs (comma-separated)")
+
+    @property
+    def allowed_channels_list(self) -> list[str]:
+        return _split(self.allowed_channels)
+
+    @property
+    def allowed_users_list(self) -> list[str]:
+        return _split(self.allowed_users)
+
+
+@dataclass
+class MemclawConfig(Settings):
+    """Configuration for Memclaw memory assistant."""
+
+    memory_dir: Path = field(default_factory=lambda: Path.home() / ".memclaw")
+    # Which agent backend to use (see memclaw.backends.REGISTRY). Empty
+    # resolves to the default backend at runtime.
+    agent_backend: str = setting("AGENT_BACKEND")
+    # Which front-end the bare `memclaw` launches: "terminal" (also when
+    # empty), "telegram", "slack" or "whatsapp".
+    platform: str = setting("MEMCLAW_PLATFORM")
+
+    openai: OpenAISettings = field(default_factory=OpenAISettings)
+    memory: MemorySettings = field(default_factory=MemorySettings)
+    claude: ClaudeSettings = field(default_factory=ClaudeSettings)
+    cursor: CursorSettings = field(default_factory=CursorSettings)
+    telegram: TelegramSettings = field(default_factory=TelegramSettings)
+    slack: SlackSettings = field(default_factory=SlackSettings)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
         self.memory_dir = Path(self.memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_subdir.mkdir(exist_ok=True)
@@ -167,6 +216,8 @@ class MemclawConfig:
 
         if not self.memory_file.exists():
             self.memory_file.write_text("# Personal Memory\n")
+
+    # Paths derived from memory_dir.
 
     @property
     def db_path(self) -> Path:
@@ -216,24 +267,87 @@ class MemclawConfig:
         d.mkdir(exist_ok=True)
         return d
 
-    @property
-    def allowed_user_ids_list(self) -> list[int]:
-        if not self.allowed_user_ids:
-            return []
-        return [
-            int(uid.strip())
-            for uid in self.allowed_user_ids.split(",")
-            if uid.strip()
-        ]
 
-    @property
-    def slack_allowed_channels_list(self) -> list[str]:
-        if not self.slack_allowed_channels:
-            return []
-        return [c.strip() for c in self.slack_allowed_channels.split(",") if c.strip()]
+def all_settings() -> list[Setting]:
+    """Every setting read from the environment, in declaration order, with
+    its group and name filled in.
 
-    @property
-    def slack_allowed_users_list(self) -> list[str]:
-        if not self.slack_allowed_users:
-            return []
-        return [u.strip() for u in self.slack_allowed_users.split(",") if u.strip()]
+    Top-level settings are in the group "general"; the others are in the
+    group named after their attribute on MemclawConfig ("openai", "slack", ...).
+    """
+    found = _settings_of(MemclawConfig, "general")
+    for f in fields(MemclawConfig):
+        if isinstance(f.default_factory, type) and issubclass(f.default_factory, Settings):
+            found += _settings_of(f.default_factory, f.name)
+    return found
+
+
+def _settings_of(cls: type, group: str) -> list[Setting]:
+    return [
+        replace(f.metadata["setting"], group=group, name=f.name)
+        for f in fields(cls) if "setting" in f.metadata
+    ]
+
+
+def env_name(settings: Settings, name: str) -> str:
+    """The environment variable behind *settings*' field *name*."""
+    return next(f.metadata["setting"].env for f in fields(settings) if f.name == name)
+
+
+# ── The process environment and ~/.memclaw/.env ─────────────────────
+
+
+def process_environment() -> dict[str, str]:
+    """A copy of this process's environment, to pass on to a child process."""
+    return dict(os.environ)
+
+
+def set_environment(values: dict[str, str], drop_keys: Iterable[str] = ()) -> None:
+    """Set *values* (empty ones skipped) and remove *drop_keys* in this
+    process's environment, so a MemclawConfig made afterwards sees them and
+    child processes inherit them."""
+    for key in drop_keys:
+        os.environ.pop(key, None)
+    for key, value in values.items():
+        if value:
+            os.environ[key] = value
+
+
+def reload_env_file() -> None:
+    """Load ~/.memclaw/.env again, its values winning over the environment
+    (after the setup wizard has just written it)."""
+    load_dotenv(ENV_FILE, override=True)
+
+
+def read_env_file() -> dict[str, str]:
+    """Load existing values from ~/.memclaw/.env."""
+    values: dict[str, str] = {}
+    if not ENV_FILE.exists():
+        return values
+    for line in ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, val = line.partition("=")
+            values[key.strip()] = val.strip()
+    return values
+
+
+def update_env_file(values: dict[str, str], drop_keys: list[str] | tuple[str, ...] = ()) -> None:
+    """Merge *values* into ~/.memclaw/.env and remove *drop_keys*.
+
+    Keys are written in their existing order, new ones appended; a key with
+    an empty value is removed, matching how the wizard writes the file.
+    """
+    merged = read_env_file()
+    merged.update(values)
+    for key in drop_keys:
+        merged.pop(key, None)
+    write_env_file(merged)
+
+
+def write_env_file(values: dict[str, str]) -> None:
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{k}={v}" for k, v in values.items() if v]
+    ENV_FILE.write_text("\n".join(lines) + "\n")

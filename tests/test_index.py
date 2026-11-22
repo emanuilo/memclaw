@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
-from memclaw.config import MemclawConfig
+from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
 from memclaw.index import MemoryIndex
 
 
@@ -16,8 +16,8 @@ from memclaw.index import MemoryIndex
 def cfg(tmp_path: Path) -> MemclawConfig:
     return MemclawConfig(
         memory_dir=tmp_path / "m",
-        openai_api_key="test-key",
-        anthropic_api_key="test-key",
+        openai=OpenAISettings(api_key="test-key"),
+        claude=ClaudeSettings(api_key="test-key"),
     )
 
 
@@ -71,7 +71,7 @@ class TestEmbeddingCacheBehavior:
         # Pre-populate the cache
         idx.db.execute(
             "INSERT INTO embedding_cache (content_hash, embedding, model) VALUES (?, ?, ?)",
-            (content_hash, MemoryIndex.serialize_embedding(fake_emb), idx.config.embedding_model),
+            (content_hash, MemoryIndex.serialize_embedding(fake_emb), idx.config.memory.embedding_model),
         )
         idx.db.commit()
 
@@ -123,7 +123,7 @@ class TestEmbeddingCacheBehavior:
         cached_emb = np.random.randn(1536).astype(np.float32)
         idx.db.execute(
             "INSERT INTO embedding_cache (content_hash, embedding, model) VALUES (?, ?, ?)",
-            (cached_hash, MemoryIndex.serialize_embedding(cached_emb), idx.config.embedding_model),
+            (cached_hash, MemoryIndex.serialize_embedding(cached_emb), idx.config.memory.embedding_model),
         )
         idx.db.commit()
 

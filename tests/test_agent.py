@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from memclaw.backends.base import TurnResult
-from memclaw.config import MemclawConfig
+from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
 from memclaw.search import SearchResult
 
 
@@ -29,8 +29,8 @@ from memclaw.search import SearchResult
 def _make_config(tmp_path: Path) -> MemclawConfig:
     return MemclawConfig(
         memory_dir=tmp_path / "m",
-        openai_api_key="test-openai-key",
-        anthropic_api_key="test-anthropic-key",
+        openai=OpenAISettings(api_key="test-openai-key"),
+        claude=ClaudeSettings(api_key="test-anthropic-key"),
     )
 
 
@@ -411,7 +411,7 @@ class TestConsolidation:
     @pytest.mark.asyncio
     async def test_skips_when_below_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """Consolidation should not run when file count < threshold."""
-        cfg.consolidation_threshold = 7
+        cfg.memory.consolidation_threshold = 7
         agent = _make_agent(cfg, fake_backend)
 
         # Create 3 daily files (below threshold of 7)
@@ -428,7 +428,7 @@ class TestConsolidation:
     @pytest.mark.asyncio
     async def test_runs_when_above_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """Consolidation should run when file count >= threshold."""
-        cfg.consolidation_threshold = 3
+        cfg.memory.consolidation_threshold = 3
         fake_backend.one_shot_response = "## Key Facts\n\n- Fact 0\n- Fact 1\n"
         agent = _make_agent(cfg, fake_backend)
 
@@ -456,7 +456,7 @@ class TestConsolidation:
     @pytest.mark.asyncio
     async def test_force_ignores_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         """force=True should run consolidation even with 1 file."""
-        cfg.consolidation_threshold = 100
+        cfg.memory.consolidation_threshold = 100
         fake_backend.one_shot_response = "## Notes\n- One note"
         agent = _make_agent(cfg, fake_backend)
 
@@ -1104,7 +1104,7 @@ class TestReviewFixes:
     async def test_file_write_indexes_the_path_sync_uses(self, tmp_path: Path, fake_backend: FakeBackend):
         (tmp_path / "real").mkdir()
         (tmp_path / "link").symlink_to(tmp_path / "real")
-        cfg = MemclawConfig(memory_dir=tmp_path / "link", openai_api_key="k", anthropic_api_key="k")
+        cfg = MemclawConfig(memory_dir=tmp_path / "link", openai=OpenAISettings(api_key="k"), claude=ClaudeSettings(api_key="k"))
         agent = _make_agent(cfg, fake_backend)
         await agent.index.sync()
         await agent._tools.execute("file_write", {"file_path": "todos.md", "content": "- milk"})

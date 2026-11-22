@@ -39,7 +39,7 @@ class SlackHandlers:
         self.agent = MemclawAgent(config, platform="slack", scheduler=self.scheduler)
         self.link_processor = LinkProcessor(openai_client)
 
-        self.app = AsyncApp(token=config.slack_bot_token)
+        self.app = AsyncApp(token=config.slack.bot_token)
         self._register_handlers()
         self.scheduler.register_delivery("slack", self._deliver_reminder)
 
@@ -63,13 +63,13 @@ class SlackHandlers:
     # ------------------------------------------------------------------
 
     def _check_channel(self, channel: str) -> bool:
-        allowed = self.config.slack_allowed_channels_list
+        allowed = self.config.slack.allowed_channels_list
         if not allowed:
             return True  # no allowlist = allow all
         return channel in allowed
 
     def _check_user(self, user: str) -> bool:
-        allowed = self.config.slack_allowed_users_list
+        allowed = self.config.slack.allowed_users_list
         if not allowed:
             return True  # no allowlist = allow all
         return user in allowed
@@ -259,7 +259,7 @@ class SlackHandlers:
 
         try:
             async with httpx.AsyncClient(
-                headers={"Authorization": f"Bearer {self.config.slack_bot_token}"},
+                headers={"Authorization": f"Bearer {self.config.slack.bot_token}"},
                 timeout=30.0,
             ) as client:
                 resp = await client.get(url)
@@ -325,7 +325,7 @@ class SlackHandlers:
         await self.agent.start()
         await self.agent.start_background_sync(interval=60)
         self.scheduler.start()
-        handler = AsyncSocketModeHandler(self.app, self.config.slack_app_token)
+        handler = AsyncSocketModeHandler(self.app, self.config.slack.app_token)
         await handler.start_async()
 
     async def aclose(self):

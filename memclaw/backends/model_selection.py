@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, ClassVar
 
 from loguru import logger
 
-from ..config import update_env_file
+from ..config import env_name, update_env_file
 
 if TYPE_CHECKING:
-    from ..config import MemclawConfig
+    from ..config import ClaudeSettings, CursorSettings, MemclawConfig
     from .claude_models import ModelInfo
 
 
@@ -17,14 +17,15 @@ class ModelSelectionMixin:
     """The current model and effort, lookups in the backend's model list,
     and saving a switch to ~/.memclaw/.env.
 
-    A backend sets `_label` (for logs) and `_env_prefix` (CLAUDE → the
-    CLAUDE_MODEL / CLAUDE_EFFORT keys and the claude_model / claude_effort
-    config fields), keeps `_model`, `_effort` and `_models`, and implements
-    `list_models()`, `set_model()` and `set_effort()`.
+    A backend sets `_label` (for logs) and `_settings_group` (its settings
+    group on MemclawConfig: "claude" -> `config.claude`, whose `model` /
+    `effort` fields and CLAUDE_MODEL / CLAUDE_EFFORT keys a switch updates),
+    keeps `_model`, `_effort` and `_models`, and implements `list_models()`,
+    `set_model()` and `set_effort()`.
     """
 
     _label: ClassVar[str]
-    _env_prefix: ClassVar[str]
+    _settings_group: ClassVar[str]
 
     config: "MemclawConfig"
     _model: str
@@ -75,10 +76,10 @@ class ModelSelectionMixin:
             b=self._label, m=self._model, e=self._effort, m2=model, e2=effort,
         )
         self._model, self._effort = model, effort
-        prefix = self._env_prefix
-        setattr(self.config, f"{prefix.lower()}_model", model)
-        setattr(self.config, f"{prefix.lower()}_effort", effort or "")
+        settings: ClaudeSettings | CursorSettings = getattr(self.config, self._settings_group)
+        settings.model, settings.effort = model, effort or ""
+        model_key, effort_key = env_name(settings, "model"), env_name(settings, "effort")
         if effort:
-            update_env_file({f"{prefix}_MODEL": model, f"{prefix}_EFFORT": effort})
+            update_env_file({model_key: model, effort_key: effort})
         else:
-            update_env_file({f"{prefix}_MODEL": model}, drop_keys=[f"{prefix}_EFFORT"])
+            update_env_file({model_key: model}, drop_keys=[effort_key])

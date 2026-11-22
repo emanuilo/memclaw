@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from memclaw.config import MemclawConfig
+from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
 from memclaw.index import MemoryIndex
 from memclaw.search import HybridSearch, SearchResult
 from memclaw.store import MemoryStore
@@ -49,8 +49,8 @@ def tmp_config(tmp_path: Path) -> MemclawConfig:
     """MemclawConfig pointing at a fresh temp directory."""
     return MemclawConfig(
         memory_dir=tmp_path / "memclaw",
-        openai_api_key="test-openai-key",
-        anthropic_api_key="test-anthropic-key",
+        openai=OpenAISettings(api_key="test-openai-key"),
+        claude=ClaudeSettings(api_key="test-anthropic-key"),
     )
 
 
@@ -58,7 +58,7 @@ def tmp_config(tmp_path: Path) -> MemclawConfig:
 def isolate_claude_env(monkeypatch):
     """Keep the developer's own Claude settings out of `MemclawConfig`.
 
-    MemclawConfig.__post_init__ falls back to os.environ when fields are
+    MemclawConfig's settings fall back to os.environ when they are
     blank, and importing memclaw.config loads ~/.memclaw/.env into os.environ.
     So a real CLAUDE_CODE_OAUTH_TOKEN would silently override the credential
     a test configures, and a developer who has run the wizard would see their
@@ -76,9 +76,8 @@ def claude_config(tmp_path: Path, isolate_claude_env):
     def _make(*, oauth: str = "", api_key: str = "") -> MemclawConfig:
         return MemclawConfig(
             memory_dir=tmp_path / "m",
-            openai_api_key="test-openai-key",
-            anthropic_api_key=api_key,
-            claude_code_oauth_token=oauth,
+            openai=OpenAISettings(api_key="test-openai-key"),
+            claude=ClaudeSettings(api_key=api_key, oauth_token=oauth),
         )
     return _make
 

@@ -10,6 +10,7 @@ import pytest
 from memclaw.backends import claude as claude_backend
 from memclaw.backends.claude import ClaudeAgentBackend
 from memclaw.backends.claude_models import ModelInfo
+from memclaw.config import ClaudeSettings
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -260,7 +261,7 @@ class TestRunTurn:
     @pytest.mark.asyncio
     async def test_fallback_cost_uses_the_configured_models_price(self, claude_config):
         cfg = claude_config(api_key="x")
-        cfg.claude_model = "claude-opus-5"
+        cfg.claude.model = "claude-opus-5"
         backend = ClaudeAgentBackend(cfg)
         with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=_FakeClients()):
             result = await _turn(backend, _executor(cfg))
@@ -472,8 +473,8 @@ class TestModelSelection:
 
     def _backend(self, claude_config, effort="high"):
         cfg = claude_config(oauth="x")
-        cfg.claude_model = "claude-opus-5"
-        cfg.claude_effort = effort
+        cfg.claude.model = "claude-opus-5"
+        cfg.claude.effort = effort
         backend = ClaudeAgentBackend(cfg)
         return backend
 
@@ -493,7 +494,7 @@ class TestModelSelection:
         assert note == ""
         assert backend.model == "claude-opus-5"
         assert backend.effort == "high"
-        assert backend.config.claude_model == "claude-opus-5"
+        assert backend.config.claude.model == "claude-opus-5"
         text = env_file.read_text()
         assert "CLAUDE_MODEL=claude-opus-5" in text
         assert "CLAUDE_EFFORT=high" in text
@@ -598,12 +599,12 @@ class TestResolveModel:
 
     def test_configured_model_wins(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_model = "claude-opus-5"
+        cfg.claude.model = "claude-opus-5"
         assert claude_backend._resolve_model(cfg) == "claude-opus-5"
 
     def test_blank_value_falls_back(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_model = "   "
+        cfg.claude.model = "   "
         assert claude_backend._resolve_model(cfg) == claude_backend._DEFAULT_MODEL
 
 
@@ -615,45 +616,45 @@ class TestResolveEffort:
     def test_unset_gives_none_on_another_model(self, claude_config):
         """Another model may not take an effort at all, so leave it to the model."""
         cfg = claude_config(oauth="x")
-        cfg.claude_model = "claude-haiku-4-5"
+        cfg.claude.model = "claude-haiku-4-5"
         assert claude_backend._resolve_effort(cfg) is None
 
     def test_known_level_passes_through(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_effort = "xhigh"
+        cfg.claude.effort = "xhigh"
         assert claude_backend._resolve_effort(cfg) == "xhigh"
 
     def test_case_and_padding_are_normalised(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_effort = "  HIGH  "
+        cfg.claude.effort = "  HIGH  "
         assert claude_backend._resolve_effort(cfg) == "high"
 
     def test_level_the_sdk_does_not_know_is_ignored(self, claude_config):
         """A typo in ~/.memclaw/.env must not reach the CLI as an argument."""
         cfg = claude_config(oauth="x")
-        cfg.claude_model = "claude-opus-5"
-        cfg.claude_effort = "ultra"
+        cfg.claude.model = "claude-opus-5"
+        cfg.claude.effort = "ultra"
         assert claude_backend._resolve_effort(cfg) is None
 
 
 class TestConsolidationEffort:
     def test_other_model_without_effort_gets_none(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_consolidation_model = "claude-haiku-4-5"
+        cfg.claude.consolidation_model = "claude-haiku-4-5"
         assert claude_backend._resolve_consolidation(cfg) == ("claude-haiku-4-5", None)
 
     def test_configured_effort_is_used_on_any_model(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_consolidation_model = "claude-sonnet-5-5"
-        cfg.claude_consolidation_effort = "high"
+        cfg.claude.consolidation_model = "claude-sonnet-5-5"
+        cfg.claude.consolidation_effort = "high"
         assert claude_backend._resolve_consolidation(cfg) == ("claude-sonnet-5-5", "high")
 
 
 class TestStatusRows:
     def test_configured_values_are_shown(self, claude_config):
         cfg = claude_config(api_key="k")
-        cfg.claude_model = "claude-opus-5"
-        cfg.claude_effort = "max"
+        cfg.claude.model = "claude-opus-5"
+        cfg.claude.effort = "max"
         assert ClaudeAgentBackend.status_rows(cfg) == [
             ("Model", "claude-opus-5"), ("Effort", "max"),
             ("Consolidation", "claude-opus-5-5 (medium)"),
@@ -671,9 +672,9 @@ class TestOptionsCarryModelAndEffort:
     @pytest.mark.asyncio
     async def test_configured_consolidation_values_reach_the_sdk(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_model = "claude-haiku-4-5"
-        cfg.claude_consolidation_model = "claude-opus-5"
-        cfg.claude_consolidation_effort = "max"
+        cfg.claude.model = "claude-haiku-4-5"
+        cfg.claude.consolidation_model = "claude-opus-5"
+        cfg.claude.consolidation_effort = "max"
         backend = ClaudeAgentBackend(cfg)
 
         ctx_factory, _client = _mock_sdk_client("ok")
@@ -692,8 +693,8 @@ class TestOptionsCarryModelAndEffort:
     @pytest.mark.asyncio
     async def test_consolidation_defaults_to_opus_medium(self, claude_config):
         cfg = claude_config(oauth="x")
-        cfg.claude_model = "claude-sonnet-5-5"
-        cfg.claude_effort = "low"
+        cfg.claude.model = "claude-sonnet-5-5"
+        cfg.claude.effort = "low"
         backend = ClaudeAgentBackend(cfg)
 
         ctx_factory, _client = _mock_sdk_client("ok")
@@ -754,6 +755,7 @@ def _ask(models, *, existing=None, answers=("1",),
             patch("memclaw.prompts.Prompt.ask", side_effect=_prompt):
         values, drops = ClaudeAgentBackend._ask_model_and_effort(
             console, existing or {}, auth_mode="api_key", credential="sk-ant-test",
+            settings=ClaudeSettings(),   # loads CLAUDE_MODEL / CLAUDE_EFFORT from the shell
         )
     fetch.assert_awaited_once_with("api_key", "sk-ant-test")
     return values, drops, prompts, console
@@ -897,7 +899,9 @@ def _wizard(*, answers, credential="", existing=None, models=None,
                side_effect=lambda *a, **k: next(answer_iter)), \
             patch("memclaw.backends.claude.masked_input", return_value=credential), \
             patch("memclaw.backends.claude.fetch_models", fetch):
-        values, drops = ClaudeAgentBackend.wizard_setup(MagicMock(), existing or {})
+        values, drops = ClaudeAgentBackend.wizard_setup(
+            MagicMock(), existing or {}, config=MagicMock(claude=ClaudeSettings()),
+        )
     return values, drops, fetch
 
 

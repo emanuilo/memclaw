@@ -224,7 +224,7 @@ def _telegram_handlers(*, allowed: bool = True):
     handlers.agent = MagicMock()
     handlers.agent.reset_conversation = AsyncMock()
     handlers.config = MagicMock()
-    handlers.config.allowed_user_ids_list = [1] if allowed else []
+    handlers.config.telegram.allowed_user_ids_list = [1] if allowed else []
     return handlers
 
 
@@ -298,8 +298,8 @@ class TestNewCommand:
         with patch.object(SlackHandlers, "__init__", lambda self, *a, **kw: None):
             handlers = SlackHandlers.__new__(SlackHandlers)
         handlers.config = MagicMock()
-        handlers.config.slack_allowed_channels_list = []
-        handlers.config.slack_allowed_users_list = []
+        handlers.config.slack.allowed_channels_list = []
+        handlers.config.slack.allowed_users_list = []
         handlers.agent = MagicMock()
         handlers.agent.reset_conversation = AsyncMock()
         handlers.agent.handle = AsyncMock()
