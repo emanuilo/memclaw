@@ -22,7 +22,7 @@ from pathlib import Path
 from loguru import logger
 
 from .backends import AgentBackend, build_backend
-from .backends.base import ProgressCallback, TurnResult
+from .backends.base import ProgressCallback, TurnRequest, TurnResult
 from .config import MemclawConfig
 from .instructions import (
     build_system_prompt,
@@ -33,16 +33,13 @@ from .instructions import (
 )
 from .memory import Consolidator, HybridSearch, MemoryIndex, MemoryStore
 from .reminders import ReminderScheduler
-from .sessions import SessionStore
+from .sessions import ChatSessions
 from .tools import ToolExecutor
 
 # Per-turn memory search results. Kept small because every context block
 # stays in the session transcript.
 _CONTEXT_RESULTS = 5
 _CONTEXT_SNIPPET_CHARS = 500
-
-# Session key for the interactive terminal (no chat id).
-_CLI_SESSION_KEY = "cli"
 
 
 class MemclawAgent:
@@ -62,11 +59,9 @@ class MemclawAgent:
         backend: AgentBackend | None = None,
     ):
         self.config = config
-        self.platform = platform
         self.store = MemoryStore(config)
         self.index = MemoryIndex(config)
         self.search = HybridSearch(config, self.index)
-        self.scheduler = scheduler
         self._found_images: list[dict] = []
         self._tools = ToolExecutor(
             config=config,
@@ -79,13 +74,11 @@ class MemclawAgent:
         )
         self.backend: AgentBackend = backend or build_backend(config)
         self._backend_started = False
-        self.sessions = SessionStore(config.memory_dir / "sessions.json")
-        self._fingerprint = instructions_fingerprint(self.backend.name)
-        # Delivered reminders not yet seen by the chat's session.
-        self._pending_notes: dict[str, list[str]] = {}
-        # Bumped by /new so a turn that was running doesn't re-save the
-        # session it just reset.
-        self._generations: dict[str, int] = {}
+        self.sessions = ChatSessions(
+            config.memory_dir / "sessions.json",
+            instructions_fingerprint(self.backend.name),
+            platform,
+        )
         self.consolidator = Consolidator(config, self.store, self.index, self.backend)
         # The tool executor holds per-turn state (chat id, found images), so
         # turns run one at a time, even across chats.
@@ -93,25 +86,17 @@ class MemclawAgent:
 
     # ── Sessions ─────────────────────────────────────────────────────
 
-    def _session_key(self, chat_id: str | None) -> str:
-        if chat_id is None:
-            return _CLI_SESSION_KEY
-        return f"{self.platform}:{chat_id}" if self.platform else str(chat_id)
-
     def record_reminder_fired(self, text: str, chat_id: str | None = None):
         """Remember a delivered reminder so the chat's next message carries
         it, giving the agent context if the user replies to it."""
-        self._pending_notes.setdefault(self._session_key(chat_id), []).append(text)
+        self.sessions.add_note(chat_id, text)
 
     async def reset_conversation(self, chat_id: str | None = None) -> None:
         """Start a fresh conversation for *chat_id* (the `/new` command)."""
-        key = self._session_key(chat_id)
-        self._generations[key] = self._generations.get(key, 0) + 1
         # Forget the session before awaiting the backend: a message sent
         # right after /new may run while the reset is still disconnecting,
         # and must not resume the old session.
-        self.sessions.drop(key)
-        self._pending_notes.pop(key, None)
+        key = self.sessions.reset(chat_id)
         await self.backend.reset_session(key)
         logger.info("Started a new conversation for {k}", k=key)
 
@@ -233,44 +218,41 @@ class MemclawAgent:
     ) -> tuple[str, list[dict]]:
         self._found_images.clear()
         self._tools.chat_id = chat_id
-        key = self._session_key(chat_id)
-        generation = self._generations.get(key, 0)
+        turn = self.sessions.begin(chat_id)
 
         agent_instructions = load_agent_instructions(self.config)
         permanent_memory = load_permanent_memory(self.config)
-        agents_hash = content_hash(agent_instructions)
         memory_hash = content_hash(permanent_memory)
 
         # A resumed (or live) session has the AGENTS.md / MEMORY.md it last
         # saw; send whichever changed since, once.
-        entry = self.sessions.get(key, self._fingerprint)
-        notes = list(self._pending_notes.get(key, ()))
         context = await self.build_context(
             message,
-            notes=notes,
+            notes=turn.notes,
             agents_update=(
                 agent_instructions
-                if entry and entry.get("agents_hash") != agents_hash else None
+                if turn.saw_other("agents_hash", content_hash(agent_instructions)) else None
             ),
             memory_update=(
-                permanent_memory
-                if entry and entry.get("memory_hash") != memory_hash else None
+                permanent_memory if turn.saw_other("memory_hash", memory_hash) else None
             ),
         )
 
         t0 = time.perf_counter()
         result = await self.backend.run_turn(
-            # Only used when the backend starts a new session.
-            system_prompt=build_system_prompt(agent_instructions, permanent_memory),
-            context=context,
-            user_message=message,
-            tool_executor=self._tools,
-            session_key=key,
-            resume_session_id=entry["session_id"] if entry else None,
-            image_b64=image_b64,
-            image_media_type=image_media_type,
-            max_turns=10,
-            on_tool=on_tool,
+            TurnRequest(
+                # Only used when the backend starts a new session.
+                system_prompt=build_system_prompt(agent_instructions, permanent_memory),
+                context=context,
+                user_message=message,
+                session_key=turn.key,
+                resume_session_id=turn.resume_session_id,
+                image_b64=image_b64,
+                image_media_type=image_media_type,
+                max_turns=10,
+                on_tool=on_tool,
+            ),
+            self._tools,
         )
         self._log_turn(result, int((time.perf_counter() - t0) * 1000))
 
@@ -279,10 +261,11 @@ class MemclawAgent:
         # seen too, so they aren't sent back next turn. It never writes
         # MEMORY.md, so a change to it during the turn (a consolidation) is
         # still unseen and goes into the next message.
-        agents_hash = content_hash(load_agent_instructions(self.config))
-        self._ack_notes(key, len(notes))
-        if result.session_id and self._generations.get(key, 0) == generation:
-            self._save_session(key, result.session_id, agents_hash, memory_hash)
+        self.sessions.finish(
+            turn, result.session_id,
+            agents_hash=content_hash(load_agent_instructions(self.config)),
+            memory_hash=memory_hash,
+        )
 
         self.consolidator.schedule()
 
@@ -307,22 +290,6 @@ class MemclawAgent:
                 "Agent done: {turns} turns, {ms}ms ({tokens})",
                 turns=turns, ms=elapsed_ms, tokens=tokens,
             )
-
-    def _ack_notes(self, key: str, seen: int) -> None:
-        """Drop the first *seen* pending notes, the ones this turn carried.
-        Only after the turn succeeded, and only those: a reminder delivered
-        during the turn stays queued for the next message."""
-        pending = self._pending_notes.get(key)
-        if pending:
-            del pending[:seen]
-
-    def _save_session(self, key: str, session_id: str, agents_hash: str, memory_hash: str) -> None:
-        self.sessions.set(key, {
-            "session_id": session_id,
-            "fingerprint": self._fingerprint,
-            "agents_hash": agents_hash,
-            "memory_hash": memory_hash,
-        })
 
     def _close_sync_only(self) -> None:
         task = getattr(self, "_sync_task", None)

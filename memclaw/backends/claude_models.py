@@ -12,11 +12,12 @@ switches to a credential that can reach a different set of models.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+
+from .model_selection import ModelInfo
 
 MODELS_URL = "https://api.anthropic.com/v1/models"
 API_VERSION = "2023-06-01"
@@ -32,14 +33,6 @@ PAGE_LIMIT = 100
 # report a level a newer SDK understands and ours does not, so anything
 # outside this set is dropped. Widen the tuple when the SDK gains a level.
 SDK_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
-
-
-@dataclass
-class ModelInfo:
-    id: str
-    display_name: str
-    created_at: str
-    effort_levels: list[str]  # empty when the model has no effort support
 
 
 # ── Request building ────────────────────────────────────────────────

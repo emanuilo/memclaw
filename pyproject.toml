@@ -90,7 +90,8 @@ select = ["E4", "E7", "E9", "F"]
 # hooks. Known violations are listed in .code-shape/baseline.json: only new or
 # worse ones fail. Never edit the baseline by hand; fix the code, then run
 # `code-shape tighten`. The kit's default limits apply (see its
-# templates/shape.toml); don't raise one to make a change pass.
+# templates/shape.toml) unless [tool.shape.limits] below sets a stricter
+# one; don't raise one to make a change pass.
 # ---------------------------------------------------------------------------
 [tool.shape]
 packages = ["memclaw"]
@@ -101,6 +102,11 @@ tests = "tests"
 # run on its own, so it reads its env itself.
 config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
 baseline = ".code-shape/baseline.json"
+
+[tool.shape.limits]
+# Lower than the kit's 12: no module imports more than 8 memclaw modules
+# (the agent and the Cursor backend are at 8, cli at 5), so hold it there.
+fan_out = 8
 
 [tool.shape.banned_api]
 # Outside systems should be reached through one module each. Existing direct
@@ -171,7 +177,8 @@ layers = [
     # report. It lists the chat platforms from memclaw.bot's registry and
     # lets the chosen backend ask its own questions.
     "setup",
-    # The chat bots (memclaw.bot): one module per chat app, plus what they share.
+    # Where Memclaw chats (memclaw.bot): one module per chat app and one for
+    # the terminal, plus what they share.
     "bot",
     # Platform-agnostic assistant: wires backends, tools and storage together.
     "agent",
@@ -209,12 +216,13 @@ ancestors = ["memclaw.*"]
 
 [[tool.importlinter.contracts]]
 id = "chat-platforms-independent"
-name = "Chat platforms are independent: the Telegram, Slack and WhatsApp modules never import each other (share code via memclaw.bot.inbound or lower layers)"
+name = "Chat platforms are independent: the Telegram, Slack, WhatsApp and terminal modules never import each other (share code via memclaw.bot.inbound or lower layers)"
 type = "independence"
 modules = [
     "memclaw.bot.telegram",
     "memclaw.bot.slack",
     "memclaw.bot.whatsapp",
+    "memclaw.bot.terminal",
 ]
 
 [[tool.importlinter.contracts]]
@@ -225,6 +233,7 @@ protected_modules = [
     "memclaw.bot.telegram",
     "memclaw.bot.slack",
     "memclaw.bot.whatsapp",
+    "memclaw.bot.terminal",
 ]
 allowed_importers = ["memclaw.bot"]
 
@@ -244,7 +253,7 @@ allowed_importers = ["memclaw.openai_client"]
 
 [[tool.importlinter.contracts]]
 id = "memory-via-package"
-name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (MemoryStore, MemoryIndex, HybridSearch, Consolidator, ...)"
+name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (MemoryStore, MemoryIndex, HybridSearch, Consolidator, MemoryVault, ...)"
 type = "protected"
 protected_modules = [
     "memclaw.memory.chunking",
@@ -253,6 +262,7 @@ protected_modules = [
     "memclaw.memory.notes",
     "memclaw.memory.refs",
     "memclaw.memory.search",
+    "memclaw.memory.vault",
 ]
 allowed_importers = ["memclaw.memory"]
 
@@ -262,6 +272,8 @@ name = "Inside memclaw.memory: consolidation and search build on the notes and t
 type = "layers"
 containers = ["memclaw.memory"]
 layers = [
+    # The notes and the index opened together for the one-off commands.
+    "vault",
     # MEMORY.md consolidation; ranking search results. Independent.
     "consolidation | search",
     # The Markdown notes; the SQLite index of them (the only SQLite user
@@ -275,7 +287,7 @@ exhaustive = true
 
 [[tool.importlinter.contracts]]
 id = "setup-via-package"
-name = "Only memclaw.setup imports its own modules: everyone else uses what memclaw.setup exports (run_setup, needs_setup, print_logo, print_probe_report)"
+name = "Only memclaw.setup imports its own modules: everyone else uses what memclaw.setup exports (run_setup, needs_setup, print_logo, run_doctor)"
 type = "protected"
 protected_modules = ["memclaw.setup.doctor", "memclaw.setup.wizard"]
 allowed_importers = ["memclaw.setup"]

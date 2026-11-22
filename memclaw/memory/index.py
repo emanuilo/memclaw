@@ -425,5 +425,14 @@ class MemoryIndex:
         images = self.db.execute("SELECT COUNT(*) FROM platform_images").fetchone()[0]
         return {"chunks": chunks, "files": files, "images": images}
 
+    def status_rows(self) -> list[tuple[str, object]]:
+        """``(label, value)`` pairs `memclaw status` shows for the index."""
+        stats = self.get_stats()
+        return [
+            ("Indexed chunks", stats["chunks"]),
+            ("Stored images", stats["images"]),
+            ("Database", self.config.db_path),
+        ]
+
     def close(self):
         self.db.close()

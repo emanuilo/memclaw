@@ -8,8 +8,9 @@ import httpx
 import pytest
 
 from memclaw.backends import claude as claude_backend
+from memclaw.backends.base import TurnRequest
 from memclaw.backends.claude import ClaudeAgentBackend
-from memclaw.backends.claude_models import ModelInfo
+from memclaw.backends.model_selection import ModelInfo
 from memclaw.config import ClaudeSettings
 
 
@@ -235,9 +236,11 @@ class _FakeClients:
 async def _turn(backend, executor, *, key="telegram:1", resume=None,
                 context="<context>now</context>", message="hello", **kwargs):
     return await backend.run_turn(
-        system_prompt="sys", context=context, user_message=message,
-        tool_executor=executor, session_key=key, resume_session_id=resume,
-        **kwargs,
+        TurnRequest(
+            system_prompt="sys", context=context, user_message=message,
+            session_key=key, resume_session_id=resume, **kwargs,
+        ),
+        executor,
     )
 
 

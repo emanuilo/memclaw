@@ -66,6 +66,13 @@ class MemoryStore:
         files.extend(sorted(self.config.memory_subdir.glob("*.md")))
         return files
 
+    def status_rows(self) -> list[tuple[str, object]]:
+        """``(label, value)`` pairs `memclaw status` shows for the notes."""
+        return [
+            ("Memory directory", self.config.memory_dir),
+            ("Memory files", len(self.list_files())),
+        ]
+
     _DAILY_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
 
     def list_unconsolidated_files(self, consolidated_through: date | None = None) -> list[Path]:

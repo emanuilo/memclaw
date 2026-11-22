@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from memclaw.backends.base import TurnResult
+from memclaw.backends.base import TurnRequest, TurnResult
 from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
 from memclaw.memory import SearchResult
 
@@ -67,8 +67,8 @@ class FakeBackend:
         self.one_shot_calls.append({"system": system_prompt, "user": user_message})
         return self.one_shot_response
 
-    async def run_turn(self, **kwargs) -> TurnResult:
-        self.turn_calls.append(kwargs)
+    async def run_turn(self, request: TurnRequest, tool_executor) -> TurnResult:
+        self.turn_calls.append({**vars(request), "tool_executor": tool_executor})
         if self.turn_error is not None:
             raise self.turn_error
         result = TurnResult(**vars(self.turn_response))
@@ -289,7 +289,7 @@ class TestSystemPromptAndContext:
         cfg.memory_file.write_text("## Key Facts\n- Old fact")
         agent = _chat_agent(cfg, fake_backend)
 
-        async def turn_that_saves(**kwargs):
+        async def turn_that_saves(request, tool_executor):
             # update_instructions mid-turn.
             cfg.agent_file.write_text("Be terse.")
             return TurnResult(text="saved", session_id="sess-1")
@@ -310,7 +310,7 @@ class TestSystemPromptAndContext:
         cfg.memory_file.write_text("## Key Facts\n- Old fact")
         agent = _chat_agent(cfg, fake_backend)
 
-        async def turn_racing_consolidation(**kwargs):
+        async def turn_racing_consolidation(request, tool_executor):
             cfg.memory_file.write_text("## Key Facts\n- Consolidated")
             return TurnResult(text="ok", session_id="sess-1")
 
@@ -616,10 +616,10 @@ class TestConcurrentChats:
         seen: dict[str, str | None] = {}
         agent = _chat_agent(cfg, fake_backend, platform="slack")
 
-        async def run_turn(**kwargs):
-            key = kwargs["session_key"]
+        async def run_turn(request, tool_executor):
+            key = request.session_key
             await asyncio.sleep(0.05)  # the other chat's message arrives meanwhile
-            seen[key] = kwargs["tool_executor"].chat_id
+            seen[key] = tool_executor.chat_id
             return TurnResult(text="ok", session_id=f"s-{key}")
 
         fake_backend.run_turn = run_turn

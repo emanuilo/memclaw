@@ -14,6 +14,8 @@ Public:
 - `Consolidator` (consolidation.py): distills the daily notes into
   MEMORY.md, and is the only code that writes it. refs.py checks the
   references it writes.
+- `MemoryVault` (vault.py): the notes and the index opened together, one
+  method per one-off `memclaw` command (save, search, index, consolidate).
 
 Other code imports from `memclaw.memory`, not from the modules inside.
 """
@@ -22,5 +24,13 @@ from .consolidation import Consolidator
 from .index import MemoryIndex
 from .notes import MemoryStore
 from .search import HybridSearch, SearchResult
+from .vault import MemoryVault
 
-__all__ = ["Consolidator", "HybridSearch", "MemoryIndex", "MemoryStore", "SearchResult"]
+__all__ = [
+    "Consolidator",
+    "HybridSearch",
+    "MemoryIndex",
+    "MemoryStore",
+    "MemoryVault",
+    "SearchResult",
+]

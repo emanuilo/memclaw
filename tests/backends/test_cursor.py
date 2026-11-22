@@ -18,7 +18,7 @@ from cursor_sdk import (
     SDKModel,
 )
 
-from memclaw.backends.base import TurnResult
+from memclaw.backends.base import TurnRequest, TurnResult
 from memclaw.backends import REGISTRY, get_backend_class
 from memclaw.backends.cursor import (
     CursorAgentBackend,
@@ -367,8 +367,11 @@ def _patched(backend, *clients):
 
 async def _turn(backend, text="User", *, key="cli", resume=None, context="<context>ctx</context>"):
     return await backend.run_turn(
-        system_prompt="System", context=context, user_message=text,
-        tool_executor=MagicMock(), session_key=key, resume_session_id=resume,
+        TurnRequest(
+            system_prompt="System", context=context, user_message=text,
+            session_key=key, resume_session_id=resume,
+        ),
+        MagicMock(),
     )
 
 

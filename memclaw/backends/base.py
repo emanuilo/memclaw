@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from ..config import MemclawConfig
     from ..tools import ToolExecutor
-    from .claude_models import ModelInfo
+    from .model_selection import ModelInfo
 
 
 @dataclass
@@ -66,6 +66,31 @@ class ToolStep:
 
 
 ProgressCallback = Callable[[ToolStep], Awaitable[None]]
+
+
+@dataclass
+class TurnRequest:
+    """One user message for `AgentBackend.run_turn`, in the conversation
+    identified by ``session_key``."""
+
+    # Static per session: only used when the backend starts a new session.
+    system_prompt: str
+    # The per-turn context block (time, relevant memories, ...) that must
+    # reach the model with this message, ahead of ``user_message``.
+    context: str
+    user_message: str
+    session_key: str
+    # The session to resume if the backend has to (re)connect; if it can't
+    # be resumed the backend starts a fresh one.
+    resume_session_id: str | None = None
+    image_b64: str | None = None
+    image_media_type: str = "image/jpeg"
+    # Passed to SDKs that support it (e.g. Claude). Backends without a
+    # native cap should log when reported turns exceed it after the run.
+    max_turns: int = 10
+    # Called (via `report_tool_step`) for every tool call the agent makes,
+    # for progress messages.
+    on_tool: ProgressCallback | None = None
 
 
 async def report_tool_step(
@@ -172,40 +197,13 @@ class AgentBackend(Protocol):
         if the call failed, rather than returning an error message as text."""
         ...
 
-    async def run_turn(
-        self,
-        *,
-        system_prompt: str,
-        context: str,
-        user_message: str,
-        tool_executor: "ToolExecutor",
-        session_key: str,
-        resume_session_id: str | None = None,
-        image_b64: str | None = None,
-        image_media_type: str = "image/jpeg",
-        max_turns: int = 10,
-        on_tool: ProgressCallback | None = None,
-    ) -> TurnResult:
-        """Run one full agentic turn with tool access, in the conversation
-        identified by *session_key*.
-
-        ``system_prompt`` is static per session: it is only used when the
-        backend starts a new session. ``context`` is the per-turn context
-        block (time, relevant memories, ...) that must reach the model with
-        this message, ahead of ``user_message``. ``resume_session_id`` is
-        the session to resume if the backend has to (re)connect; if it can't
-        be resumed the backend starts a fresh one.
-
-        ``on_tool`` is called (via `report_tool_step`) for every tool call
-        the agent makes, for progress messages.
+    async def run_turn(self, request: TurnRequest, tool_executor: "ToolExecutor") -> TurnResult:
+        """Run one full agentic turn with tool access for *request* (see
+        `TurnRequest`), in the conversation identified by its session_key.
 
         The backend is responsible for translating ``TOOL_DEFINITIONS``
         into its SDK's tool format and routing tool calls back through
         ``tool_executor.execute(name, args)``.
-
-        ``max_turns`` is passed to SDKs that support it (e.g. Claude).
-        Backends without a native cap should log when reported turns exceed
-        this limit after the run completes.
         """
         ...
 
@@ -245,4 +243,4 @@ class AgentBackend(Protocol):
 
 # Subclasses register themselves through this attribute name; see
 # memclaw/backends/__init__.py.
-__all__ = ["AgentBackend", "TurnResult"]
+__all__ = ["AgentBackend", "TurnRequest", "TurnResult"]
