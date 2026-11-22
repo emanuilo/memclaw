@@ -21,7 +21,7 @@ import pytest
 
 from memclaw.backends.base import TurnResult
 from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
-from memclaw.search import SearchResult
+from memclaw.memory import SearchResult
 
 
 # ────────────────────────────────────────────────────────────────────

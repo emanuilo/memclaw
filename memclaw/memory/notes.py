@@ -4,7 +4,7 @@ import re
 from datetime import date, datetime
 from pathlib import Path
 
-from .config import MemclawConfig
+from ..config import MemclawConfig
 
 
 class MemoryStore:

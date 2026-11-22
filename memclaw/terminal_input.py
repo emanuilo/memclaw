@@ -1,8 +1,9 @@
-"""Shared interactive prompts for the setup wizard.
+"""Asking the user something in the terminal: a numbered choice, masked input.
 
-Lives outside setup.py so backends can import it at module level: setup.py
-imports the backend registry, so backends importing setup.py would be
-circular.
+Used by the setup wizard (memclaw.setup) and by the backends, which ask
+their own questions there (`wizard_setup`). It sits in a layer below the
+backends, not inside memclaw.setup: setup imports the backend registry, so
+backends importing setup would import upward.
 """
 
 from __future__ import annotations
@@ -71,30 +72,33 @@ def masked_input(console: "Console", prompt_text: str, *, visible: int = 4) -> s
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
-    buf: list[str] = []
     try:
         tty.setcbreak(fd)
-        while True:
-            ch = sys.stdin.read(1)
-            if ch in ("\r", "\n"):
-                break
-            if ch == "\x03":  # Ctrl-C
-                raise KeyboardInterrupt
-            if ch in ("\x7f", "\b"):
-                if buf:
-                    buf.pop()
-                    sys.stdout.write("\b \b")
-                    sys.stdout.flush()
-                continue
-            if ord(ch) < 32:
-                continue
-            buf.append(ch)
-            display = ch if len(buf) <= visible else "*"
-            sys.stdout.write(display)
-            sys.stdout.flush()
+        return _read_masked(visible)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
         sys.stdout.write("\n")
         sys.stdout.flush()
 
-    return "".join(buf)
+
+def _read_masked(visible: int) -> str:
+    """Read keys up to Enter from a terminal in cbreak mode, echoing the
+    first *visible* characters and '*' for the rest. Backspace deletes."""
+    buf: list[str] = []
+    while True:
+        ch = sys.stdin.read(1)
+        if ch in ("\r", "\n"):
+            return "".join(buf)
+        if ch == "\x03":  # Ctrl-C
+            raise KeyboardInterrupt
+        if ch in ("\x7f", "\b"):
+            if buf:
+                buf.pop()
+                sys.stdout.write("\b \b")
+                sys.stdout.flush()
+            continue
+        if ord(ch) < 32:
+            continue
+        buf.append(ch)
+        sys.stdout.write(ch if len(buf) <= visible else "*")
+        sys.stdout.flush()

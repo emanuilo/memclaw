@@ -2,22 +2,140 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from loguru import logger
 
-from .config import MemclawConfig
-from .openai_client import OpenAIClient
+from .chunking import Chunk, chunk_text
+from ..config import MemclawConfig
+from ..openai_client import OpenAIClient
 
 
-@dataclass
-class Chunk:
-    file_path: str
-    line_start: int
-    line_end: int
-    content: str
-    embedding: np.ndarray | None = None
+def _create_schema(db: sqlite3.Connection) -> None:
+    """Create the tables, the FTS5 index and its triggers if missing.
+
+    SQLite stores each statement's text, indentation included, in
+    sqlite_master: keep the text unchanged so every database has the same
+    schema.
+    """
+    db.execute("""
+            CREATE TABLE IF NOT EXISTS chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT NOT NULL,
+                line_start INTEGER NOT NULL,
+                line_end INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                embedding BLOB,
+                file_mtime REAL NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+    db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                content,
+                content='chunks',
+                content_rowid='id',
+                tokenize='porter unicode61'
+            )
+        """)
+
+    # Triggers keep FTS5 in sync with the chunks table.
+    db.execute("""
+            CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+                INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
+            END
+        """)
+    db.execute("""
+            CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+                INSERT INTO chunks_fts(chunks_fts, rowid, content)
+                VALUES ('delete', old.id, old.content);
+            END
+        """)
+    db.execute("""
+            CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+                INSERT INTO chunks_fts(chunks_fts, rowid, content)
+                VALUES ('delete', old.id, old.content);
+                INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
+            END
+        """)
+
+    db.execute("""
+            CREATE TABLE IF NOT EXISTS file_meta (
+                file_path TEXT PRIMARY KEY,
+                mtime REAL NOT NULL
+            )
+        """)
+
+    # Embedding cache — avoids redundant OpenAI API calls for unchanged content.
+    db.execute("""
+            CREATE TABLE IF NOT EXISTS embedding_cache (
+                content_hash TEXT PRIMARY KEY,
+                embedding    BLOB NOT NULL,
+                model        TEXT NOT NULL,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+    # Telegram image registry — maps file_ids to descriptions for retrieval.
+    db.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id TEXT NOT NULL,
+                description TEXT NOT NULL,
+                caption TEXT,
+                embedding BLOB,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+    # Platform-agnostic image registry (Telegram, WhatsApp, Slack, etc.)
+    db.execute("""
+            CREATE TABLE IF NOT EXISTS platform_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                media_ref TEXT NOT NULL,
+                description TEXT NOT NULL,
+                caption TEXT,
+                embedding BLOB,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+    _migrate_telegram_images(db)
+
+
+def _migrate_telegram_images(db: sqlite3.Connection) -> None:
+    """One-time migration: copy telegram_images rows into platform_images."""
+    existing = db.execute(
+        "SELECT COUNT(*) FROM platform_images WHERE platform = 'telegram'"
+    ).fetchone()[0]
+    if existing > 0:
+        return
+    telegram_count = db.execute("SELECT COUNT(*) FROM telegram_images").fetchone()[0]
+    if telegram_count == 0:
+        return
+    db.execute("""
+            INSERT INTO platform_images (platform, media_ref, description, caption, embedding, created_at)
+            SELECT 'telegram', file_id, description, caption, embedding, created_at
+            FROM telegram_images
+        """)
+
+
+def _image_dict(row: tuple, score: float | None = None) -> dict:
+    """(id, platform, media_ref, description, caption, created_at, ...)
+    as the dict the bots send images from."""
+    return {
+        "id": row[0],
+        "platform": row[1],
+        "media_ref": row[2],
+        "file_id": row[2],  # backward compat alias
+        "description": row[3],
+        "caption": row[4],
+        "created_at": row[5],
+        "score": score,
+    }
 
 
 class MemoryIndex:
@@ -35,175 +153,14 @@ class MemoryIndex:
     def _init_db(self):
         self.db = sqlite3.connect(str(self.config.db_path))
         self.db.execute("PRAGMA journal_mode=WAL")
-
-        self.db.execute("""
-            CREATE TABLE IF NOT EXISTS chunks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_path TEXT NOT NULL,
-                line_start INTEGER NOT NULL,
-                line_end INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                embedding BLOB,
-                file_mtime REAL NOT NULL,
-                created_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
-
-        self.db.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-                content,
-                content='chunks',
-                content_rowid='id',
-                tokenize='porter unicode61'
-            )
-        """)
-
-        # Triggers keep FTS5 in sync with the chunks table.
-        self.db.execute("""
-            CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-                INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
-            END
-        """)
-        self.db.execute("""
-            CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
-                INSERT INTO chunks_fts(chunks_fts, rowid, content)
-                VALUES ('delete', old.id, old.content);
-            END
-        """)
-        self.db.execute("""
-            CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
-                INSERT INTO chunks_fts(chunks_fts, rowid, content)
-                VALUES ('delete', old.id, old.content);
-                INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
-            END
-        """)
-
-        self.db.execute("""
-            CREATE TABLE IF NOT EXISTS file_meta (
-                file_path TEXT PRIMARY KEY,
-                mtime REAL NOT NULL
-            )
-        """)
-
-        # Embedding cache — avoids redundant OpenAI API calls for unchanged content.
-        self.db.execute("""
-            CREATE TABLE IF NOT EXISTS embedding_cache (
-                content_hash TEXT PRIMARY KEY,
-                embedding    BLOB NOT NULL,
-                model        TEXT NOT NULL,
-                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-
-        # Telegram image registry — maps file_ids to descriptions for retrieval.
-        self.db.execute("""
-            CREATE TABLE IF NOT EXISTS telegram_images (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_id TEXT NOT NULL,
-                description TEXT NOT NULL,
-                caption TEXT,
-                embedding BLOB,
-                created_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
-
-        # Platform-agnostic image registry (Telegram, WhatsApp, Slack, etc.)
-        self.db.execute("""
-            CREATE TABLE IF NOT EXISTS platform_images (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                platform TEXT NOT NULL,
-                media_ref TEXT NOT NULL,
-                description TEXT NOT NULL,
-                caption TEXT,
-                embedding BLOB,
-                created_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
-
-        self._migrate_telegram_images()
+        _create_schema(self.db)
         self.db.commit()
-
-    def _migrate_telegram_images(self):
-        """One-time migration: copy telegram_images rows into platform_images."""
-        existing = self.db.execute(
-            "SELECT COUNT(*) FROM platform_images WHERE platform = 'telegram'"
-        ).fetchone()[0]
-        if existing > 0:
-            return
-        telegram_count = self.db.execute("SELECT COUNT(*) FROM telegram_images").fetchone()[0]
-        if telegram_count == 0:
-            return
-        self.db.execute("""
-            INSERT INTO platform_images (platform, media_ref, description, caption, embedding, created_at)
-            SELECT 'telegram', file_id, description, caption, embedding, created_at
-            FROM telegram_images
-        """)
 
     @property
     def openai(self) -> OpenAIClient:
         if self._openai is None:
             self._openai = OpenAIClient(self.config.openai.api_key)
         return self._openai
-
-    # ------------------------------------------------------------------
-    # Chunking
-    # ------------------------------------------------------------------
-
-    def chunk_text(self, text: str, file_path: str) -> list[Chunk]:
-        """Split text into chunks by entries, headings and size.
-
-        A ``---`` line ends an entry (``MemoryStore.save`` writes one after
-        each), so every entry starts a fresh chunk. A heading starts a new
-        chunk once the current one is half full. Only an entry too long for
-        one chunk is split by size, with overlap and its heading repeated.
-        """
-        lines = text.split("\n")
-        chunks: list[Chunk] = []
-        current: list[str] = []
-        start = 0
-        heading = ""
-        words = 0
-        target = self.config.memory.chunk_target_words
-
-        def flush(end: int) -> None:
-            content = "\n".join(current).strip()
-            if content and content != "---":
-                chunks.append(Chunk(file_path=file_path, line_start=start,
-                                    line_end=end, content=content))
-
-        for i, line in enumerate(lines):
-            is_heading = line.startswith("#")
-            if is_heading and words > target // 2:
-                flush(i - 1)
-                current, start, words = [], i, 0
-            if is_heading:
-                heading = line
-
-            current.append(line)
-            words += len(line.split())
-
-            if line.strip() == "---":
-                flush(i)
-                current, start, words, heading = [], i + 1, 0, ""
-            elif words >= target:
-                flush(i)
-                # Keep a tail of the entry for continuity, under its heading.
-                overlap_words = 0
-                keep = len(current)
-                for j in range(len(current) - 1, -1, -1):
-                    overlap_words += len(current[j].split())
-                    keep = j
-                    if overlap_words >= self.config.memory.chunk_overlap_words:
-                        break
-                current = current[keep:] if keep > 0 else []
-                start = i - len(current) + 1
-                if heading and current and not any(ln.startswith("#") for ln in current):
-                    current.insert(0, heading)
-                words = sum(len(ln.split()) for ln in current)
-
-        if current:
-            flush(len(lines) - 1)
-        return chunks
 
     # ------------------------------------------------------------------
     # Embeddings
@@ -290,7 +247,11 @@ class MemoryIndex:
         mtime = file_path.stat().st_mtime
         path_str = str(file_path)
 
-        chunks = self.chunk_text(content, path_str) if content.strip() else []
+        memory = self.config.memory
+        chunks = chunk_text(
+            content, path_str,
+            target_words=memory.chunk_target_words, overlap_words=memory.chunk_overlap_words,
+        ) if content.strip() else []
         embeddings = await self.get_embeddings([c.content for c in chunks])
 
         with self.db:
@@ -345,6 +306,48 @@ class MemoryIndex:
         return changed
 
     # ------------------------------------------------------------------
+    # Queries for HybridSearch
+    # ------------------------------------------------------------------
+
+    def embeddings_version(self) -> tuple[int, int]:
+        """(count, highest id) of the chunks that have an embedding. It
+        changes whenever chunks change (re-indexing a file gives its rows
+        new, higher ids), so a search can cache the embeddings until then."""
+        count, max_id = self.db.execute(
+            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM chunks WHERE embedding IS NOT NULL"
+        ).fetchone()
+        return count, max_id
+
+    def chunk_embeddings(self) -> list[tuple[int, np.ndarray]]:
+        """(chunk id, embedding) of every chunk that has one."""
+        rows = self.db.execute(
+            "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL"
+        ).fetchall()
+        return [(chunk_id, self.deserialize_embedding(blob)) for chunk_id, blob in rows]
+
+    def keyword_matches(self, fts_query: str, limit: int | None) -> list[tuple[int, float]]:
+        """(chunk id, FTS5 rank) of the best *limit* matches (all with None)
+        for an FTS5 query, best first. FTS5's rank is BM25 negated: more
+        negative is a better match. Empty if the query fails."""
+        try:
+            return self.db.execute(
+                """SELECT rowid, rank FROM chunks_fts
+                   WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?""",
+                (fts_query, -1 if limit is None else limit),
+            ).fetchall()
+        except sqlite3.Error as exc:
+            logger.warning("Keyword search failed for {q!r}: {exc}", q=fts_query, exc=exc)
+            return []
+
+    def get_chunk(self, chunk_id: int) -> Chunk | None:
+        """The stored chunk with this id (without its embedding)."""
+        row = self.db.execute(
+            "SELECT file_path, line_start, line_end, content FROM chunks WHERE id = ?",
+            (chunk_id,),
+        ).fetchone()
+        return Chunk(*row) if row else None
+
+    # ------------------------------------------------------------------
     # Platform-agnostic image registry
     # ------------------------------------------------------------------
 
@@ -393,7 +396,7 @@ class MemoryIndex:
                 np.dot(query_embedding, stored_emb)
                 / (np.linalg.norm(query_embedding) * np.linalg.norm(stored_emb) + 1e-8)
             )
-            results.append(self._image_dict(row, score=similarity))
+            results.append(_image_dict(row, score=similarity))
 
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
@@ -409,23 +412,8 @@ class MemoryIndex:
                 (image_id, platform, platform),
             ).fetchone()
             if row is not None:
-                found[row[0]] = self._image_dict(row)
+                found[row[0]] = _image_dict(row)
         return list(found.values())
-
-    @staticmethod
-    def _image_dict(row: tuple, score: float | None = None) -> dict:
-        """(id, platform, media_ref, description, caption, created_at, ...)
-        as the dict the bots send images from."""
-        return {
-            "id": row[0],
-            "platform": row[1],
-            "media_ref": row[2],
-            "file_id": row[2],  # backward compat alias
-            "description": row[3],
-            "caption": row[4],
-            "created_at": row[5],
-            "score": score,
-        }
 
     # ------------------------------------------------------------------
     # Stats

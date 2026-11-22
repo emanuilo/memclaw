@@ -1,15 +1,13 @@
-"""First-run setup wizard and `memclaw configure` handler."""
+"""The setup wizard: first run and `memclaw configure`."""
 
 from __future__ import annotations
-
-import asyncio
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from .backends import DEFAULT_BACKEND, get_backend_class, list_backends
-from .config import (
+from ..backends import DEFAULT_BACKEND, get_backend_class, list_backends
+from ..config import (
     ENV_FILE,
     MemclawConfig,
     Setting,
@@ -18,9 +16,9 @@ from .config import (
     set_environment,
     write_env_file,
 )
-from .bot import PLATFORMS as CHAT_PLATFORMS
-from .openai_client import ProbeReport, probe_openai
-from .prompts import choose, masked_input
+from ..bot import PLATFORMS as CHAT_PLATFORMS
+from ..terminal_input import choose, masked_input
+from .doctor import check_openai
 
 console = Console()
 
@@ -183,7 +181,7 @@ def run_setup(config: MemclawConfig, *, reconfigure: bool = False) -> None:
     set_environment(values, drop_keys)
     console.print(f"\n[green]Config saved to {ENV_FILE}[/green]")
 
-    _check_openai(values.get("OPENAI_API_KEY"))
+    check_openai(values.get("OPENAI_API_KEY"), console)
 
 
 def _print_intro(reconfigure: bool) -> None:
@@ -243,45 +241,3 @@ def _require_answers(settings: list[Setting], values: dict[str, str]) -> None:
         if s.required and s.env and not values.get(s.env):
             console.print(f"[red]Error:[/red] {s.prompt} is required.")
             raise SystemExit(1)
-
-
-def _check_openai(api_key: str | None) -> None:
-    """Verify OpenAI model access so the user finds out about disabled models
-    right now, not when their first voice message silently disappears."""
-    if not api_key:
-        return
-    console.print("\n[cyan]Checking OpenAI model access...[/cyan]")
-    try:
-        report = asyncio.run(probe_openai(api_key))
-        print_probe_report(report, console)
-    except Exception as exc:
-        console.print(f"[yellow]Skipping model check:[/yellow] {exc}")
-
-
-def print_probe_report(report: ProbeReport, console: Console) -> None:
-    """Render a probe report (memclaw.openai_client.probe_openai) as a panel."""
-    body = Text()
-    for outcome in report:
-        marker = "[green]✓[/green]" if outcome.ok else "[red]✗[/red]"
-        line = f"{marker} {outcome.name}  [dim]({outcome.model})[/dim]"
-        if not outcome.ok and outcome.error:
-            line += f"\n  [red]{outcome.error}[/red]"
-        body.append_text(Text.from_markup(line))
-        body.append("\n")
-
-    if not report.all_ok:
-        body.append("\n", style="")
-        body.append_text(
-            Text.from_markup(
-                "[yellow]Enable the missing models for your project at[/yellow]\n"
-                "[bold]https://platform.openai.com/settings/organization/limits[/bold]"
-            )
-        )
-
-    console.print(
-        Panel(
-            body,
-            title="OpenAI model access",
-            border_style="green" if report.all_ok else "yellow",
-        )
-    )

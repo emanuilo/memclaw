@@ -29,7 +29,7 @@ from claude_agent_sdk import (
 )
 from loguru import logger
 from ..config import process_environment
-from ..prompts import choose, masked_input
+from ..terminal_input import choose, masked_input
 from ..tools import TOOL_DEFINITIONS
 from .base import ProgressCallback, TurnResult, report_tool_step
 from .claude_models import SDK_EFFORT_LEVELS, ModelInfo, fetch_models

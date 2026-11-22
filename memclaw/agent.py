@@ -24,7 +24,6 @@ from loguru import logger
 from .backends import AgentBackend, build_backend
 from .backends.base import ProgressCallback, TurnResult
 from .config import MemclawConfig
-from .index import MemoryIndex
 from .instructions import (
     build_system_prompt,
     content_hash,
@@ -32,11 +31,9 @@ from .instructions import (
     load_agent_instructions,
     load_permanent_memory,
 )
-from .memory import Consolidator
+from .memory import Consolidator, HybridSearch, MemoryIndex, MemoryStore
 from .reminders import ReminderScheduler
-from .search import HybridSearch
 from .sessions import SessionStore
-from .store import MemoryStore
 from .tools import ToolExecutor
 
 # Per-turn memory search results. Kept small because every context block

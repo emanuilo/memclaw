@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
-from memclaw.index import MemoryIndex
+from memclaw.memory import MemoryIndex
 
 
 @pytest.fixture
@@ -144,40 +144,6 @@ class TestEmbeddingCacheBehavior:
         assert result == []
 
 
-class TestChunking:
-    def test_basic_chunking(self, idx: MemoryIndex):
-        text = "Hello world.\n\n---\n\nSecond paragraph."
-        chunks = idx.chunk_text(text, "test.md")
-        assert len(chunks) >= 1
-        assert all(c.file_path == "test.md" for c in chunks)
-
-    def test_empty_text(self, idx: MemoryIndex):
-        chunks = idx.chunk_text("", "test.md")
-        assert chunks == []
-
-
-class TestEntryChunking:
-    def test_each_entry_is_its_own_chunk(self, cfg: MemclawConfig, idx: MemoryIndex):
-        from memclaw.store import MemoryStore
-
-        store = MemoryStore(cfg)
-        store.save("First entry about apples.")
-        path = store.save("Second entry about bananas.")
-        chunks = idx.chunk_text(path.read_text(), str(path))
-        bananas = [c for c in chunks if "bananas" in c.content]
-        assert len(bananas) == 1
-        assert "apples" not in bananas[0].content
-        assert bananas[0].content.count("## ") == 1
-
-    def test_long_entry_is_split_with_overlap_under_its_heading(self, idx: MemoryIndex):
-        body = "\n".join(f"line {i} " + "word " * 20 for i in range(40))
-        chunks = idx.chunk_text(f"## 10:00 - Note\n\n{body}\n\n---\n", "f.md")
-        assert len(chunks) > 1
-        assert all(c.content.startswith("## 10:00 - Note") for c in chunks)
-        # Consecutive chunks share some text.
-        assert chunks[0].content.splitlines()[-1] in chunks[1].content
-
-
 class TestIndexScope:
     @pytest.mark.asyncio
     async def test_agents_md_and_hidden_dirs_are_not_indexed(self, cfg: MemclawConfig, idx: MemoryIndex):
@@ -237,3 +203,35 @@ class TestIndexScope:
         await idx.store_platform_image("whatsapp", "wa-1", "a cat")
         await idx.store_platform_image("telegram", "tg-1", "a dog")
         assert idx.get_stats()["images"] == 2
+
+
+class TestSearchQueries:
+    """The queries HybridSearch runs through the index (it has no SQL of its own)."""
+
+    @pytest.mark.asyncio
+    async def test_chunks_and_their_embeddings(self, cfg: MemclawConfig, idx: MemoryIndex):
+        assert idx.embeddings_version() == (0, 0)
+        assert idx.chunk_embeddings() == []
+        path = cfg.memory_subdir / "2026-01-01.md"
+        path.write_text("## 10:00 - Note\n\nmy dog is called Max\n\n---\n")
+        await idx.index_file(path)
+
+        [(chunk_id, emb)] = idx.chunk_embeddings()
+        assert idx.embeddings_version() == (1, chunk_id)
+        assert emb.dtype == np.float32
+        chunk = idx.get_chunk(chunk_id)
+        assert (chunk.file_path, chunk.line_start, chunk.line_end) == (str(path), 0, 4)
+        assert "my dog is called Max" in chunk.content
+        assert idx.get_chunk(chunk_id + 1) is None
+
+    @pytest.mark.asyncio
+    async def test_keyword_matches(self, cfg: MemclawConfig, idx: MemoryIndex):
+        path = cfg.memory_subdir / "2026-01-01.md"
+        path.write_text("## 10:00 - Note\n\nmy dog is called Max\n\n---\n")
+        await idx.index_file(path)
+        [(chunk_id, rank)] = idx.keyword_matches('"max"', limit=None)
+        assert idx.get_chunk(chunk_id) is not None and rank < 0
+        assert idx.keyword_matches('"nothing"', limit=5) == []
+
+    def test_a_malformed_keyword_query_finds_nothing(self, idx: MemoryIndex):
+        assert idx.keyword_matches('"unterminated', limit=5) == []

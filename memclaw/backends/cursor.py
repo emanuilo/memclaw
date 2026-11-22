@@ -19,7 +19,7 @@ from loguru import logger
 from rich.prompt import Prompt
 
 from ..config import set_environment
-from ..prompts import masked_input
+from ..terminal_input import masked_input
 from .base import ProgressCallback, TurnResult
 from .claude_models import ModelInfo
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks

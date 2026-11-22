@@ -1,18 +1,19 @@
-"""Tests for the shared numbered picker and the setup pickers built on it."""
+"""Tests for the terminal prompts: the numbered picker and masked input."""
 from __future__ import annotations
 
+import io
 from unittest.mock import MagicMock, patch
 
+import pytest
 from rich.panel import Panel
 
-from memclaw import setup
-from memclaw.prompts import choose
+from memclaw.terminal_input import _read_masked, choose
 
 
 def _choose(answer: str, **kwargs):
     """Run `choose` with Prompt.ask mocked. Returns (index, panel, prompt kwargs)."""
     console = MagicMock()
-    with patch("memclaw.prompts.Prompt.ask", return_value=answer) as ask:
+    with patch("memclaw.terminal_input.Prompt.ask", return_value=answer) as ask:
         index = choose(console, **kwargs)
     panel = next(c.args[0] for c in console.print.call_args_list
                  if c.args and isinstance(c.args[0], Panel))
@@ -40,18 +41,23 @@ class TestChoose:
         assert panel.renderable == "[bold]1)[/bold] a\n\n[dim]note[/dim]"
 
 
-class TestSetupPickers:
-    def test_platform_defaults_to_the_saved_one(self):
-        with patch("memclaw.prompts.Prompt.ask", return_value="3") as ask:
-            platform = setup._select_platform({"MEMCLAW_PLATFORM": "whatsapp"})
-        expected = [name for name, _ in setup.PLATFORMS].index("whatsapp") + 1
-        assert ask.call_args.kwargs["default"] == str(expected)
-        assert platform == setup.PLATFORMS[2][0]
+class TestMaskedKeys:
+    """The key loop masked_input runs on a real terminal."""
 
-    def test_backend_defaults_to_the_saved_one(self):
-        backends = setup.list_backends()
-        with patch("memclaw.prompts.Prompt.ask", return_value="2") as ask:
-            name = setup._select_backend({"AGENT_BACKEND": "cursor"})
-        expected = [cls.name for cls in backends].index("cursor") + 1
-        assert ask.call_args.kwargs["default"] == str(expected)
-        assert name == backends[1].name
+    def _read(self, keys: str, visible: int = 4) -> tuple[str, str]:
+        out = io.StringIO()
+        with patch("sys.stdin", io.StringIO(keys)), patch("sys.stdout", out):
+            value = _read_masked(visible)
+        return value, out.getvalue()
+
+    def test_echoes_the_first_chars_then_stars(self):
+        assert self._read("sk-abcdef\n") == ("sk-abcdef", "sk-a*****")
+
+    def test_backspace_deletes_and_control_keys_are_ignored(self):
+        value, echo = self._read("ab\x7f\x7f\x7fc\x01d\r")
+        assert value == "cd"
+        assert echo == "ab\b \b\b \bcd"
+
+    def test_ctrl_c_interrupts(self):
+        with pytest.raises(KeyboardInterrupt):
+            self._read("ab\x03")

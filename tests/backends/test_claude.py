@@ -752,7 +752,7 @@ def _ask(models, *, existing=None, answers=("1",),
         return answers[len(prompts) - 1]
 
     with patch("memclaw.backends.claude.fetch_models", fetch), \
-            patch("memclaw.prompts.Prompt.ask", side_effect=_prompt):
+            patch("memclaw.terminal_input.Prompt.ask", side_effect=_prompt):
         values, drops = ClaudeAgentBackend._ask_model_and_effort(
             console, existing or {}, auth_mode="api_key", credential="sk-ant-test",
             settings=ClaudeSettings(),   # loads CLAUDE_MODEL / CLAUDE_EFFORT from the shell
@@ -895,7 +895,7 @@ def _wizard(*, answers, credential="", existing=None, models=None,
         return_value=models or [])
     answer_iter = iter(answers)
 
-    with patch("memclaw.prompts.Prompt.ask",
+    with patch("memclaw.terminal_input.Prompt.ask",
                side_effect=lambda *a, **k: next(answer_iter)), \
             patch("memclaw.backends.claude.masked_input", return_value=credential), \
             patch("memclaw.backends.claude.fetch_models", fetch):

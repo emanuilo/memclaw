@@ -106,7 +106,7 @@ baseline = ".code-shape/baseline.json"
 # Outside systems should be reached through one module each. Existing direct
 # uses are in the baseline; new ones fail.
 "openai" = { msg = "Only memclaw/openai_client.py imports the OpenAI SDK. Call OpenAIClient (embed, transcribe, chat), or add the call there.", allowed = ["memclaw/openai_client.py"] }
-"sqlite3" = { msg = "Only the storage modules (memclaw/index.py, memclaw/reminders.py) open SQLite; call their methods instead.", allowed = ["memclaw/index.py", "memclaw/reminders.py"] }
+"sqlite3" = { msg = "Only the storage modules (memclaw/memory/index.py for the search index, memclaw/reminders.py) open SQLite; call their methods instead, or add the query there.", allowed = ["memclaw/memory/index.py", "memclaw/reminders.py"] }
 # Settings come from memclaw/config.py only (config_modules above bans os.environ elsewhere); .env files too.
 "dotenv" = { msg = "Only memclaw/config.py loads .env files. Use its read_env_file / update_env_file / reload_env_file, or add a setting there and read it from MemclawConfig.", allowed = ["memclaw/config.py"] }
 
@@ -132,19 +132,19 @@ ignore_names = [
 [tool.shape.concepts]
 # The ideas a change is usually about (tracked in `code-shape report`, never a
 # gate): words that name each one in code, and the module that should own it.
-"memory notes (daily files)" = { terms = ["MemoryStore", "daily_file", "memory_save"], home = "memclaw/store.py" }
+"memory notes (daily files)" = { terms = ["MemoryStore", "daily_file", "memory_save"], home = "memclaw/memory/notes.py" }
 "MEMORY.md + consolidation" = { terms = ["consolidat", "MEMORY\\.md", "permanent_memory"], home = "memclaw/memory/consolidation.py" }
-"search + index" = { terms = ["HybridSearch", "MemoryIndex", "embedding"], home = "memclaw/index.py" }
+"search + index" = { terms = ["HybridSearch", "MemoryIndex", "embedding"], home = "memclaw/memory/index.py" }
 "reminders" = { terms = ["remind"], home = "memclaw/reminders.py" }
 "settings storage (.env)" = { terms = ["read_env_file", "update_env_file", "write_env_file", "os\\.environ"], home = "memclaw/config.py" }
 "AI backends" = { terms = ["AgentBackend", "build_backend", "agent_backend", "AGENT_BACKEND"], home = "memclaw/backends/base.py" }
 "model / effort selection" = { terms = ["set_model", "set_effort", "list_models", "effort_levels"], home = "memclaw/backends/model_selection.py" }
 "chat platforms" = { terms = ["telegram", "slack", "whatsapp"], home = "memclaw/bot/__init__.py" }
 "voice transcription" = { terms = ["whisper", "transcri"], home = "memclaw/bot/inbound.py" }
-"images" = { terms = ["image_save", "image_search", "platform_image"], home = "memclaw/index.py" }
+"images" = { terms = ["image_save", "image_search", "platform_image"], home = "memclaw/memory/index.py" }
 "agent tools" = { terms = ["TOOL_DEFINITIONS", "ToolExecutor"], home = "memclaw/tools.py" }
 "conversations / sessions" = { terms = ["SessionStore", "session_key", "reset_session"], home = "memclaw/sessions.py" }
-"setup wizard" = { terms = ["run_setup", "wizard", "needs_setup"], home = "memclaw/setup.py" }
+"setup wizard" = { terms = ["run_setup", "wizard", "needs_setup"], home = "memclaw/setup/wizard.py" }
 "links" = { terms = ["LinkProcessor", "process_links"], home = "memclaw/bot/links.py" }
 
 # ---------------------------------------------------------------------------
@@ -167,8 +167,9 @@ containers = ["memclaw"]
 layers = [
     # Entry point: the `memclaw` command.
     "cli",
-    # The interactive setup wizard. It lists the chat platforms from
-    # memclaw.bot's registry.
+    # Setting up from the terminal (memclaw.setup): the wizard and the doctor
+    # report. It lists the chat platforms from memclaw.bot's registry and
+    # lets the chosen backend ask its own questions.
     "setup",
     # The chat bots (memclaw.bot): one module per chat app, plus what they share.
     "bot",
@@ -178,15 +179,15 @@ layers = [
     "backends",
     # The memory tools the agent can call.
     "tools",
-    # The memory subsystem (memclaw.memory): MEMORY.md consolidation, the only
-    # writer of MEMORY.md. It builds on the modules below and reaches the LLM
-    # through the backend the agent hands it, so it doesn't import backends.
+    # The memory subsystem (memclaw.memory): the notes, search over them, and
+    # MEMORY.md consolidation (the only writer of MEMORY.md). It builds on the
+    # modules below and reaches the LLM through the backend the agent hands
+    # it, so it doesn't import backends.
     "memory",
     # Independent building blocks (`|`: they don't import each other).
-    "search | store | reminders | sessions | prompts | instructions",
-    # SQLite + embeddings index, used by search.
-    "index",
-    # The OpenAI adapter (embeddings, transcription, chat), used by index and bot.
+    "reminders | sessions | terminal_input | instructions",
+    # The OpenAI adapter (embeddings, transcription, chat), used by the
+    # memory index and bot.
     "openai_client",
     # Settings read from the environment. Imports nothing from memclaw.
     "config",
@@ -243,10 +244,41 @@ allowed_importers = ["memclaw.openai_client"]
 
 [[tool.importlinter.contracts]]
 id = "memory-via-package"
-name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (e.g. Consolidator)"
+name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (MemoryStore, MemoryIndex, HybridSearch, Consolidator, ...)"
 type = "protected"
-protected_modules = ["memclaw.memory.consolidation", "memclaw.memory.refs"]
+protected_modules = [
+    "memclaw.memory.chunking",
+    "memclaw.memory.consolidation",
+    "memclaw.memory.index",
+    "memclaw.memory.notes",
+    "memclaw.memory.refs",
+    "memclaw.memory.search",
+]
 allowed_importers = ["memclaw.memory"]
+
+[[tool.importlinter.contracts]]
+id = "memory-layers"
+name = "Inside memclaw.memory: consolidation and search build on the notes and the index, never the other way round"
+type = "layers"
+containers = ["memclaw.memory"]
+layers = [
+    # MEMORY.md consolidation; ranking search results. Independent.
+    "consolidation | search",
+    # The Markdown notes; the SQLite index of them (the only SQLite user
+    # here); the reference check consolidation runs.
+    "notes | index | refs",
+    # Splitting a note into chunks, used by index.
+    "chunking",
+]
+# A new module inside memclaw.memory must be placed in a layer above.
+exhaustive = true
+
+[[tool.importlinter.contracts]]
+id = "setup-via-package"
+name = "Only memclaw.setup imports its own modules: everyone else uses what memclaw.setup exports (run_setup, needs_setup, print_logo, print_probe_report)"
+type = "protected"
+protected_modules = ["memclaw.setup.doctor", "memclaw.setup.wizard"]
+allowed_importers = ["memclaw.setup"]
 
 [[tool.importlinter.contracts]]
 id = "defaults-standalone"
