@@ -144,40 +144,6 @@ class TestEmbeddingCacheBehavior:
         assert result == []
 
 
-class TestChunking:
-    def test_basic_chunking(self, idx: MemoryIndex):
-        text = "Hello world.\n\n---\n\nSecond paragraph."
-        chunks = idx.chunk_text(text, "test.md")
-        assert len(chunks) >= 1
-        assert all(c.file_path == "test.md" for c in chunks)
-
-    def test_empty_text(self, idx: MemoryIndex):
-        chunks = idx.chunk_text("", "test.md")
-        assert chunks == []
-
-
-class TestEntryChunking:
-    def test_each_entry_is_its_own_chunk(self, cfg: MemclawConfig, idx: MemoryIndex):
-        from memclaw.memory import MemoryStore
-
-        store = MemoryStore(cfg)
-        store.save("First entry about apples.")
-        path = store.save("Second entry about bananas.")
-        chunks = idx.chunk_text(path.read_text(), str(path))
-        bananas = [c for c in chunks if "bananas" in c.content]
-        assert len(bananas) == 1
-        assert "apples" not in bananas[0].content
-        assert bananas[0].content.count("## ") == 1
-
-    def test_long_entry_is_split_with_overlap_under_its_heading(self, idx: MemoryIndex):
-        body = "\n".join(f"line {i} " + "word " * 20 for i in range(40))
-        chunks = idx.chunk_text(f"## 10:00 - Note\n\n{body}\n\n---\n", "f.md")
-        assert len(chunks) > 1
-        assert all(c.content.startswith("## 10:00 - Note") for c in chunks)
-        # Consecutive chunks share some text.
-        assert chunks[0].content.splitlines()[-1] in chunks[1].content
-
-
 class TestIndexScope:
     @pytest.mark.asyncio
     async def test_agents_md_and_hidden_dirs_are_not_indexed(self, cfg: MemclawConfig, idx: MemoryIndex):

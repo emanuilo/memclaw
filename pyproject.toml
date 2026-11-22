@@ -187,8 +187,9 @@ layers = [
     "reminders | sessions | prompts | instructions",
     # SQLite + embeddings index, used by search.
     "index",
-    # The OpenAI adapter (embeddings, transcription, chat), used by index and bot.
-    "openai_client",
+    # The OpenAI adapter (embeddings, transcription, chat), used by index and
+    # bot; splitting notes into chunks, used by index.
+    "openai_client | chunking",
     # Settings read from the environment. Imports nothing from memclaw.
     "config",
 ]

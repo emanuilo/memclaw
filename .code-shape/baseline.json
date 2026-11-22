@@ -5,7 +5,6 @@
       "cognitive-complexity|memclaw/backends/claude.py|ClaudeAgentBackend._query": 39,
       "cognitive-complexity|memclaw/backends/claude.py|ClaudeAgentBackend.run_one_shot": 23,
       "cognitive-complexity|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 24,
-      "cognitive-complexity|memclaw/index.py|MemoryIndex.chunk_text": 27,
       "cognitive-complexity|memclaw/prompts.py|masked_input": 16
     },
     "mypy": {
@@ -20,13 +19,11 @@
       "too-many-locals|memclaw/agent.py|MemclawAgent._handle": 18,
       "too-many-locals|memclaw/backends/claude.py|ClaudeAgentBackend.wizard_setup": 17,
       "too-many-locals|memclaw/backends/cursor.py|CursorAgentBackend.run_turn": 20,
-      "too-many-locals|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 19,
-      "too-many-locals|memclaw/index.py|MemoryIndex.chunk_text": 17
+      "too-many-locals|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 19
     },
     "ruff": {
       "function-complexity|memclaw/backends/claude.py|ClaudeAgentBackend._query": 13,
       "function-complexity|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 11,
-      "function-complexity|memclaw/index.py|MemoryIndex.chunk_text": 12,
       "too-many-args|memclaw/backends/base.py|AgentBackend.run_turn": 10,
       "too-many-args|memclaw/backends/claude.py|ClaudeAgentBackend.run_turn": 10,
       "too-many-args|memclaw/backends/cursor.py|CursorAgentBackend.run_turn": 10,
@@ -37,7 +34,6 @@
     "sizes": {
       "class-lines|memclaw/backends/claude.py|ClaudeAgentBackend": 501,
       "class-lines|memclaw/backends/cursor.py|CursorAgentBackend": 419,
-      "class-lines|memclaw/index.py|MemoryIndex": 345,
       "file-lines|memclaw/backends/claude.py|": 775,
       "file-lines|memclaw/backends/cursor.py|": 604,
       "file-lines|memclaw/tools.py|": 576

@@ -2,23 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from loguru import logger
 
+from .chunking import Chunk, chunk_text
 from .config import MemclawConfig
 from .openai_client import OpenAIClient
-
-
-@dataclass
-class Chunk:
-    file_path: str
-    line_start: int
-    line_end: int
-    content: str
-    embedding: np.ndarray | None = None
 
 
 def _create_schema(db: sqlite3.Connection) -> None:
@@ -172,66 +163,6 @@ class MemoryIndex:
         return self._openai
 
     # ------------------------------------------------------------------
-    # Chunking
-    # ------------------------------------------------------------------
-
-    def chunk_text(self, text: str, file_path: str) -> list[Chunk]:
-        """Split text into chunks by entries, headings and size.
-
-        A ``---`` line ends an entry (``MemoryStore.save`` writes one after
-        each), so every entry starts a fresh chunk. A heading starts a new
-        chunk once the current one is half full. Only an entry too long for
-        one chunk is split by size, with overlap and its heading repeated.
-        """
-        lines = text.split("\n")
-        chunks: list[Chunk] = []
-        current: list[str] = []
-        start = 0
-        heading = ""
-        words = 0
-        target = self.config.memory.chunk_target_words
-
-        def flush(end: int) -> None:
-            content = "\n".join(current).strip()
-            if content and content != "---":
-                chunks.append(Chunk(file_path=file_path, line_start=start,
-                                    line_end=end, content=content))
-
-        for i, line in enumerate(lines):
-            is_heading = line.startswith("#")
-            if is_heading and words > target // 2:
-                flush(i - 1)
-                current, start, words = [], i, 0
-            if is_heading:
-                heading = line
-
-            current.append(line)
-            words += len(line.split())
-
-            if line.strip() == "---":
-                flush(i)
-                current, start, words, heading = [], i + 1, 0, ""
-            elif words >= target:
-                flush(i)
-                # Keep a tail of the entry for continuity, under its heading.
-                overlap_words = 0
-                keep = len(current)
-                for j in range(len(current) - 1, -1, -1):
-                    overlap_words += len(current[j].split())
-                    keep = j
-                    if overlap_words >= self.config.memory.chunk_overlap_words:
-                        break
-                current = current[keep:] if keep > 0 else []
-                start = i - len(current) + 1
-                if heading and current and not any(ln.startswith("#") for ln in current):
-                    current.insert(0, heading)
-                words = sum(len(ln.split()) for ln in current)
-
-        if current:
-            flush(len(lines) - 1)
-        return chunks
-
-    # ------------------------------------------------------------------
     # Embeddings
     # ------------------------------------------------------------------
 
@@ -316,7 +247,11 @@ class MemoryIndex:
         mtime = file_path.stat().st_mtime
         path_str = str(file_path)
 
-        chunks = self.chunk_text(content, path_str) if content.strip() else []
+        memory = self.config.memory
+        chunks = chunk_text(
+            content, path_str,
+            target_words=memory.chunk_target_words, overlap_words=memory.chunk_overlap_words,
+        ) if content.strip() else []
         embeddings = await self.get_embeddings([c.content for c in chunks])
 
         with self.db:
