@@ -233,9 +233,7 @@ def consolidate(ctx, since_date):
             with console.status("[cyan]Syncing index...[/cyan]"):
                 await agent.start(include_backend=False)
             with console.status("[cyan]Running consolidation...[/cyan]"):
-                result = await agent._maybe_consolidate(
-                    force=True, consolidated_through_override=override
-                )
+                result = await agent.consolidator.consolidate(force=True, since=override)
             if result:
                 console.print("[green]Consolidation complete.[/green] MEMORY.md has been updated.")
             else:

@@ -125,6 +125,8 @@ Today's file is never consolidated: it is still being written to, and marking it
 4. Saves a dated copy of the previous MEMORY.md in `.history/` (the last 60 are kept; the hidden directory isn't indexed or reachable by the file tools), then overwrites MEMORY.md with the result. Lines appended by hand while the backend was working are carried over below the result; if MEMORY.md was otherwise edited meanwhile, nothing is written and consolidation retries later.
 5. Records the date of the last file it included in `meta.json` so those files aren't processed again.
 
+All of this is `Consolidator` in `memclaw/memory/consolidation.py`, the only code that writes MEMORY.md. The agent creates it and calls `schedule()` after each reply; `memclaw consolidate` calls `consolidate(force=True, since=...)`.
+
 The result aims for about 6,000 characters, with absolute dates, in the language MEMORY.md already uses (English when it starts empty).
 
 ### Permanent Memory in the Prompt

@@ -1,4 +1,7 @@
-"""Tests for MemclawAgent — sessions, consolidation, context, sync, fs guardrail.
+"""Tests for MemclawAgent — sessions, context, sync, fs guardrail.
+
+MEMORY.md consolidation itself is tested in tests/memory/test_consolidation.py;
+here only that the agent schedules and stops it.
 
 These tests run against a backend-agnostic `FakeBackend` so they exercise the
 orchestration in `MemclawAgent` without depending on any SDK. Per-backend
@@ -9,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -91,7 +93,7 @@ def _chat_agent(cfg: MemclawConfig, backend: FakeBackend, platform: str | None =
     """An agent ready for handle(): no search, no consolidation."""
     agent = _make_agent(cfg, backend, platform)
     agent.search.search = AsyncMock(return_value=[])
-    agent._maybe_consolidate = AsyncMock(return_value=False)
+    agent.consolidator.consolidate = AsyncMock(return_value=False)
     return agent
 
 
@@ -368,22 +370,22 @@ class TestBackgroundConsolidation:
             await release.wait()
             return True
 
-        agent._maybe_consolidate = AsyncMock(side_effect=slow_consolidate)
+        agent.consolidator.consolidate = AsyncMock(side_effect=slow_consolidate)
 
         await agent.handle("hi")  # returns while consolidation is still pending
         await asyncio.wait_for(started.wait(), 1)
         await agent.handle("again")  # one already running: no second one
         release.set()
-        await agent._consolidation_task
-        assert agent._maybe_consolidate.await_count == 1
+        await agent.consolidator._task
+        assert agent.consolidator.consolidate.await_count == 1
         agent.close()
 
     @pytest.mark.asyncio
     async def test_failure_is_logged_not_raised(self, cfg: MemclawConfig, fake_backend: FakeBackend):
         agent = _chat_agent(cfg, fake_backend)
-        agent._maybe_consolidate = AsyncMock(side_effect=RuntimeError("API down"))
+        agent.consolidator.consolidate = AsyncMock(side_effect=RuntimeError("API down"))
         reply, _ = await agent.handle("hi")
-        await agent._consolidation_task  # does not raise
+        await agent.consolidator._task  # does not raise
         assert reply
         agent.close()
 
@@ -395,141 +397,12 @@ class TestBackgroundConsolidation:
         async def forever(**kwargs):
             await asyncio.sleep(60)
 
-        agent._maybe_consolidate = AsyncMock(side_effect=forever)
+        agent.consolidator.consolidate = AsyncMock(side_effect=forever)
         await agent.handle("hi")
         await asyncio.sleep(0)
-        task = agent._consolidation_task
+        task = agent.consolidator._task
         await agent.aclose()
         assert task.cancelled()
-
-
-# ────────────────────────────────────────────────────────────────────
-# Spec #2: Memory Consolidation
-# ────────────────────────────────────────────────────────────────────
-
-class TestConsolidation:
-    @pytest.mark.asyncio
-    async def test_skips_when_below_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        """Consolidation should not run when file count < threshold."""
-        cfg.memory.consolidation_threshold = 7
-        agent = _make_agent(cfg, fake_backend)
-
-        # Create 3 daily files (below threshold of 7)
-        for i in range(3):
-            d = date(2025, 3, i + 1)
-            path = cfg.memory_subdir / f"{d.isoformat()}.md"
-            path.write_text(f"# Day {i}\nSome content")
-
-        result = await agent._maybe_consolidate()
-        assert result is False
-        assert fake_backend.one_shot_calls == []
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_runs_when_above_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        """Consolidation should run when file count >= threshold."""
-        cfg.memory.consolidation_threshold = 3
-        fake_backend.one_shot_response = "## Key Facts\n\n- Fact 0\n- Fact 1\n"
-        agent = _make_agent(cfg, fake_backend)
-
-        # Create 5 daily files (above threshold of 3)
-        for i in range(5):
-            d = date(2025, 3, i + 1)
-            path = cfg.memory_subdir / f"{d.isoformat()}.md"
-            path.write_text(f"# Day {i}\nImportant fact {i}")
-
-        agent.index.index_file = AsyncMock()
-
-        result = await agent._maybe_consolidate()
-
-        assert result is True
-        assert cfg.memory_file.exists()
-        assert "Key Facts" in cfg.memory_file.read_text()
-
-        meta_path = cfg.memory_dir / "meta.json"
-        assert meta_path.exists()
-        meta = json.loads(meta_path.read_text())
-        assert meta["consolidated_through"] == "2025-03-05"
-
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_force_ignores_threshold(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        """force=True should run consolidation even with 1 file."""
-        cfg.memory.consolidation_threshold = 100
-        fake_backend.one_shot_response = "## Notes\n- One note"
-        agent = _make_agent(cfg, fake_backend)
-
-        path = cfg.memory_subdir / "2025-03-01.md"
-        path.write_text("# Single day\nJust one note")
-
-        agent.index.index_file = AsyncMock()
-
-        result = await agent._maybe_consolidate(force=True)
-
-        assert result is True
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_consolidated_through_override(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        """consolidated_through_override should override meta.json."""
-        fake_backend.one_shot_response = "## Consolidated"
-        agent = _make_agent(cfg, fake_backend)
-
-        for i in range(1, 11):
-            d = date(2025, 3, i)
-            path = cfg.memory_subdir / f"{d.isoformat()}.md"
-            path.write_text(f"Content for day {i}")
-
-        meta_path = cfg.memory_dir / "meta.json"
-        meta_path.write_text(json.dumps({"consolidated_through": "2025-03-01"}))
-
-        agent.index.index_file = AsyncMock()
-
-        result = await agent._maybe_consolidate(
-            force=True,
-            consolidated_through_override=date(2025, 3, 8),
-        )
-
-        assert result is True
-        # The user message passed to the backend should cover days > 2025-03-08.
-        user_msg = fake_backend.one_shot_calls[-1]["user"]
-        assert "2025-03-09" in user_msg
-        assert "2025-03-10" in user_msg
-        assert "2025-03-05" not in user_msg
-
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_no_files_returns_false(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        """If there are no daily files at all, return False."""
-        agent = _make_agent(cfg, fake_backend)
-        result = await agent._maybe_consolidate(force=True)
-        assert result is False
-        assert fake_backend.one_shot_calls == []
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_content_limit(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        """Content gathering should stop at the consolidation budget."""
-        from memclaw.agent import _CONSOLIDATION_BUDGET_CHARS as budget
-
-        fake_backend.one_shot_response = "## Consolidated"
-        agent = _make_agent(cfg, fake_backend)
-
-        for i in range(1, 6):
-            d = date(2025, 3, i)
-            path = cfg.memory_subdir / f"{d.isoformat()}.md"
-            path.write_text("x" * (budget // 3))
-
-        agent.index.index_file = AsyncMock()
-
-        await agent._maybe_consolidate(force=True)
-
-        user_msg = fake_backend.one_shot_calls[-1]["user"]
-        assert len(user_msg) < budget + 5000
-
-        agent.close()
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -726,135 +599,6 @@ class TestSandboxedFileTools:
 
 
 # ────────────────────────────────────────────────────────────────────
-# Consolidation edge cases
-# ────────────────────────────────────────────────────────────────────
-
-def _daily(cfg: MemclawConfig, d: date, text: str) -> Path:
-    path = cfg.daily_file(d)
-    path.write_text(text)
-    return path
-
-
-def _consolidated_through(cfg: MemclawConfig) -> str:
-    return json.loads((cfg.memory_dir / "meta.json").read_text())["consolidated_through"]
-
-
-class TestConsolidationSafety:
-    @pytest.mark.asyncio
-    async def test_todays_file_is_left_for_later(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        from datetime import timedelta
-
-        fake_backend.one_shot_response = "## Facts\n- x"
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date.today() - timedelta(days=1), "yesterday's note")
-        _daily(cfg, date.today(), "today's note")
-
-        assert await agent._maybe_consolidate(force=True)
-        assert "today's note" not in fake_backend.one_shot_calls[0]["user"]
-        assert _consolidated_through(cfg) == (date.today() - timedelta(days=1)).isoformat()
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_only_today_means_nothing_to_do(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date.today(), "today's note")
-        assert await agent._maybe_consolidate(force=True) is False
-        assert fake_backend.one_shot_calls == []
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_files_past_the_budget_stay_unconsolidated(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        fake_backend.one_shot_response = "## Facts\n- x"
-        agent = _make_agent(cfg, fake_backend)
-        from memclaw.agent import _CONSOLIDATION_BUDGET_CHARS as budget
-
-        for day in range(1, 6):
-            _daily(cfg, date(2025, 3, day), f"day {day} " + "x" * (budget // 3))
-
-        assert await agent._maybe_consolidate(force=True)
-        user_msg = fake_backend.one_shot_calls[0]["user"]
-        assert "day 2 " in user_msg and "day 3 " not in user_msg
-        assert _consolidated_through(cfg) == "2025-03-02"
-
-        # The next run picks up where this one stopped.
-        assert await agent._maybe_consolidate(force=True)
-        assert "day 3 " in fake_backend.one_shot_calls[1]["user"]
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_single_oversized_file_is_truncated_not_stuck(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        from memclaw.agent import _CONSOLIDATION_BUDGET_CHARS as budget
-
-        fake_backend.one_shot_response = "## Facts\n- x"
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date(2025, 3, 1), "y" * (budget + 20000))
-        assert await agent._maybe_consolidate(force=True)
-        assert _consolidated_through(cfg) == "2025-03-01"
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_save_during_consolidation_is_kept(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date(2025, 3, 1), "note")
-
-        async def one_shot(**kwargs):
-            with open(cfg.memory_file, "a") as f:  # appended by hand meanwhile
-                f.write("- Blood type 0 negative\n")
-            return "## Facts\n- consolidated"
-
-        fake_backend.run_one_shot = one_shot
-        assert await agent._maybe_consolidate(force=True)
-        memory = cfg.memory_file.read_text()
-        assert memory.startswith("## Facts\n- consolidated")
-        assert "Blood type 0 negative" in memory
-        history = list((cfg.memory_dir / ".history").glob("MEMORY-*.md"))
-        assert [h.read_text() for h in history] == ["# Personal Memory\n"]
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_manual_edit_during_consolidation_aborts(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date(2025, 3, 1), "note")
-
-        async def one_shot(**kwargs):
-            cfg.memory_file.write_text("# Edited by hand\n")
-            return "## Facts\n- consolidated"
-
-        fake_backend.run_one_shot = one_shot
-        assert await agent._maybe_consolidate(force=True) is False
-        assert cfg.memory_file.read_text() == "# Edited by hand\n"
-        assert not (cfg.memory_dir / "meta.json").exists()
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_failed_backend_call_leaves_memory_untouched(
-        self, cfg: MemclawConfig, fake_backend: FakeBackend,
-    ):
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date(2025, 3, 1), "note")
-        before = cfg.memory_file.read_text()
-
-        async def one_shot(**kwargs):
-            raise RuntimeError("Claude one-shot failed (unknown): API Error: Connection refused")
-
-        fake_backend.run_one_shot = one_shot
-        with pytest.raises(RuntimeError):
-            await agent._maybe_consolidate(force=True)
-        assert cfg.memory_file.read_text() == before
-        assert not (cfg.memory_dir / "meta.json").exists()
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_code_fence_is_stripped(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        fake_backend.one_shot_response = "```markdown\n## Facts\n- x\n```"
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date(2025, 3, 1), "note")
-        assert await agent._maybe_consolidate(force=True)
-        assert cfg.memory_file.read_text() == "## Facts\n- x\n"
-        agent.close()
-
-
-# ────────────────────────────────────────────────────────────────────
 # Resilience and concurrency
 # ────────────────────────────────────────────────────────────────────
 
@@ -865,7 +609,7 @@ class TestResilience:
     ):
         fake_backend.turn_response = TurnResult(text="hi")
         agent = _make_agent(cfg, fake_backend)
-        agent._maybe_consolidate = AsyncMock(return_value=False)
+        agent.consolidator.consolidate = AsyncMock(return_value=False)
         agent.search.search = AsyncMock(side_effect=RuntimeError("OpenAI down"))
         reply, _ = await agent.handle("hello")
         assert reply == "hi"
@@ -990,68 +734,7 @@ class TestMemoryMdIsWrittenOnlyByConsolidation:
         assert "Daisy Disk serial ABC-123" in cfg.daily_file().read_text()
         agent.close()
 
-    @pytest.mark.asyncio
-    async def test_by_default_consolidation_runs_once_a_day_has_passed(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        from datetime import timedelta
-
-        fake_backend.one_shot_response = "# Personal Memory\n- x"
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date.today(), "today")
-        assert await agent._maybe_consolidate() is False  # today isn't over
-        _daily(cfg, date.today() - timedelta(days=1), "yesterday")
-        assert await agent._maybe_consolidate() is True
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_history_keeps_the_last_60(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        history = cfg.memory_dir / ".history"
-        history.mkdir()
-        for i in range(65):
-            (history / f"MEMORY-2025-01-01-{i:06d}.md").write_text(str(i))
-        agent = _make_agent(cfg, fake_backend)
-        agent._save_history("latest")
-        kept = sorted(history.glob("MEMORY-*.md"))
-        assert len(kept) == 60
-        assert kept[-1].read_text() == "latest"
-        assert not (history / "MEMORY-2025-01-01-000000.md").exists()
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_consolidation_is_told_todays_date(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        fake_backend.one_shot_response = "# Personal Memory"
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date(2025, 3, 1), "note")
-        await agent._maybe_consolidate(force=True)
-        assert f"Today's date: {date.today().isoformat()}" in fake_backend.one_shot_calls[0]["user"]
-        agent.close()
-
-
-class TestConsolidationReferences:
-    @pytest.mark.asyncio
-    async def test_other_notes_are_listed_for_the_index(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        fake_backend.one_shot_response = "# Personal Memory"
-        agent = _make_agent(cfg, fake_backend)
-        (cfg.memory_dir / "todos.md").write_text("# Todos\n- renew passport")
-        _daily(cfg, date(2025, 3, 1), "note")
-        await agent._maybe_consolidate(force=True)
-        user_msg = fake_backend.one_shot_calls[0]["user"]
-        assert "## Other Notes" in user_msg
-        assert "- todos.md (" in user_msg and "Todos" in user_msg
-        assert "AGENTS.md" not in user_msg.split("## Other Notes")[1]
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_references_to_missing_notes_are_dropped(self, cfg: MemclawConfig, fake_backend: FakeBackend):
-        fake_backend.one_shot_response = (
-            "# Personal Memory\n\n## Index\n"
-            "- Lion8 login → memory/2025-03-01.md, memory/2024-01-01.md\n"
-        )
-        agent = _make_agent(cfg, fake_backend)
-        _daily(cfg, date(2025, 3, 1), "Lion8 login: admin")
-        await agent._maybe_consolidate(force=True)
-        assert "- Lion8 login → memory/2025-03-01.md\n" in cfg.memory_file.read_text()
-        agent.close()
-
+class TestSystemPromptReferences:
     def test_system_prompt_explains_references(self):
         from memclaw.agent import _SYSTEM_PROMPT_TEMPLATE
 
@@ -1072,19 +755,6 @@ class TestReviewFixes:
         assert not (cfg.memory_dir / "memory" / "2026-10-15.md").exists()
         read = await agent._tools.execute("file_read", {"file_path": "MEMORY.md"})
         assert read == before
-        agent.close()
-
-    @pytest.mark.asyncio
-    async def test_failed_consolidation_is_not_retried_after_every_reply(
-        self, cfg: MemclawConfig, fake_backend: FakeBackend,
-    ):
-        agent = _chat_agent(cfg, fake_backend)
-        agent._maybe_consolidate = AsyncMock(side_effect=RuntimeError("bad model"))
-        await agent.handle("one")
-        await agent._consolidation_task
-        await agent.handle("two")
-        await agent._consolidation_task
-        assert agent._maybe_consolidate.await_count == 1
         agent.close()
 
     @pytest.mark.asyncio

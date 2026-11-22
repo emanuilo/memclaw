@@ -66,11 +66,12 @@ Claude Code uses `.claude/settings.json` automatically: when Claude runs `git co
 
 **memclaw's layout rules** are the import-linter contracts under `[tool.importlinter]` in `pyproject.toml`. `code-shape check` runs them (on their own: `lint-imports`):
 
-- **Layers**: `cli` → `setup` → `bot` → `agent` → `backends` → `tools` → core modules (`search`, `store`, `reminders`, …) → `index` → `openai_client` → `config`. A module may import from layers below it, never above. A new top-level module must be added to a layer.
+- **Layers**: `cli` → `setup` → `bot` → `agent` → `backends` → `tools` → `memory` → core modules (`search`, `store`, `reminders`, …) → `index` → `openai_client` → `config`. A module may import from layers below it, never above. A new top-level module must be added to a layer.
 - **No cycles inside subpackages** such as `memclaw.backends` and `memclaw.bot`.
 - **Chat platforms are independent**: `bot/telegram.py`, `bot/slack.py` and `bot/whatsapp.py` never import each other. What they share (voice to text, link summaries, the prompts, the agent call, reminders) is in `bot/inbound.py`. A new platform is one module with a `run(config)` plus one line in `PLATFORMS` (`bot/__init__.py`); the CLI and the setup wizard start and list platforms only through that registry.
 - **Chat SDKs stay in their platform module**: only those three modules import `telegram`, `slack_bolt` or `neonize`.
 - **One OpenAI adapter**: only `openai_client.py` imports `openai`; everyone else calls `OpenAIClient`.
+- **Memory through its package**: other code uses what `memclaw.memory` exports (`Consolidator`), not the modules inside. `memory/consolidation.py` is the only code that writes MEMORY.md; it reaches the LLM through the backend the agent hands it, so it doesn't import `memclaw.backends`.
 - **Backends are swappable**: only `memclaw.backends` itself imports the concrete backend modules (`claude.py`, `cursor.py`, …). Everyone else goes through `memclaw.backends` / `memclaw.backends.base`.
 - **`memclaw.defaults` stands alone**: the Cursor hook script there is copied out and run on its own, so it can't import memclaw.
 
