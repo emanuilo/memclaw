@@ -517,8 +517,8 @@ wheels = [
 
 [[package]]
 name = "code-shape-kit"
-version = "0.1.1"
-source = { git = "https://github.com/emanuilo/code-shape-kit?rev=v0.1.1#5c78f28d3e552445feb861523d1045b72b3df5a1" }
+version = "0.1.2"
+source = { git = "https://github.com/emanuilo/code-shape-kit?rev=v0.1.2#db316f3a0f5dfe521f91aae52ca624d8e05bb169" }
 dependencies = [
     { name = "grimp", marker = "python_full_version >= '3.11'" },
 ]
@@ -1570,7 +1570,7 @@ requires-dist = [
 provides-extras = ["cursor", "dev"]
 
 [package.metadata.requires-dev]
-shape = [{ name = "code-shape-kit", extras = ["tools"], marker = "python_full_version >= '3.11'", git = "https://github.com/emanuilo/code-shape-kit?rev=v0.1.1" }]
+shape = [{ name = "code-shape-kit", extras = ["tools"], marker = "python_full_version >= '3.11'", git = "https://github.com/emanuilo/code-shape-kit?rev=v0.1.2" }]
 
 [[package]]
 name = "multidict"
