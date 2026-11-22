@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -526,7 +526,6 @@ class ToolExecutor:
             if fire_at.tzinfo is not None:
                 fire_at = fire_at.astimezone().replace(tzinfo=None)
         elif interval:
-            from datetime import timedelta
             fire_at = datetime.now() + timedelta(seconds=interval)
         else:
             return "Provide either fire_at or interval_seconds (or both)."

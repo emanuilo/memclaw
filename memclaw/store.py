@@ -66,15 +66,6 @@ class MemoryStore:
         files.extend(sorted(self.config.memory_subdir.glob("*.md")))
         return files
 
-    def get_all_content(self) -> list[tuple[Path, str]]:
-        """Read all memory files and return (path, content) pairs."""
-        result = []
-        for path in self.list_files():
-            content = self.read_file(path)
-            if content.strip():
-                result.append((path, content))
-        return result
-
     _DAILY_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
 
     def list_unconsolidated_files(self, consolidated_through: date | None = None) -> list[Path]:

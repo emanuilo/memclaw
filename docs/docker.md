@@ -80,7 +80,6 @@ rebuilds and can be backed up / inspected directly. It holds:
 
 - `MEMORY.md`, `AGENTS.md`, and `memory/YYYY-MM-DD.md` daily notes
 - `memclaw.db` - the SQLite index (embeddings + FTS5)
-- `images/` - saved photos
 - `whatsapp/session.db` - the paired WhatsApp session
 - `slack/`, `bot.log`, `whatsapp.log`, `slack.log`
 

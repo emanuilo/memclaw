@@ -181,19 +181,7 @@ def _setup_bot_logging(log_file: Path) -> None:
 
 
 def _run_telegram(config: MemclawConfig) -> None:
-    from loguru import logger
-    from openai import AsyncOpenAI
-    from telegram import BotCommand
-    from telegram.error import NetworkError, TelegramError, TimedOut
-    from telegram.ext import (
-        Application,
-        CallbackQueryHandler,
-        CommandHandler,
-        MessageHandler,
-        filters,
-    )
-
-    from .bot.handlers import BOT_COMMANDS, MessageHandlers
+    from .bot.handlers import build_application
 
     if not config.telegram_bot_token:
         console.print("[red]Error:[/red] TELEGRAM_BOT_TOKEN is not set.")
@@ -202,80 +190,7 @@ def _run_telegram(config: MemclawConfig) -> None:
 
     _setup_bot_logging(config.memory_dir / "bot.log")
 
-    async def post_init(application: Application) -> None:
-        openai_client = AsyncOpenAI(api_key=config.openai_api_key)
-        handlers = MessageHandlers(config, openai_client)
-        application.bot_data["handlers"] = handlers
-
-        await handlers.agent.start()
-        await handlers.agent.start_background_sync(interval=60)
-
-        handlers.attach_bot(application.bot)
-        handlers.scheduler.start()
-
-        try:
-            await application.bot.set_my_commands(
-                [BotCommand(name, description) for name, description in BOT_COMMANDS]
-            )
-        except TelegramError as exc:
-            logger.warning(f"Could not register the bot command menu: {exc}")
-
-        logger.info("Memclaw bot initialized")
-
-    async def post_shutdown(application: Application) -> None:
-        handlers = application.bot_data.get("handlers")
-        if handlers:
-            await handlers.aclose()
-            logger.info("Memclaw bot shut down cleanly")
-
-    app = (
-        Application.builder()
-        .token(config.telegram_bot_token)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
-
-    async def _start(update, context):
-        await context.bot_data["handlers"].start_command(update, context)
-
-    async def _new(update, context):
-        await context.bot_data["handlers"].new_command(update, context)
-
-    async def _model(update, context):
-        await context.bot_data["handlers"].model_command(update, context)
-
-    async def _effort(update, context):
-        await context.bot_data["handlers"].effort_command(update, context)
-
-    async def _callback(update, context):
-        await context.bot_data["handlers"].handle_callback(update, context)
-
-    async def _text(update, context):
-        await context.bot_data["handlers"].handle_text(update, context)
-
-    async def _photo(update, context):
-        await context.bot_data["handlers"].handle_photo(update, context)
-
-    async def _voice(update, context):
-        await context.bot_data["handlers"].handle_voice(update, context)
-
-    async def _on_error(update, context):
-        err = context.error
-        if isinstance(err, (NetworkError, TimedOut)):
-            logger.warning(f"Network blip ({type(err).__name__}): {err} — polling will retry")
-            return
-        logger.exception("Unhandled error in Telegram handler", exc_info=err)
-
-    app.add_error_handler(_on_error)
-    app.add_handler(CommandHandler("start", _start))
-    app.add_handler(CommandHandler("new", _new))
-    app.add_handler(CommandHandler("model", _model))
-    app.add_handler(CommandHandler("effort", _effort))
-    app.add_handler(CallbackQueryHandler(_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text))
-    app.add_handler(MessageHandler(filters.PHOTO, _photo))
-    app.add_handler(MessageHandler(filters.VOICE, _voice))
+    app = build_application(config)
 
     allowed = config.allowed_user_ids_list
     masked = [mask_user_id(u) for u in allowed] if allowed else "all"

@@ -80,12 +80,12 @@ def test_rolling_history_settings_are_gone(tmp_path: Path):
 
 
 def test_update_env_file_merges_and_drops(tmp_path: Path, monkeypatch):
-    from memclaw import setup
+    from memclaw import config
 
     env_file = tmp_path / ".env"
     env_file.write_text("OPENAI_API_KEY=k\nCLAUDE_MODEL=old\nCLAUDE_EFFORT=high\n")
-    monkeypatch.setattr(setup, "ENV_FILE", env_file)
+    monkeypatch.setattr(config, "ENV_FILE", env_file)
 
-    setup.update_env_file({"CLAUDE_MODEL": "claude-haiku-4-5"}, drop_keys=["CLAUDE_EFFORT"])
+    config.update_env_file({"CLAUDE_MODEL": "claude-haiku-4-5"}, drop_keys=["CLAUDE_EFFORT"])
 
     assert env_file.read_text() == "OPENAI_API_KEY=k\nCLAUDE_MODEL=claude-haiku-4-5\n"

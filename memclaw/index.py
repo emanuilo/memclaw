@@ -348,31 +348,6 @@ class MemoryIndex:
         return changed
 
     # ------------------------------------------------------------------
-    # Telegram image registry (backward-compatible wrappers)
-    # ------------------------------------------------------------------
-
-    async def store_telegram_image(
-        self,
-        file_id: str,
-        description: str,
-        caption: str | None = None,
-    ):
-        """Store a Telegram image file_id with its AI-generated description."""
-        embedding = await self.get_embedding(description)
-        self.db.execute(
-            "INSERT INTO telegram_images (file_id, description, caption, embedding) "
-            "VALUES (?, ?, ?, ?)",
-            (file_id, description, caption, self.serialize_embedding(embedding)),
-        )
-        await self.store_platform_image("telegram", file_id, description, caption, _skip_embed=True, _embedding=embedding)
-
-    def search_telegram_images(
-        self, query_embedding: np.ndarray, limit: int = 5
-    ) -> list[dict]:
-        """Vector search over stored Telegram images. Returns dicts with file_id."""
-        return self.search_platform_images(query_embedding, limit=limit, platform="telegram")
-
-    # ------------------------------------------------------------------
     # Platform-agnostic image registry
     # ------------------------------------------------------------------
 
@@ -382,12 +357,9 @@ class MemoryIndex:
         media_ref: str,
         description: str,
         caption: str | None = None,
-        *,
-        _skip_embed: bool = False,
-        _embedding: np.ndarray | None = None,
     ):
         """Store an image reference for any platform (telegram, whatsapp, slack, etc.)."""
-        embedding = _embedding if _skip_embed else await self.get_embedding(description)
+        embedding = await self.get_embedding(description)
         self.db.execute(
             "INSERT INTO platform_images (platform, media_ref, description, caption, embedding) "
             "VALUES (?, ?, ?, ?, ?)",

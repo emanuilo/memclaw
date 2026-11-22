@@ -242,5 +242,5 @@ class TestIndexScope:
     @pytest.mark.asyncio
     async def test_stats_count_images_from_every_platform(self, idx: MemoryIndex):
         await idx.store_platform_image("whatsapp", "wa-1", "a cat")
-        await idx.store_telegram_image("tg-1", "a dog")
+        await idx.store_platform_image("telegram", "tg-1", "a dog")
         assert idx.get_stats()["images"] == 2

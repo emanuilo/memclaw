@@ -26,7 +26,7 @@ async def _wait_until_listening(host: str, port: int, *, timeout: float = 5.0) -
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         try:
-            reader, writer = await asyncio.open_connection(host, port)
+            _, writer = await asyncio.open_connection(host, port)
             writer.close()
             await writer.wait_closed()
             return
@@ -51,7 +51,6 @@ class HttpMcpServer:
     def __init__(self) -> None:
         self._host = "127.0.0.1"
         self._port = 0
-        self._executor: ToolExecutor | None = None
         self._listen_sock: socket.socket | None = None
         self._session_manager: StreamableHTTPSessionManager | None = None
         self._uvicorn_server: uvicorn.Server | None = None
@@ -65,7 +64,7 @@ class HttpMcpServer:
     def config(self) -> HttpMcpServerConfig | None:
         if not self.is_running or self._port <= 0:
             return None
-        from cursor_sdk import HttpMcpServerConfig
+        from cursor_sdk import HttpMcpServerConfig  # optional dependency (cursor-sdk)
 
         return HttpMcpServerConfig(
             url=f"http://{self._host}:{self._port}/mcp",
@@ -79,7 +78,6 @@ class HttpMcpServer:
         host: str = "127.0.0.1",
         port: int,
     ) -> None:
-        self._executor = executor
         if self.is_running:
             return
         self._host = host
@@ -152,7 +150,6 @@ class HttpMcpServer:
         self._uvicorn_task = None
         self._uvicorn_server = None
         self._session_manager = None
-        self._executor = None
         if self._listen_sock is not None:
             self._listen_sock.close()
             self._listen_sock = None

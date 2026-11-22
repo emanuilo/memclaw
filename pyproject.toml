@@ -27,6 +27,9 @@ classifiers = [
 dependencies = [
     "claude-agent-sdk>=0.2.163,<0.3",
     "mcp>=1.23.0,<2",
+    # The MCP bridge (backends/mcp_bridge.py) serves HTTP with these directly.
+    "starlette>=0.27",
+    "uvicorn>=0.31.1",
     "openai>=1.0.0",
     "numpy>=1.24.0",
     "click>=8.0.0",
@@ -56,9 +59,173 @@ cursor = [
 dev = [
     "pytest>=9.0.0",
     "pytest-asyncio>=1.0.0",
-    "ruff>=0.9.0",
+    "ruff>=0.12.0",
     "cursor-sdk>=0.1.4,<0.2",
+]
+
+# Development-only groups (PEP 735). Unlike the extras above they are not part
+# of the published package metadata, so they may use a git URL (PyPI rejects
+# those in extras). Install with `pip install -e ".[dev]" --group shape`
+# (pip >= 25.1) or `uv sync --extra dev --group shape`.
+[dependency-groups]
+# code-shape-kit: the `code-shape` checks (CI and pre-commit hooks). It needs
+# Python 3.11+ while memclaw also supports 3.10, hence the marker.
+shape = [
+    "code-shape-kit[tools] @ git+https://github.com/emanuilo/code-shape-kit@v0.1.3 ; python_version >= '3.11'",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["memclaw"]
+
+[tool.ruff.lint]
+# General correctness lint (unused imports, undefined names, ...). Shape rules
+# (complexity, sizes, coupling) are code-shape-kit's job, not ruff's here.
+# Pin the rule set so a newer ruff (CI installs the latest) doesn't turn on
+# new default rules. These are ruff's defaults.
+select = ["E4", "E7", "E9", "F"]
+
+# ---------------------------------------------------------------------------
+# Code shape (sizes, complexity, coupling, dead code, dependencies, types),
+# checked by `code-shape check` (code-shape-kit) in CI and in the pre-commit
+# hooks. Known violations are listed in .code-shape/baseline.json: only new or
+# worse ones fail. Never edit the baseline by hand; fix the code, then run
+# `code-shape tighten`. The kit's default limits apply (see its
+# templates/shape.toml); don't raise one to make a change pass.
+# ---------------------------------------------------------------------------
+[tool.shape]
+packages = ["memclaw"]
+tests = "tests"
+# The only modules that may read environment variables. The Cursor hook script
+# is copied out of the package and run on its own, so it reads its env itself.
+config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
+baseline = ".code-shape/baseline.json"
+
+[tool.shape.banned_api]
+# Outside systems should be reached through one module each. Existing direct
+# uses are in the baseline; new ones fail.
+"openai" = { msg = "Don't import the OpenAI SDK in another module. Call the existing code that uses it (memclaw/index.py for embeddings), or move the call there; the goal is one OpenAI adapter module.", allowed = ["memclaw/index.py"] }
+"sqlite3" = { msg = "Only the storage modules (memclaw/index.py, memclaw/reminders.py) open SQLite; call their methods instead.", allowed = ["memclaw/index.py", "memclaw/reminders.py"] }
+
+[tool.shape.extra_args]
+# - dev tools live in the `dev` extra; docs/ holds a demo-capture script.
+# - aiohttp is never imported by memclaw, but slack_bolt.async_app (Slack) needs
+#   it at runtime and slack-bolt doesn't declare it.
+deptry = ["--optional-dependencies-dev-groups", "dev", "--extend-exclude", "docs", "--per-rule-ignores", "DEP002=aiohttp"]
+# - functions registered by decorator are called by their framework, not by name.
+vulture = ["--ignore-decorators", "@cli.command,@*.event,@server.list_tools,@server.call_tool"]
+
+[tool.vulture]
+# Names a library uses by reflection, which vulture would call dead code.
+ignore_names = [
+    "should_exit",  # uvicorn reads Server.should_exit; backends/mcp_bridge.py only sets it
+]
+
+[tool.shape.concepts]
+# The ideas a change is usually about (tracked in `code-shape report`, never a
+# gate): words that name each one in code, and the module that should own it.
+"memory notes (daily files)" = { terms = ["MemoryStore", "daily_file", "memory_save"], home = "memclaw/store.py" }
+"MEMORY.md + consolidation" = { terms = ["consolidat", "MEMORY\\.md", "permanent_memory"], home = "memclaw/agent.py" }
+"search + index" = { terms = ["HybridSearch", "MemoryIndex", "embedding"], home = "memclaw/index.py" }
+"reminders" = { terms = ["remind"], home = "memclaw/reminders.py" }
+"settings storage (.env)" = { terms = ["read_env_file", "update_env_file", "write_env_file", "os\\.environ"], home = "memclaw/config.py" }
+"AI backends" = { terms = ["AgentBackend", "build_backend", "agent_backend", "AGENT_BACKEND"], home = "memclaw/backends/base.py" }
+"model / effort selection" = { terms = ["set_model", "set_effort", "list_models", "effort_levels"], home = "memclaw/backends/model_selection.py" }
+"chat platforms" = { terms = ["telegram", "slack", "whatsapp"], home = "memclaw/bot/handlers.py" }
+"voice transcription" = { terms = ["whisper", "transcri"], home = "memclaw/bot/handlers.py" }
+"images" = { terms = ["image_save", "image_search", "platform_image"], home = "memclaw/index.py" }
+"agent tools" = { terms = ["TOOL_DEFINITIONS", "ToolExecutor"], home = "memclaw/tools.py" }
+"conversations / sessions" = { terms = ["SessionStore", "session_key", "reset_session"], home = "memclaw/sessions.py" }
+"setup wizard" = { terms = ["run_setup", "wizard", "needs_setup"], home = "memclaw/setup.py" }
+"links" = { terms = ["LinkProcessor", "process_links"], home = "memclaw/bot/link_processor.py" }
+
+# ---------------------------------------------------------------------------
+# Module-structure rules (import-linter contracts): memclaw's own layout.
+# `code-shape check` runs them; on their own:  lint-imports
+#
+# Don't add ignore_imports to silence a broken contract: fix the import, or
+# move the module to another layer if the new dependency is legitimate.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "memclaw"
+# Needed so the "chat SDKs" contract below can see third-party packages.
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "layers"
+name = "Layers: a module may only import modules in layers BELOW it (entry points -> agent -> backends -> tools -> core -> config)"
+type = "layers"
+containers = ["memclaw"]
+layers = [
+    # Entry point: the `memclaw` command.
+    "cli",
+    # Front-ends started by the CLI: the chat bots and the interactive setup
+    # wizard. Independent (`|`): bots don't run the wizard and vice versa.
+    "bot | setup",
+    # Platform-agnostic assistant: wires backends, tools and storage together.
+    "agent",
+    # AI agent backends (Claude, Cursor) and their MCP plumbing.
+    "backends",
+    # The memory tools the agent can call.
+    "tools",
+    # Independent building blocks (`|`: they don't import each other).
+    "search | store | reminders | sessions | memory_refs | prompts | openai_health",
+    # SQLite + embeddings index, used by search.
+    "index",
+    # Settings read from the environment. Imports nothing from memclaw.
+    "config",
+]
+# Every top-level module must be placed in a layer above; a new module fails
+# lint-imports until someone decides where it belongs.
+exhaustive = true
+# Data files (AGENTS.md, Cursor hook script) copied out at runtime, not code
+# that is imported. Covered by its own contract below.
+exhaustive_ignores = ["defaults"]
+
+[[tool.importlinter.contracts]]
+id = "no-cycles-in-subpackages"
+name = "No circular imports between modules inside a subpackage (e.g. memclaw.backends, memclaw.bot)"
+type = "acyclic_siblings"
+# Top-level modules are already kept acyclic by the layers contract; this
+# covers the modules inside each subpackage, at any depth.
+ancestors = ["memclaw.*"]
+
+[[tool.importlinter.contracts]]
+id = "chat-platforms-independent"
+name = "Chat platforms are independent: the Telegram, Slack and WhatsApp handlers never import each other (share code via memclaw.bot or lower layers)"
+type = "independence"
+modules = [
+    "memclaw.bot.handlers",           # Telegram
+    "memclaw.bot.slack_handlers",
+    "memclaw.bot.whatsapp_handlers",
+]
+
+[[tool.importlinter.contracts]]
+id = "chat-sdks-only-in-bot"
+name = "Chat-platform SDKs (telegram, slack_bolt, neonize) are only imported inside memclaw.bot"
+type = "protected"
+protected_modules = ["telegram", "slack_bolt", "neonize"]
+allowed_importers = ["memclaw.bot"]
+
+[[tool.importlinter.contracts]]
+id = "defaults-standalone"
+name = "memclaw.defaults imports nothing from memclaw (its Cursor hook script is copied to ~/.memclaw and run on its own)"
+type = "forbidden"
+source_modules = ["memclaw.defaults"]
+forbidden_modules = ["memclaw.*"]
+
+[[tool.importlinter.contracts]]
+id = "backend-internals-private"
+name = "Only memclaw.backends itself imports the concrete backends (everyone else goes through memclaw.backends / memclaw.backends.base)"
+type = "protected"
+protected_modules = [
+    "memclaw.backends.claude",
+    "memclaw.backends.claude_models",
+    "memclaw.backends.cursor",
+    "memclaw.backends.cursor_hooks",
+    "memclaw.backends.cursor_sdk_adapter",
+    "memclaw.backends.mcp_bridge",
+    "memclaw.backends.mcp_tools",
+    "memclaw.backends.model_selection",
+    "memclaw.backends.tool_policy",
+]
+allowed_importers = ["memclaw.backends"]

@@ -9,6 +9,7 @@ Uses slack-bolt with Socket Mode — no public URL required.
 from __future__ import annotations
 
 import base64
+import re
 import uuid
 from pathlib import Path
 
@@ -116,7 +117,6 @@ class SlackHandlers:
     @staticmethod
     def _strip_mention(text: str) -> str:
         """Remove bot mention tags like <@U123ABC> from the start of messages."""
-        import re
         return re.sub(r"^\s*<@[A-Z0-9]+>\s*", "", text).strip()
 
     # ------------------------------------------------------------------

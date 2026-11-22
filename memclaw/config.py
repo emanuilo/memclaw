@@ -8,9 +8,45 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+ENV_FILE = Path.home() / ".memclaw" / ".env"
+
 # Load .env from current directory and ~/.memclaw/.env
 load_dotenv()
-load_dotenv(Path.home() / ".memclaw" / ".env")
+load_dotenv(ENV_FILE)
+
+
+def read_env_file() -> dict[str, str]:
+    """Load existing values from ~/.memclaw/.env."""
+    values: dict[str, str] = {}
+    if not ENV_FILE.exists():
+        return values
+    for line in ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, val = line.partition("=")
+            values[key.strip()] = val.strip()
+    return values
+
+
+def update_env_file(values: dict[str, str], drop_keys: list[str] | tuple[str, ...] = ()) -> None:
+    """Merge *values* into ~/.memclaw/.env and remove *drop_keys*.
+
+    Keys are written in their existing order, new ones appended; a key with
+    an empty value is removed, matching how the wizard writes the file.
+    """
+    merged = read_env_file()
+    merged.update(values)
+    for key in drop_keys:
+        merged.pop(key, None)
+    write_env_file(merged)
+
+
+def write_env_file(values: dict[str, str]) -> None:
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{k}={v}" for k, v in values.items() if v]
+    ENV_FILE.write_text("\n".join(lines) + "\n")
 
 
 @dataclass
@@ -19,7 +55,6 @@ class MemclawConfig:
 
     memory_dir: Path = field(default_factory=lambda: Path.home() / ".memclaw")
     embedding_model: str = "text-embedding-3-small"
-    embedding_dim: int = 1536
     chunk_target_words: int = 300
     chunk_overlap_words: int = 60
     vector_weight: float = 0.7
@@ -152,12 +187,6 @@ class MemclawConfig:
     def daily_file(self, dt: date | None = None) -> Path:
         dt = dt or date.today()
         return self.memory_subdir / f"{dt.isoformat()}.md"
-
-    @property
-    def images_dir(self) -> Path:
-        d = self.memory_dir / "images"
-        d.mkdir(exist_ok=True)
-        return d
 
     @property
     def whatsapp_dir(self) -> Path:

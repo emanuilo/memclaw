@@ -17,7 +17,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import httpx
 from loguru import logger
+from rich.prompt import Prompt
 
+from ..config import MemclawConfig
+from ..prompts import masked_input
 from .base import ProgressCallback, TurnResult
 from .claude_models import ModelInfo
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks
@@ -28,7 +31,6 @@ from .model_selection import ModelSelectionMixin
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from ..config import MemclawConfig
     from ..tools import ToolExecutor
 
 _DEFAULT_MODEL = "composer-2.5"
@@ -96,7 +98,7 @@ def _build_user_message(
 ) -> str | Any:
     """The message to send. Cursor agents have no system prompt field, so a
     new agent gets it at the top of its first message; follow-ups pass ""."""
-    from cursor_sdk import SDKImage, UserMessage
+    from cursor_sdk import SDKImage, UserMessage  # optional dependency (cursor-sdk)
 
     body = "\n\n".join(p for p in (context, user_message) if p)
     prompt = (
@@ -113,7 +115,7 @@ def _build_user_message(
 
 
 def _local_agent_options(*, cwd: str) -> Any:
-    from cursor_sdk import LocalAgentOptions
+    from cursor_sdk import LocalAgentOptions  # optional dependency (cursor-sdk)
 
     return LocalAgentOptions(
         cwd=cwd,
@@ -129,7 +131,7 @@ def _agent_options(
     model: Any,
     mcp_servers: dict[str, Any] | None = None,
 ) -> Any:
-    from cursor_sdk import AgentOptions
+    from cursor_sdk import AgentOptions  # optional dependency (cursor-sdk)
 
     return AgentOptions(
         api_key=api_key,
@@ -238,10 +240,8 @@ class CursorAgentBackend(ModelSelectionMixin):
         *,
         memory_dir: Path | str | None = None,
     ) -> tuple[dict[str, str], list[str]]:
-        from ..setup import _masked_input
-
         current = existing.get("CURSOR_API_KEY", os.environ.get("CURSOR_API_KEY", ""))
-        answer = _masked_input("Cursor API key (required)")
+        answer = masked_input(console, "Cursor API key (required)")
         value = answer or current
         if not value:
             console.print("[red]Error:[/red] Cursor API key is required.")
@@ -251,8 +251,6 @@ class CursorAgentBackend(ModelSelectionMixin):
         drop_keys = list(_DROP_KEYS)
 
         model_current = existing.get("CURSOR_MODEL", os.environ.get("CURSOR_MODEL", ""))
-        from rich.prompt import Prompt
-
         model_answer = Prompt.ask(
             r"Cursor model \[composer-2.5 is default, optional]",
             default="",
@@ -265,8 +263,6 @@ class CursorAgentBackend(ModelSelectionMixin):
                 drop_keys.append("CURSOR_EFFORT")
         elif model_current:
             values["CURSOR_MODEL"] = model_current
-
-        from ..config import MemclawConfig
 
         cfg = MemclawConfig(memory_dir=Path(memory_dir)) if memory_dir else MemclawConfig()
         if not ensure_cursor_hooks(cfg.memory_dir):
@@ -312,8 +308,8 @@ class CursorAgentBackend(ModelSelectionMixin):
     # -- Bridge ------------------------------------------------------------
 
     async def _launch_client(self) -> Any:
-        from cursor_sdk import AsyncClient
-        from cursor_sdk._vendor import resolve_bridge_path
+        from cursor_sdk import AsyncClient  # optional dependency (cursor-sdk)
+        from cursor_sdk._vendor import resolve_bridge_path  # optional dependency (cursor-sdk)
 
         # Local agents are stored under a path derived from the bridge
         # process's working directory (not LocalAgentOptions.cwd), and
@@ -373,7 +369,7 @@ class CursorAgentBackend(ModelSelectionMixin):
         """Resume agent *resume*, or create a new one when there is none or it
         can't be resumed (deleted, from another machine, ...). Returns the
         agent and whether it is new."""
-        from cursor_sdk import CursorAgentError
+        from cursor_sdk import CursorAgentError  # optional dependency (cursor-sdk)
 
         # Local resume doesn't restore the model; pass it along explicitly.
         options = _agent_options(
@@ -418,7 +414,7 @@ class CursorAgentBackend(ModelSelectionMixin):
         max_turns: int,
         on_tool: ProgressCallback | None,
     ) -> TurnResult:
-        from cursor_sdk import LocalSendOptions, SendOptions
+        from cursor_sdk import LocalSendOptions, SendOptions  # optional dependency (cursor-sdk)
 
         usage_tracker = RunUsageTracker()
         run = await agent.send(
@@ -467,7 +463,7 @@ class CursorAgentBackend(ModelSelectionMixin):
 
     async def _model_selection(self) -> Any:
         """The model (and effort parameter, if set) to run with."""
-        from cursor_sdk import ModelParameterValue, ModelSelection
+        from cursor_sdk import ModelParameterValue, ModelSelection  # optional dependency (cursor-sdk)
 
         if not self._effort:
             return ModelSelection(id=self._model)
@@ -514,7 +510,7 @@ class CursorAgentBackend(ModelSelectionMixin):
     # -- Runtime -----------------------------------------------------------
 
     async def run_one_shot(self, *, system_prompt: str, user_message: str) -> str:
-        from cursor_sdk import AsyncAgent, CursorAgentError
+        from cursor_sdk import AsyncAgent, CursorAgentError  # optional dependency (cursor-sdk)
 
         if not self._api_key:
             raise RuntimeError("CURSOR_API_KEY is not configured")
@@ -558,7 +554,7 @@ class CursorAgentBackend(ModelSelectionMixin):
         max_turns: int = 10,
         on_tool: ProgressCallback | None = None,
     ) -> TurnResult:
-        from cursor_sdk import CursorAgentError
+        from cursor_sdk import CursorAgentError  # optional dependency (cursor-sdk)
 
         if not self._api_key:
             raise RuntimeError("CURSOR_API_KEY is not configured")

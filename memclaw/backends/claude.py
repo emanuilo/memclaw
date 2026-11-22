@@ -30,7 +30,7 @@ from claude_agent_sdk import (
     tool,
 )
 from loguru import logger
-from ..prompts import choose
+from ..prompts import choose, masked_input
 from ..tools import TOOL_DEFINITIONS
 from .base import ProgressCallback, TurnResult, report_tool_step
 from .claude_models import SDK_EFFORT_LEVELS, ModelInfo, fetch_models
@@ -363,8 +363,7 @@ class ClaudeAgentBackend(ModelSelectionMixin):
             drop_key = "CLAUDE_CODE_OAUTH_TOKEN"
 
         current = existing.get(env_key, "")
-        from ..setup import _masked_input  # local import — setup imports backends
-        answer = _masked_input(f"{label} (required)")
+        answer = masked_input(console, f"{label} (required)")
         value = answer or current
         if not value:
             console.print(f"[red]Error:[/red] {label} is required.")

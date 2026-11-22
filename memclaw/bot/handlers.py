@@ -14,10 +14,17 @@ import time
 
 from loguru import logger
 from openai import AsyncOpenAI
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
-from telegram.error import BadRequest, TelegramError
-from telegram.ext import ContextTypes
+from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from ..agent import MemclawAgent
 from ..backends import AgentBackend
@@ -41,7 +48,7 @@ async def _typing_loop(bot, chat_id: int):
         pass
 
 
-# Shown in Telegram's command menu (registered in cli._run_telegram).
+# Shown in Telegram's command menu (registered in build_application).
 BOT_COMMANDS = [
     ("new", "Start a fresh conversation"),
     ("model", "Show or change the model"),
@@ -479,3 +486,85 @@ class MessageHandlers:
     def close(self):
         self.scheduler.close()
         self.agent.close()
+
+
+def build_application(config: MemclawConfig) -> Application:
+    """Build the Telegram bot: MessageHandlers, command handlers, error
+    handler and command menu, wired into a python-telegram-bot Application.
+    """
+    async def post_init(application: Application) -> None:
+        openai_client = AsyncOpenAI(api_key=config.openai_api_key)
+        handlers = MessageHandlers(config, openai_client)
+        application.bot_data["handlers"] = handlers
+
+        await handlers.agent.start()
+        await handlers.agent.start_background_sync(interval=60)
+
+        handlers.attach_bot(application.bot)
+        handlers.scheduler.start()
+
+        try:
+            await application.bot.set_my_commands(
+                [BotCommand(name, description) for name, description in BOT_COMMANDS]
+            )
+        except TelegramError as exc:
+            logger.warning(f"Could not register the bot command menu: {exc}")
+
+        logger.info("Memclaw bot initialized")
+
+    async def post_shutdown(application: Application) -> None:
+        handlers = application.bot_data.get("handlers")
+        if handlers:
+            await handlers.aclose()
+            logger.info("Memclaw bot shut down cleanly")
+
+    app = (
+        Application.builder()
+        .token(config.telegram_bot_token)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+
+    async def _start(update, context):
+        await context.bot_data["handlers"].start_command(update, context)
+
+    async def _new(update, context):
+        await context.bot_data["handlers"].new_command(update, context)
+
+    async def _model(update, context):
+        await context.bot_data["handlers"].model_command(update, context)
+
+    async def _effort(update, context):
+        await context.bot_data["handlers"].effort_command(update, context)
+
+    async def _callback(update, context):
+        await context.bot_data["handlers"].handle_callback(update, context)
+
+    async def _text(update, context):
+        await context.bot_data["handlers"].handle_text(update, context)
+
+    async def _photo(update, context):
+        await context.bot_data["handlers"].handle_photo(update, context)
+
+    async def _voice(update, context):
+        await context.bot_data["handlers"].handle_voice(update, context)
+
+    async def _on_error(update, context):
+        err = context.error
+        if isinstance(err, (NetworkError, TimedOut)):
+            logger.warning(f"Network blip ({type(err).__name__}): {err} — polling will retry")
+            return
+        logger.exception("Unhandled error in Telegram handler", exc_info=err)
+
+    app.add_error_handler(_on_error)
+    app.add_handler(CommandHandler("start", _start))
+    app.add_handler(CommandHandler("new", _new))
+    app.add_handler(CommandHandler("model", _model))
+    app.add_handler(CommandHandler("effort", _effort))
+    app.add_handler(CallbackQueryHandler(_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text))
+    app.add_handler(MessageHandler(filters.PHOTO, _photo))
+    app.add_handler(MessageHandler(filters.VOICE, _voice))
+
+    return app

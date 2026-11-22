@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 from loguru import logger
 
+from ..tools import describe_tool_call
+
 if TYPE_CHECKING:
     from rich.console import Console
 
@@ -73,8 +75,6 @@ async def report_tool_step(
     """Call *on_tool* for a tool call; a failing callback never fails the turn."""
     if on_tool is None:
         return
-    from ..tools import describe_tool_call  # local import — tools imports a lot
-
     try:
         await on_tool(ToolStep(index, name, describe_tool_call(name, args)))
     except Exception as exc:
