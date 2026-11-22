@@ -83,6 +83,53 @@ extend-select = ["PLC0415", "RUF100"]
 "tests/**" = ["PLC0415"]
 
 # ---------------------------------------------------------------------------
+# Code shape (sizes, complexity, coupling, dead code, dependencies, types),
+# checked by `code-shape check` (code-shape-kit) in CI and in the pre-commit
+# hooks. Known violations are listed in .code-shape-baseline.json: only new or
+# worse ones fail. Never edit the baseline by hand; fix the code, then run
+# `code-shape tighten`. The kit's default limits apply (see its
+# templates/shape.toml); don't raise one to make a change pass.
+# ---------------------------------------------------------------------------
+[tool.shape]
+packages = ["memclaw"]
+tests = "tests"
+# The only modules that may read environment variables. The Cursor hook script
+# is copied out of the package and run on its own, so it reads its env itself.
+config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
+
+[tool.shape.banned_api]
+# Outside systems should be reached through one module each. Existing direct
+# uses are in the baseline; new ones fail.
+"openai" = { msg = "Don't import the OpenAI SDK in another module. Call the existing code that uses it (memclaw/index.py for embeddings), or move the call there; the goal is one OpenAI adapter module.", allowed = ["memclaw/index.py"] }
+"sqlite3" = { msg = "Only the storage modules (memclaw/index.py, memclaw/reminders.py) open SQLite; call their methods instead.", allowed = ["memclaw/index.py", "memclaw/reminders.py"] }
+
+[tool.shape.extra_args]
+# - dev tools live in the `dev` extra; docs/ holds a demo-capture script.
+# - aiohttp is never imported by memclaw, but slack_bolt.async_app (Slack) needs
+#   it at runtime and slack-bolt doesn't declare it.
+deptry = ["--optional-dependencies-dev-groups", "dev", "--extend-exclude", "docs", "--per-rule-ignores", "DEP002=aiohttp"]
+# - functions registered by decorator are called by their framework, not by name.
+vulture = ["--ignore-decorators", "@cli.command,@*.event,@server.list_tools,@server.call_tool"]
+
+[tool.shape.concepts]
+# The ideas a change is usually about (tracked in `code-shape report`, never a
+# gate): words that name each one in code, and the module that should own it.
+"memory notes (daily files)" = { terms = ["MemoryStore", "daily_file", "memory_save"], home = "memclaw/store.py" }
+"MEMORY.md + consolidation" = { terms = ["consolidat", "MEMORY\\.md", "permanent_memory"], home = "memclaw/agent.py" }
+"search + index" = { terms = ["HybridSearch", "MemoryIndex", "embedding"], home = "memclaw/index.py" }
+"reminders" = { terms = ["remind"], home = "memclaw/reminders.py" }
+"settings storage (.env)" = { terms = ["read_env_file", "update_env_file", "write_env_file", "os\\.environ"], home = "memclaw/config.py" }
+"AI backends" = { terms = ["AgentBackend", "build_backend", "agent_backend", "AGENT_BACKEND"], home = "memclaw/backends/base.py" }
+"model / effort selection" = { terms = ["set_model", "set_effort", "list_models", "effort_levels"], home = "memclaw/backends/model_selection.py" }
+"chat platforms" = { terms = ["telegram", "slack", "whatsapp"], home = "memclaw/bot/handlers.py" }
+"voice transcription" = { terms = ["whisper", "transcri"], home = "memclaw/bot/handlers.py" }
+"images" = { terms = ["image_save", "image_search", "platform_image"], home = "memclaw/index.py" }
+"agent tools" = { terms = ["TOOL_DEFINITIONS", "ToolExecutor"], home = "memclaw/tools.py" }
+"conversations / sessions" = { terms = ["SessionStore", "session_key", "reset_session"], home = "memclaw/sessions.py" }
+"setup wizard" = { terms = ["run_setup", "wizard", "needs_setup"], home = "memclaw/setup.py" }
+"links" = { terms = ["LinkProcessor", "process_links"], home = "memclaw/bot/link_processor.py" }
+
+# ---------------------------------------------------------------------------
 # Module-structure rules, checked by `lint-imports` (import-linter) in CI.
 # Run locally with:  lint-imports
 #
