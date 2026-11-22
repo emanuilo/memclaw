@@ -298,6 +298,88 @@ class TestCollectRunResult:
         assert result.output_tokens == 50
         assert result.num_turns == 1
 
+    @staticmethod
+    def _run(events, wait):
+        async def _events():
+            for event in events:
+                yield event
+
+        run = AsyncMock()
+        run.events = MagicMock(return_value=_events())
+        run.wait = AsyncMock(return_value=wait)
+        return run
+
+    @staticmethod
+    def _logs():
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(f"{m.record['level'].name} {m.record['message']}"))
+        return lines, sink
+
+    @pytest.mark.asyncio
+    async def test_collect_run_result_logs_and_counts(self):
+        from loguru import logger
+
+        def _msg(**kw):
+            return SimpleNamespace(sdk_message=SimpleNamespace(**kw))
+
+        def _assistant(text):
+            return _msg(type="assistant", message=SimpleNamespace(
+                content=[SimpleNamespace(type="text", text=text)],
+            ))
+
+        events = [
+            SimpleNamespace(sdk_message=None),
+            _assistant("A long first answer"),
+            _msg(type="tool_call", status="running", name="memclaw_file_read",
+                 args={"file_path": "x" * 400}, call_id="c1"),
+            _msg(type="tool_call", status="error", name="memclaw_file_read",
+                 args=None, call_id="c1", result={"why": "nope"}),
+            _msg(type="tool_call", status="running", name="Shell", args=None, call_id=""),
+            _msg(type="tool_call", status="weird", name="memclaw_x", args=None, call_id="c3"),
+            _msg(type="tool_call", status="completed", name="memclaw_y", args={}, call_id="c4",
+                 result=None),
+            _assistant(""),
+            _msg(type="other"),
+        ]
+        tracker = RunUsageTracker()
+        for _ in range(3):
+            tracker.on_delta(SimpleNamespace(type="turn-ended", usage={"output_tokens": 1}))
+        lines, sink = self._logs()
+        try:
+            result = await collect_run_result(
+                self._run(events, SimpleNamespace(result="short", num_turns=2)),
+                max_turns=2, usage_tracker=tracker,
+            )
+        finally:
+            logger.remove(sink)
+        assert result.text == "A long first answer"
+        assert result.num_turns == 3
+        assert result.output_tokens == 3
+        assert lines == [
+            "INFO Tool call: file_read(" + ('{"file_path": "' + "x" * 400)[:300] + "...)",
+            'WARNING Tool file_read failed: {"why": "nope"}',
+            "INFO Tool call: Shell({})",
+            "WARNING Tool x unexpected status 'weird'",
+            "INFO Tool y completed: (ok)",
+            "WARNING Tool Shell started but never completed (call_id=Shell). "
+            "It may have been blocked by a Cursor hook or failed before MCP execution.",
+            "WARNING Cursor SDK reported 3 turns (Memclaw max_turns=2); "
+            "the SDK does not expose a turn cap — tighten prompts or hooks if needed.",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_collect_run_result_falls_back_to_wait_text(self):
+        result = await collect_run_result(
+            self._run([], SimpleNamespace(result="", num_turns=0)), max_turns=10,
+        )
+        assert (result.text, result.num_turns) == ("", 1)
+        result = await collect_run_result(
+            self._run([], SimpleNamespace(output="from wait", num_turns=4)), max_turns=10,
+        )
+        assert (result.text, result.num_turns) == ("from wait", 4)
+
     def test_record_interaction_usage_falls_back_to_token_delta(self):
         totals = {
             "input_tokens": 0,
