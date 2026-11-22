@@ -31,7 +31,7 @@ from loguru import logger
 from ..config import process_environment
 from ..terminal_input import choose, masked_input
 from ..tools import TOOL_DEFINITIONS
-from .base import ProgressCallback, TurnResult, report_tool_step
+from .base import ProgressCallback, TurnRequest, TurnResult, report_tool_step
 from .claude_models import SDK_EFFORT_LEVELS, fetch_models
 from .mcp_tools import MCP_SERVER_NAME
 from .model_selection import ModelInfo, ModelSelectionMixin
@@ -657,49 +657,36 @@ class ClaudeAgentBackend(ModelSelectionMixin):
             raise RuntimeError(f"Claude one-shot failed ({error}): {result_text[:200]}")
         return result_text
 
-    async def run_turn(
-        self,
-        *,
-        system_prompt: str,
-        context: str,
-        user_message: str,
-        tool_executor: "ToolExecutor",
-        session_key: str,
-        resume_session_id: str | None = None,
-        image_b64: str | None = None,
-        image_media_type: str = "image/jpeg",
-        max_turns: int = 10,
-        on_tool: ProgressCallback | None = None,
-    ) -> TurnResult:
+    async def run_turn(self, request: TurnRequest, tool_executor: "ToolExecutor") -> TurnResult:
         if self._mcp_server is None:
             self._mcp_server = _build_mcp_server(tool_executor)
 
-        session = self._sessions.setdefault(session_key, _Session())
+        session = self._sessions.setdefault(request.session_key, _Session())
         async with session.lock:
             options_key = (self._model, self._effort)
             if session.client is not None and session.options_key != options_key:
                 await self._disconnect(session)
             if session.client is None:
                 session.client = await self._connect(
-                    system_prompt=system_prompt,
-                    resume=resume_session_id,
-                    max_turns=max_turns,
+                    system_prompt=request.system_prompt,
+                    resume=request.resume_session_id,
+                    max_turns=request.max_turns,
                 )
                 session.options_key = options_key
             try:
                 result = await self._query(
                     session.client,
-                    _compose_prompt(context, user_message),
-                    image_b64=image_b64,
-                    image_media_type=image_media_type,
-                    on_tool=on_tool,
+                    _compose_prompt(request.context, request.user_message),
+                    image_b64=request.image_b64,
+                    image_media_type=request.image_media_type,
+                    on_tool=request.on_tool,
                 )
             except BaseException:
                 # The CLI may be dead or mid-turn; reconnect (resuming) next time.
                 await self._disconnect(session)
                 raise
 
-        result.cost_usd = self._turn_cost(result, resume_session_id)
+        result.cost_usd = self._turn_cost(result, request.resume_session_id)
         return result
 
     def _turn_cost(self, result: TurnResult, resume_session_id: str | None) -> float | None:

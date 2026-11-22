@@ -20,7 +20,7 @@ from rich.prompt import Prompt
 
 from ..config import set_environment
 from ..terminal_input import masked_input
-from .base import ProgressCallback, TurnResult
+from .base import ProgressCallback, TurnRequest, TurnResult
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks
 from .cursor_sdk_adapter import RunUsageTracker, collect_run_result, extract_run_text
 from .mcp_bridge import HttpMcpServer, mcp_servers_for
@@ -539,20 +539,7 @@ class CursorAgentBackend(ModelSelectionMixin):
             raise RuntimeError("Cursor SDK one-shot returned no text")
         return text
 
-    async def run_turn(
-        self,
-        *,
-        system_prompt: str,
-        context: str,
-        user_message: str,
-        tool_executor: "ToolExecutor",
-        session_key: str,
-        resume_session_id: str | None = None,
-        image_b64: str | None = None,
-        image_media_type: str = "image/jpeg",
-        max_turns: int = 10,
-        on_tool: ProgressCallback | None = None,
-    ) -> TurnResult:
+    async def run_turn(self, request: TurnRequest, tool_executor: "ToolExecutor") -> TurnResult:
         from cursor_sdk import CursorAgentError  # optional dependency (cursor-sdk)
 
         if not self._api_key:
@@ -564,28 +551,28 @@ class CursorAgentBackend(ModelSelectionMixin):
             raise RuntimeError("MCP server failed to start")
         mcp_servers = mcp_servers_for(mcp_config)
 
-        session = self._sessions.setdefault(session_key, _Session())
+        session = self._sessions.setdefault(request.session_key, _Session())
         async with session.lock:
             client = await self._get_client()
             try:
                 agent = await self._ensure_agent(
-                    session, client, resume=resume_session_id, mcp_servers=mcp_servers,
+                    session, client, resume=request.resume_session_id, mcp_servers=mcp_servers,
                 )
                 message = _build_user_message(
                     # A Cursor agent has no system-prompt field; a new one
                     # gets it at the top of its first message.
-                    system_prompt=system_prompt if agent == "created" else "",
-                    context=context,
-                    user_message=user_message,
-                    image_b64=image_b64,
-                    image_media_type=image_media_type,
+                    system_prompt=request.system_prompt if agent == "created" else "",
+                    context=request.context,
+                    user_message=request.user_message,
+                    image_b64=request.image_b64,
+                    image_media_type=request.image_media_type,
                 )
                 result = await self._send(
                     session.agent, message, mcp_servers=mcp_servers,
                     # A resumed agent may still show a run that died with
                     # the previous process; take it over.
                     force=agent == "resumed",
-                    max_turns=max_turns, on_tool=on_tool,
+                    max_turns=request.max_turns, on_tool=request.on_tool,
                 )
             except BaseException as exc:
                 # The agent may be mid-run or gone; reopen (resuming) next time.

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .base import AgentBackend, TurnResult
+from .base import AgentBackend, TurnRequest, TurnResult
 from .claude import ClaudeAgentBackend
 from .cursor import CursorAgentBackend
 
@@ -78,6 +78,7 @@ __all__ = [
     "CursorAgentBackend",
     "DEFAULT_BACKEND",
     "REGISTRY",
+    "TurnRequest",
     "TurnResult",
     "build_backend",
     "configuration_problem",

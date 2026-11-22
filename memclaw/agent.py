@@ -22,7 +22,7 @@ from pathlib import Path
 from loguru import logger
 
 from .backends import AgentBackend, build_backend
-from .backends.base import ProgressCallback, TurnResult
+from .backends.base import ProgressCallback, TurnRequest, TurnResult
 from .config import MemclawConfig
 from .instructions import (
     build_system_prompt,
@@ -260,17 +260,19 @@ class MemclawAgent:
 
         t0 = time.perf_counter()
         result = await self.backend.run_turn(
-            # Only used when the backend starts a new session.
-            system_prompt=build_system_prompt(agent_instructions, permanent_memory),
-            context=context,
-            user_message=message,
-            tool_executor=self._tools,
-            session_key=key,
-            resume_session_id=entry["session_id"] if entry else None,
-            image_b64=image_b64,
-            image_media_type=image_media_type,
-            max_turns=10,
-            on_tool=on_tool,
+            TurnRequest(
+                # Only used when the backend starts a new session.
+                system_prompt=build_system_prompt(agent_instructions, permanent_memory),
+                context=context,
+                user_message=message,
+                session_key=key,
+                resume_session_id=entry["session_id"] if entry else None,
+                image_b64=image_b64,
+                image_media_type=image_media_type,
+                max_turns=10,
+                on_tool=on_tool,
+            ),
+            self._tools,
         )
         self._log_turn(result, int((time.perf_counter() - t0) * 1000))
 
