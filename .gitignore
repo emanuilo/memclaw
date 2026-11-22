@@ -34,3 +34,6 @@ htmlcov/
 # Memclaw local data
 .memclaw/
 data/
+
+# Claude Code: personal settings (the shared ones are in .claude/settings.json)
+.claude/settings.local.json

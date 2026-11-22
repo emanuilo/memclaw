@@ -1,0 +1,41 @@
+#!/bin/sh
+# Blocks a commit that makes memclaw's code shape worse: runs `code-shape check`
+# (code-shape-kit, the same check as CI) and stops the commit if it fails.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# The Claude Code hook in .claude/ runs this script too.
+#
+# It checks the files in the working tree, not only the staged ones, so stage
+# everything you mean to commit (or stash the rest) first.
+
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+
+# Prefer the project's own environment: the check's numbers (e.g. type errors)
+# depend on the installed package versions.
+if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/code-shape" ]; then
+    shape="$VIRTUAL_ENV/bin/code-shape"
+elif [ -x .venv/bin/code-shape ]; then
+    shape=.venv/bin/code-shape
+elif command -v code-shape >/dev/null 2>&1; then
+    shape=code-shape
+else
+    {
+        echo "Commit blocked: code-shape (code-shape-kit) is not installed. Install it with"
+        echo "  uv sync --extra dev --group shape"
+        echo "or, in your virtualenv:"
+        echo '  pip install -e ".[dev]" --group shape    (pip >= 25.1, Python >= 3.11)'
+    } >&2
+    exit 1
+fi
+
+if ! output=$("$shape" check 2>&1); then
+    {
+        printf '%s\n\n' "$output"
+        echo "Commit blocked: code-shape check failed (details above)."
+        echo "Fix what it reports (each item has a fix: line). If it says IMPROVED, run"
+        echo "\`code-shape tighten\` and commit .code-shape-baseline.json. Never edit the"
+        echo "baseline by hand or raise a limit to make a commit pass."
+    } >&2
+    exit 1
+fi
