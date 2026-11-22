@@ -42,6 +42,8 @@ The system prompt is **static for a session**, so the backend can prompt-cache i
 2. Reply-formatting rules and a description of the per-message context block.
 3. **MEMORY.md** — your permanent memory (see Permanent Memory in the Prompt below).
 
+The template, and the fingerprint described above, are in `memclaw/instructions.py`.
+
 Everything that changes per turn goes at the **top of the user message**, in a compact `<context>` block:
 
 - The current local date and time (used for dates and reminders).
@@ -121,9 +123,11 @@ Today's file is never consolidated: it is still being written to, and marking it
    - existing facts and references stay unless updated or expired;
    - left out entirely: expired one-offs (verification codes, past events, finished trips' bookings), links saved to read later (they stay searchable), instructions for the assistant (they belong in AGENTS.md), small talk.
 
-   A wrapping ```` ``` ```` fence in the reply is stripped, and every reference is checked: one to a note that doesn't exist is dropped, one whose note shares no word with the line is logged as unconfirmed.
+   A wrapping ```` ``` ```` fence in the reply is stripped, and every reference is checked: one to a note that doesn't exist is dropped, one whose note shares no word with the line is logged as unconfirmed (`memclaw/memory/refs.py`).
 4. Saves a dated copy of the previous MEMORY.md in `.history/` (the last 60 are kept; the hidden directory isn't indexed or reachable by the file tools), then overwrites MEMORY.md with the result. Lines appended by hand while the backend was working are carried over below the result; if MEMORY.md was otherwise edited meanwhile, nothing is written and consolidation retries later.
 5. Records the date of the last file it included in `meta.json` so those files aren't processed again.
+
+All of this is `Consolidator` in `memclaw/memory/consolidation.py`, the only code that writes MEMORY.md. The agent creates it and calls `schedule()` after each reply; `memclaw consolidate` calls `consolidate(force=True, since=...)`.
 
 The result aims for about 6,000 characters, with absolute dates, in the language MEMORY.md already uses (English when it starts empty).
 

@@ -10,7 +10,7 @@ import json
 import pytest
 
 from memclaw.agent import MemclawAgent
-from memclaw.memory_refs import check_references
+from memclaw.memory.refs import check_references
 from memclaw.openai_client import OpenAIClient
 
 from .conftest import days_ago, write_daily
@@ -62,7 +62,7 @@ async def test_durable_fact_reaches_memory_md_after_the_day(agent_vault):
 
         # The day is over.
         agent_vault.daily_file().rename(agent_vault.daily_file(days_ago(1)))
-        assert await agent._maybe_consolidate()
+        assert await agent.consolidator.consolidate()
         assert "penicillin" in agent_vault.memory_file.read_text().lower()
     finally:
         await agent.aclose()
@@ -141,7 +141,7 @@ async def test_consolidation_with_real_llm(agent_vault):
     agent.backend.run_one_shot = run_one_shot_with_concurrent_save
     try:
         await agent.start(include_backend=False)
-        assert await agent._maybe_consolidate(force=True)
+        assert await agent.consolidator.consolidate(force=True)
     finally:
         await agent.aclose()
 
@@ -183,7 +183,7 @@ async def test_consolidation_prompt_quality(agent_vault):
 
     agent = MemclawAgent(agent_vault)
     try:
-        assert await agent._maybe_consolidate(force=True)
+        assert await agent.consolidator.consolidate(force=True)
     finally:
         await agent.aclose()
 

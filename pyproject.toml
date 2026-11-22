@@ -133,7 +133,7 @@ ignore_names = [
 # The ideas a change is usually about (tracked in `code-shape report`, never a
 # gate): words that name each one in code, and the module that should own it.
 "memory notes (daily files)" = { terms = ["MemoryStore", "daily_file", "memory_save"], home = "memclaw/store.py" }
-"MEMORY.md + consolidation" = { terms = ["consolidat", "MEMORY\\.md", "permanent_memory"], home = "memclaw/agent.py" }
+"MEMORY.md + consolidation" = { terms = ["consolidat", "MEMORY\\.md", "permanent_memory"], home = "memclaw/memory/consolidation.py" }
 "search + index" = { terms = ["HybridSearch", "MemoryIndex", "embedding"], home = "memclaw/index.py" }
 "reminders" = { terms = ["remind"], home = "memclaw/reminders.py" }
 "settings storage (.env)" = { terms = ["read_env_file", "update_env_file", "write_env_file", "os\\.environ"], home = "memclaw/config.py" }
@@ -161,7 +161,7 @@ include_external_packages = true
 
 [[tool.importlinter.contracts]]
 id = "layers"
-name = "Layers: a module may only import modules in layers BELOW it (entry points -> agent -> backends -> tools -> core -> config)"
+name = "Layers: a module may only import modules in layers BELOW it (entry points -> agent -> backends -> tools -> memory -> core -> config)"
 type = "layers"
 containers = ["memclaw"]
 layers = [
@@ -178,8 +178,12 @@ layers = [
     "backends",
     # The memory tools the agent can call.
     "tools",
+    # The memory subsystem (memclaw.memory): MEMORY.md consolidation, the only
+    # writer of MEMORY.md. It builds on the modules below and reaches the LLM
+    # through the backend the agent hands it, so it doesn't import backends.
+    "memory",
     # Independent building blocks (`|`: they don't import each other).
-    "search | store | reminders | sessions | memory_refs | prompts",
+    "search | store | reminders | sessions | prompts | instructions",
     # SQLite + embeddings index, used by search.
     "index",
     # The OpenAI adapter (embeddings, transcription, chat), used by index and bot.
@@ -236,6 +240,13 @@ name = "Only memclaw.openai_client imports the OpenAI SDK (everyone else calls O
 type = "protected"
 protected_modules = ["openai"]
 allowed_importers = ["memclaw.openai_client"]
+
+[[tool.importlinter.contracts]]
+id = "memory-via-package"
+name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (e.g. Consolidator)"
+type = "protected"
+protected_modules = ["memclaw.memory.consolidation", "memclaw.memory.refs"]
+allowed_importers = ["memclaw.memory"]
 
 [[tool.importlinter.contracts]]
 id = "defaults-standalone"

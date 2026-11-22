@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memclaw.memory_refs import check_references
+from memclaw.memory.refs import check_references
 
 
 def _vault(tmp_path: Path) -> Path:
