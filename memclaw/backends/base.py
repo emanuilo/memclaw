@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from ..config import MemclawConfig
     from ..tools import ToolExecutor
-    from .claude_models import ModelInfo
+    from .model_selection import ModelInfo
 
 
 @dataclass

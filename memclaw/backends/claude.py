@@ -32,9 +32,9 @@ from ..config import process_environment
 from ..terminal_input import choose, masked_input
 from ..tools import TOOL_DEFINITIONS
 from .base import ProgressCallback, TurnResult, report_tool_step
-from .claude_models import SDK_EFFORT_LEVELS, ModelInfo, fetch_models
+from .claude_models import SDK_EFFORT_LEVELS, fetch_models
 from .mcp_tools import MCP_SERVER_NAME
-from .model_selection import ModelSelectionMixin
+from .model_selection import ModelInfo, ModelSelectionMixin
 
 if TYPE_CHECKING:
     from rich.console import Console

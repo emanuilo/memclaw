@@ -21,11 +21,10 @@ from rich.prompt import Prompt
 from ..config import set_environment
 from ..terminal_input import masked_input
 from .base import ProgressCallback, TurnResult
-from .claude_models import ModelInfo
 from .cursor_hooks import cursor_hooks_status, ensure_cursor_hooks
 from .cursor_sdk_adapter import RunUsageTracker, collect_run_result, extract_run_text
 from .mcp_bridge import HttpMcpServer, mcp_servers_for
-from .model_selection import ModelSelectionMixin
+from .model_selection import ModelInfo, ModelSelectionMixin
 
 if TYPE_CHECKING:
     from rich.console import Console

@@ -90,7 +90,7 @@ class _SelectableBackend:
     supports_model_selection = True
 
     def __init__(self):
-        from memclaw.backends.claude_models import ModelInfo
+        from memclaw.backends.model_selection import ModelInfo
 
         self.models = [
             ModelInfo("claude-opus-5", "Claude Opus 5", "", ["low", "medium", "high"]),

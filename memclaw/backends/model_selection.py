@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from loguru import logger
@@ -10,7 +11,16 @@ from ..config import env_name, update_env_file
 
 if TYPE_CHECKING:
     from ..config import ClaudeSettings, CursorSettings, MemclawConfig
-    from .claude_models import ModelInfo
+
+
+@dataclass
+class ModelInfo:
+    """A model a backend's credential can use, as /model lists it."""
+
+    id: str
+    display_name: str
+    created_at: str
+    effort_levels: list[str]  # empty when the model has no effort support
 
 
 class ModelSelectionMixin:
@@ -30,9 +40,9 @@ class ModelSelectionMixin:
     config: "MemclawConfig"
     _model: str
     _effort: str | None
-    _models: list["ModelInfo"]
+    _models: list[ModelInfo]
 
-    async def list_models(self) -> list["ModelInfo"]:
+    async def list_models(self) -> list[ModelInfo]:
         raise NotImplementedError
 
     @property
@@ -43,7 +53,7 @@ class ModelSelectionMixin:
     def effort(self) -> str | None:
         return self._effort
 
-    async def _model_info(self, model_id: str) -> "ModelInfo | None":
+    async def _model_info(self, model_id: str) -> ModelInfo | None:
         """*model_id*'s entry in the model list, or None if it isn't listed
         or the list can't be fetched."""
         if not self._models:
@@ -54,7 +64,7 @@ class ModelSelectionMixin:
                 return None
         return next((m for m in self._models if m.id == model_id), None)
 
-    async def _known_model(self, model_id: str) -> "ModelInfo":
+    async def _known_model(self, model_id: str) -> ModelInfo:
         """*model_id*'s entry, or ValueError. An id that can't be checked
         (the list didn't load) is refused too: a typo would break every turn
         until ~/.memclaw/.env is fixed by hand."""

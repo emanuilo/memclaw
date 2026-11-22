@@ -9,7 +9,7 @@ import pytest
 
 from memclaw.backends import claude as claude_backend
 from memclaw.backends.claude import ClaudeAgentBackend
-from memclaw.backends.claude_models import ModelInfo
+from memclaw.backends.model_selection import ModelInfo
 from memclaw.config import ClaudeSettings
 
 
