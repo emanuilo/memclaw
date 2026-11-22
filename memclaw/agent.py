@@ -34,7 +34,7 @@ from .instructions import (
 from .memory import Consolidator, HybridSearch, MemoryIndex, MemoryStore
 from .reminders import ReminderScheduler
 from .sessions import ChatSessions
-from .tools import ToolExecutor
+from .tools import ToolContext, ToolExecutor
 
 # Per-turn memory search results. Kept small because every context block
 # stays in the session transcript.
@@ -63,7 +63,7 @@ class MemclawAgent:
         self.index = MemoryIndex(config)
         self.search = HybridSearch(config, self.index)
         self._found_images: list[dict] = []
-        self._tools = ToolExecutor(
+        self._tools = ToolExecutor(ToolContext(
             config=config,
             store=self.store,
             index=self.index,
@@ -71,7 +71,7 @@ class MemclawAgent:
             found_images=self._found_images,
             platform=platform,
             scheduler=scheduler,
-        )
+        ))
         self.backend: AgentBackend = backend or build_backend(config)
         self._backend_started = False
         self.sessions = ChatSessions(
@@ -217,7 +217,7 @@ class MemclawAgent:
         on_tool: ProgressCallback | None,
     ) -> tuple[str, list[dict]]:
         self._found_images.clear()
-        self._tools.chat_id = chat_id
+        self._tools.context.chat_id = chat_id
         turn = self.sessions.begin(chat_id)
 
         agent_instructions = load_agent_instructions(self.config)

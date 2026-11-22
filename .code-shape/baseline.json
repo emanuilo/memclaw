@@ -14,16 +14,13 @@
     "ruff": {
       "function-complexity|memclaw/backends/claude.py|ClaudeAgentBackend._query": 13,
       "function-complexity|memclaw/backends/cursor_sdk_adapter.py|collect_run_result": 11,
-      "too-many-args|memclaw/tools.py|ToolExecutor.__init__": 7,
-      "too-many-branches|memclaw/backends/claude.py|ClaudeAgentBackend._query": 13,
-      "too-many-positional|memclaw/tools.py|ToolExecutor.__init__": 7
+      "too-many-branches|memclaw/backends/claude.py|ClaudeAgentBackend._query": 13
     },
     "sizes": {
       "class-lines|memclaw/backends/claude.py|ClaudeAgentBackend": 488,
       "class-lines|memclaw/backends/cursor.py|CursorAgentBackend": 406,
       "file-lines|memclaw/backends/claude.py|": 762,
-      "file-lines|memclaw/backends/cursor.py|": 590,
-      "file-lines|memclaw/tools.py|": 575
+      "file-lines|memclaw/backends/cursor.py|": 590
     }
   },
   "version": 1

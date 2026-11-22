@@ -198,12 +198,12 @@ class TestRunOneShot:
 
 
 def _executor(cfg):
-    from memclaw.tools import ToolExecutor
+    from memclaw.tools import ToolContext, ToolExecutor
 
-    return ToolExecutor(
+    return ToolExecutor(ToolContext(
         config=cfg, store=MagicMock(), index=MagicMock(),
         search=MagicMock(), found_images=[], platform="test",
-    )
+    ))
 
 
 class _FakeClients:

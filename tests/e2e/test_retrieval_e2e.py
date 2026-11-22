@@ -8,7 +8,7 @@ import pytest
 from memclaw.agent import MemclawAgent
 from memclaw.memory import HybridSearch, MemoryIndex, MemoryStore
 from memclaw.openai_client import OpenAIClient
-from memclaw.tools import ToolExecutor
+from memclaw.tools import ToolContext, ToolExecutor
 
 from .conftest import days_ago, write_daily
 
@@ -193,7 +193,7 @@ async def test_image_search_is_scoped_to_platform(vault):
     await index.store_platform_image("whatsapp", "wa-media-1", "A whiteboard with sprint planning notes")
     await index.store_platform_image("telegram", "tg-file-1", "A whiteboard with sprint planning sticky notes")
     found: list[dict] = []
-    tools = ToolExecutor(vault, MemoryStore(vault), index, search, found, platform="telegram")
+    tools = ToolExecutor(ToolContext(vault, MemoryStore(vault), index, search, found, platform="telegram"))
     out = await tools.execute("image_search", {"query": "sprint planning whiteboard"})
     assert "id 2 " in out and "id 1 " not in out
     await tools.execute("image_send", {"ids": [1, 2]})
@@ -206,7 +206,7 @@ async def test_image_search_is_scoped_to_platform(vault):
 async def test_file_write_markdown_is_searchable(vault):
     index = MemoryIndex(vault)
     search = HybridSearch(vault, index)
-    tools = ToolExecutor(vault, MemoryStore(vault), index, search, [])
+    tools = ToolExecutor(ToolContext(vault, MemoryStore(vault), index, search, []))
     out = await tools.execute("file_write", {
         "file_path": "todos.md", "content": "# Todos\n\n- Renew passport before the Lisbon trip\n",
     })
@@ -219,7 +219,7 @@ async def test_file_write_markdown_is_searchable(vault):
 @pytest.mark.asyncio
 async def test_file_write_cannot_clobber_internal_files(vault):
     index = MemoryIndex(vault)
-    tools = ToolExecutor(vault, MemoryStore(vault), index, HybridSearch(vault, index), [])
+    tools = ToolExecutor(ToolContext(vault, MemoryStore(vault), index, HybridSearch(vault, index), []))
     for target in ("memclaw.db", ".env", "sessions.json", "meta.json"):
         out = await tools.execute("file_write", {"file_path": target, "content": "oops"})
         assert out.startswith("Blocked"), (target, out)
