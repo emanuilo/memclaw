@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 import httpx
 
-from .model_selection import ModelInfo
+from ..model_selection import ModelInfo
 
 MODELS_URL = "https://api.anthropic.com/v1/models"
 API_VERSION = "2023-06-01"

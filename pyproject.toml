@@ -319,10 +319,8 @@ id = "backend-internals-private"
 name = "Only memclaw.backends itself imports the concrete backends (everyone else goes through memclaw.backends / memclaw.backends.base)"
 type = "protected"
 protected_modules = [
+    # Packages: their modules are protected with them.
     "memclaw.backends.claude",
-    "memclaw.backends.claude_models",
-    # A package: its modules (agents, backend, bridge, configure, hooks,
-    # sdk_adapter) are protected with it.
     "memclaw.backends.cursor",
     "memclaw.backends.mcp_bridge",
     "memclaw.backends.mcp_tools",

@@ -1,21 +1,5 @@
 {
   "about": "Known shape violations. Shrink it with `code-shape tighten`; never edit by hand to add.",
-  "entries": {
-    "complexipy": {
-      "cognitive-complexity|memclaw/backends/claude.py|ClaudeAgentBackend._query": 39,
-      "cognitive-complexity|memclaw/backends/claude.py|ClaudeAgentBackend.run_one_shot": 23
-    },
-    "pylint": {
-      "too-many-locals|memclaw/backends/claude.py|ClaudeAgentBackend.wizard_setup": 17
-    },
-    "ruff": {
-      "function-complexity|memclaw/backends/claude.py|ClaudeAgentBackend._query": 13,
-      "too-many-branches|memclaw/backends/claude.py|ClaudeAgentBackend._query": 13
-    },
-    "sizes": {
-      "class-lines|memclaw/backends/claude.py|ClaudeAgentBackend": 488,
-      "file-lines|memclaw/backends/claude.py|": 762
-    }
-  },
+  "entries": {},
   "version": 1
 }

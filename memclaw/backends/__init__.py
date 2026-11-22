@@ -1,6 +1,6 @@
 """Agent-backend registry.
 
-Each backend module (e.g. `claude.py`) exposes a class that satisfies the
+Each backend package (e.g. `claude/`) exposes a class that satisfies the
 `AgentBackend` protocol. To register one, add it to `REGISTRY` below.
 
 Selection at runtime is driven by the `AGENT_BACKEND` env var (mirrored on
