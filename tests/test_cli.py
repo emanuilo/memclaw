@@ -105,6 +105,17 @@ def test_search_with_nothing_saved(tmp_path: Path):
     assert "No matching memories found." in _run(tmp_path, "search", "anything")
 
 
+@pytest.mark.parametrize("args", [["save", "a note"], ["search", "a query"], ["index"]])
+def test_commands_that_embed_need_the_openai_key(tmp_path: Path, monkeypatch, args):
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    output = _run(tmp_path, *args, exit_code=1)
+
+    assert "Error: OPENAI_API_KEY is not set." in output
+    assert "Run memclaw configure to set it." in output
+    assert not list((tmp_path / "m" / "memory").glob("*.md"))
+
+
 # ── consolidate ─────────────────────────────────────────────────────
 
 

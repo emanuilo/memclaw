@@ -69,6 +69,7 @@ def cli(ctx, memory_dir):
 def save(ctx, content):
     """Save a memory directly (no agent needed)."""
     config: MemclawConfig = ctx.obj["config"]
+    _require_openai(config)
     with MemoryVault(config) as vault:
         file_path = asyncio.run(vault.save(content))
     console.print(f"[green]✓[/green] Memory saved to [bold]{file_path.name}[/bold]")
@@ -81,6 +82,7 @@ def save(ctx, content):
 def search(ctx, query_text, limit):
     """Search your memories (no agent needed)."""
     config: MemclawConfig = ctx.obj["config"]
+    _require_openai(config)
     with MemoryVault(config) as vault:
         results = asyncio.run(vault.search(query_text, limit=limit))
 
@@ -133,6 +135,7 @@ def consolidate(ctx, since_date):
 def rebuild_index(ctx):
     """Rebuild the search index from all memory files."""
     config: MemclawConfig = ctx.obj["config"]
+    _require_openai(config)
     with MemoryVault(config) as vault:
         changed, stats = asyncio.run(vault.reindex())
 
