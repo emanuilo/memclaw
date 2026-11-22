@@ -1,5 +1,5 @@
-"""OpenAI model access: the check the wizard runs after saving, and the
-report `memclaw doctor` prints."""
+"""OpenAI model access: the check the wizard runs after saving, and
+`memclaw doctor`."""
 
 from __future__ import annotations
 
@@ -23,6 +23,15 @@ def check_openai(api_key: str | None, console: Console) -> None:
         print_probe_report(report, console)
     except Exception as exc:
         console.print(f"[yellow]Skipping model check:[/yellow] {exc}")
+
+
+def run_doctor(api_key: str, console: Console) -> bool:
+    """`memclaw doctor`: try every model Memclaw uses with *api_key* and
+    print the report. Returns True if all of them work."""
+    with console.status("[cyan]Probing OpenAI...[/cyan]"):
+        report = asyncio.run(probe_openai(api_key))
+    print_probe_report(report, console)
+    return report.all_ok
 
 
 def print_probe_report(report: ProbeReport, console: Console) -> None:

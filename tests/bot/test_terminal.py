@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from rich.console import Console
 
-from memclaw.bot import DEFAULT_PLATFORM, PLATFORMS, chosen_platform
+from memclaw.bot import DEFAULT_PLATFORM, PLATFORMS, chosen_platform, status_rows
 from memclaw.bot import terminal
 
 
@@ -95,3 +95,8 @@ def test_the_terminal_is_a_registered_platform():
 def test_chosen_platform_falls_back_to_the_terminal(configured, started):
     config = MagicMock(platform=configured)
     assert chosen_platform(config).name == started
+
+
+def test_status_shows_the_terminal_when_no_platform_is_set():
+    assert status_rows(MagicMock(platform="")) == [("Platform", "terminal")]
+    assert status_rows(MagicMock(platform="slack")) == [("Platform", "slack")]

@@ -61,6 +61,11 @@ def chosen_platform(config: MemclawConfig) -> Platform:
     return PLATFORMS.get(config.platform) or PLATFORMS[DEFAULT_PLATFORM]
 
 
+def status_rows(config: MemclawConfig) -> list[tuple[str, object]]:
+    """``(label, value)`` pairs `memclaw status` shows for the platform."""
+    return [("Platform", config.platform or DEFAULT_PLATFORM)]
+
+
 def mask_user_id(user_id: str | int) -> str:
     """Mask the middle of a user identifier for log safety.
 

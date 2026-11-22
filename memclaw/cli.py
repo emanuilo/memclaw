@@ -1,60 +1,39 @@
+"""The `memclaw` command: reads the arguments and hands each command to the
+code that does it (memclaw.bot, memclaw.memory, memclaw.setup)."""
+
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.panel import Panel
 
-from .bot import chosen_platform
+from . import backends, bot
 from .config import MemclawConfig, reload_env_file
-from .memory import HybridSearch, MemoryIndex, MemoryStore
-from .setup import needs_setup, print_logo, print_probe_report, run_setup
+from .memory import MemoryVault
+from .setup import needs_setup, print_logo, run_doctor, run_setup
 
 console = Console()
 
 
-def _require_backend_auth(config: MemclawConfig) -> None:
-    """Exit with a helpful message unless the chosen backend is configured."""
-    from .backends import REGISTRY, get_backend_class, resolve_backend_name
-
-    name = resolve_backend_name(config)
-    try:
-        backend_cls = get_backend_class(name)
-    except ValueError:
-        known = ", ".join(REGISTRY) or "(none)"
-        console.print(
-            f"[red]Error:[/red] unknown agent backend [bold]{name}[/bold] "
-            f"(set via AGENT_BACKEND). Available: {known}.\n"
-            "Run [bold]memclaw configure[/bold] to pick a valid backend."
-        )
+def _require_backend(config: MemclawConfig) -> None:
+    """Exit with a helpful message unless the chosen backend can run."""
+    problem = backends.configuration_problem(config)
+    if problem:
+        console.print(f"[red]Error:[/red] {problem}")
         raise SystemExit(1)
-    if backend_cls.is_configured(config):
-        return
-    console.print(
-        f"[red]Error:[/red] {backend_cls.configuration_help()}\n"
-        "Run [bold]memclaw configure[/bold] to set it."
-    )
-    raise SystemExit(1)
 
 
 def _require_openai(config: MemclawConfig) -> None:
-    if not config.openai.api_key:
-        console.print("[red]Error:[/red] OPENAI_API_KEY is not set.")
-        console.print("Run [bold]memclaw configure[/bold] to set it.")
-        raise SystemExit(1)
+    bot.require_setting(config.openai.api_key, "OPENAI_API_KEY")
 
 
-def _ensure_setup(ctx):
-    """Run first-time setup if ~/.memclaw/.env doesn't exist, then reload config."""
-    if needs_setup():
-        run_setup(ctx.obj["config"])
-        # Reload .env so newly saved keys are picked up
-        reload_env_file()
-        memory_dir = ctx.obj.get("memory_dir")
-        config = MemclawConfig(memory_dir=memory_dir) if memory_dir else MemclawConfig()
-        ctx.obj["config"] = config
+def _config(ctx: click.Context) -> MemclawConfig:
+    memory_dir = ctx.obj["memory_dir"]
+    return MemclawConfig(memory_dir=memory_dir) if memory_dir else MemclawConfig()
 
 
 @click.group(invoke_without_command=True)
@@ -69,21 +48,20 @@ def cli(ctx, memory_dir):
     """Memclaw -- your personal memory vault, powered by AI."""
     ctx.ensure_object(dict)
     ctx.obj["memory_dir"] = memory_dir
-    config = MemclawConfig(memory_dir=memory_dir) if memory_dir else MemclawConfig()
-    ctx.obj["config"] = config
+    ctx.obj["config"] = _config(ctx)
 
     if ctx.invoked_subcommand is None:
         print_logo()
-        _ensure_setup(ctx)
+        if needs_setup():
+            # First run: the wizard writes ~/.memclaw/.env; read it back in.
+            run_setup(ctx.obj["config"])
+            reload_env_file()
+            ctx.obj["config"] = _config(ctx)
         config = ctx.obj["config"]
-        _require_backend_auth(config)
+        _require_backend(config)
         _require_openai(config)
-        chosen_platform(config).run(config)
+        bot.chosen_platform(config).run(config)
 
-
-# ------------------------------------------------------------------
-# Direct commands (work without the Claude agent / Anthropic key)
-# ------------------------------------------------------------------
 
 @cli.command()
 @click.argument("content")
@@ -91,13 +69,8 @@ def cli(ctx, memory_dir):
 def save(ctx, content):
     """Save a memory directly (no agent needed)."""
     config: MemclawConfig = ctx.obj["config"]
-    store = MemoryStore(config)
-    index = MemoryIndex(config)
-
-    file_path = store.save(content)
-    asyncio.run(index.index_file(file_path))
-    index.close()
-
+    with MemoryVault(config) as vault:
+        file_path = asyncio.run(vault.save(content))
     console.print(f"[green]✓[/green] Memory saved to [bold]{file_path.name}[/bold]")
 
 
@@ -108,22 +81,17 @@ def save(ctx, content):
 def search(ctx, query_text, limit):
     """Search your memories (no agent needed)."""
     config: MemclawConfig = ctx.obj["config"]
-    index = MemoryIndex(config)
-    engine = HybridSearch(config, index)
-
-    results = asyncio.run(engine.search(query_text, limit=limit))
-    index.close()
+    with MemoryVault(config) as vault:
+        results = asyncio.run(vault.search(query_text, limit=limit))
 
     if not results:
         console.print("[yellow]No matching memories found.[/yellow]")
         return
-
     for i, r in enumerate(results, 1):
-        source = Path(r.file_path).stem
         console.print(
             Panel(
                 r.content.strip(),
-                title=f"[{i}] {source} (score: {r.score:.2f}, {r.match_type})",
+                title=f"[{i}] {Path(r.file_path).stem} (score: {r.score:.2f}, {r.match_type})",
                 border_style="blue",
             )
         )
@@ -134,38 +102,30 @@ def search(ctx, query_text, limit):
 @click.pass_context
 def consolidate(ctx, since_date):
     """Consolidate daily memory files into MEMORY.md."""
-    from datetime import date as date_type
-
-    from .agent import MemclawAgent
-
     config: MemclawConfig = ctx.obj["config"]
-
-    _require_backend_auth(config)
+    _require_backend(config)
     _require_openai(config)
 
-    override = None
+    since = None
     if since_date:
         try:
-            override = date_type.fromisoformat(since_date)
+            since = date.fromisoformat(since_date)
         except ValueError:
             console.print(f"[red]Error:[/red] Invalid date format: {since_date}. Use YYYY-MM-DD.")
             raise SystemExit(1)
 
-    async def _run():
-        agent = MemclawAgent(config)
-        try:
-            with console.status("[cyan]Syncing index...[/cyan]"):
-                await agent.start(include_backend=False)
-            with console.status("[cyan]Running consolidation...[/cyan]"):
-                result = await agent.consolidator.consolidate(force=True, since=override)
-            if result:
-                console.print("[green]Consolidation complete.[/green] MEMORY.md has been updated.")
-            else:
-                console.print("[yellow]No daily files to consolidate.[/yellow]")
-        finally:
-            await agent.aclose()
+    async def _run(vault: MemoryVault) -> bool:
+        backend = backends.build_backend(config)
+        with console.status("[cyan]Syncing index...[/cyan]"):
+            await vault.sync_or_warn()
+        with console.status("[cyan]Running consolidation...[/cyan]"):
+            return await vault.consolidate(backend, since=since)
 
-    asyncio.run(_run())
+    with MemoryVault(config) as vault:
+        if asyncio.run(_run(vault)):
+            console.print("[green]Consolidation complete.[/green] MEMORY.md has been updated.")
+        else:
+            console.print("[yellow]No daily files to consolidate.[/yellow]")
 
 
 @cli.command(name="index")
@@ -173,14 +133,10 @@ def consolidate(ctx, since_date):
 def rebuild_index(ctx):
     """Rebuild the search index from all memory files."""
     config: MemclawConfig = ctx.obj["config"]
-    index = MemoryIndex(config)
+    with MemoryVault(config) as vault:
+        changed, stats = asyncio.run(vault.reindex())
 
-    changed = asyncio.run(index.sync())
-    stats = index.get_stats()
-    index.close()
-
-    label = "updated" if changed else "already up to date"
-    console.print(f"[green]✓[/green] Index {label}")
+    console.print(f"[green]✓[/green] Index {'updated' if changed else 'already up to date'}")
     console.print(f"  Chunks: {stats['chunks']}  Files: {stats['files']}")
 
 
@@ -188,27 +144,14 @@ def rebuild_index(ctx):
 @click.pass_context
 def status(ctx):
     """Show memory vault status."""
-    from .backends import get_backend_class, resolve_backend_name
-
     config: MemclawConfig = ctx.obj["config"]
-    store = MemoryStore(config)
-    index = MemoryIndex(config)
-
-    files = store.list_files()
-    stats = index.get_stats()
-    index.close()
-
-    backend_cls = get_backend_class(resolve_backend_name(config))
-    rows = [
-        ("Memory directory", config.memory_dir),
-        ("Memory files", len(files)),
-        ("Platform", config.platform or "terminal"),
-        *backend_cls.status_rows(config),
-        ("Indexed chunks", stats["chunks"]),
-        ("Stored images", stats["images"]),
-        ("Database", config.db_path),
-    ]
-
+    with MemoryVault(config) as vault:
+        rows = [
+            *vault.store.status_rows(),
+            *bot.status_rows(config),
+            *backends.status_rows(config),
+            *vault.index.status_rows(),
+        ]
     console.print(
         Panel(
             "\n".join(f"{label:<16} : {value}" for label, value in rows),
@@ -230,13 +173,7 @@ def configure(ctx):
 @click.pass_context
 def doctor(ctx):
     """Check that your OpenAI key can reach every model Memclaw uses."""
-    from .openai_client import probe_openai
-
     config: MemclawConfig = ctx.obj["config"]
     _require_openai(config)
-
-    with console.status("[cyan]Probing OpenAI...[/cyan]"):
-        report = asyncio.run(probe_openai(config.openai.api_key))
-    print_probe_report(report, console)
-    if not report.all_ok:
+    if not run_doctor(config.openai.api_key, console):
         raise SystemExit(1)

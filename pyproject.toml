@@ -247,7 +247,7 @@ allowed_importers = ["memclaw.openai_client"]
 
 [[tool.importlinter.contracts]]
 id = "memory-via-package"
-name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (MemoryStore, MemoryIndex, HybridSearch, Consolidator, ...)"
+name = "Only memclaw.memory imports its own modules: everyone else uses what memclaw.memory exports (MemoryStore, MemoryIndex, HybridSearch, Consolidator, MemoryVault, ...)"
 type = "protected"
 protected_modules = [
     "memclaw.memory.chunking",
@@ -256,6 +256,7 @@ protected_modules = [
     "memclaw.memory.notes",
     "memclaw.memory.refs",
     "memclaw.memory.search",
+    "memclaw.memory.vault",
 ]
 allowed_importers = ["memclaw.memory"]
 
@@ -265,6 +266,8 @@ name = "Inside memclaw.memory: consolidation and search build on the notes and t
 type = "layers"
 containers = ["memclaw.memory"]
 layers = [
+    # The notes and the index opened together for the one-off commands.
+    "vault",
     # MEMORY.md consolidation; ranking search results. Independent.
     "consolidation | search",
     # The Markdown notes; the SQLite index of them (the only SQLite user
@@ -278,7 +281,7 @@ exhaustive = true
 
 [[tool.importlinter.contracts]]
 id = "setup-via-package"
-name = "Only memclaw.setup imports its own modules: everyone else uses what memclaw.setup exports (run_setup, needs_setup, print_logo, print_probe_report)"
+name = "Only memclaw.setup imports its own modules: everyone else uses what memclaw.setup exports (run_setup, needs_setup, print_logo, run_doctor)"
 type = "protected"
 protected_modules = ["memclaw.setup.doctor", "memclaw.setup.wizard"]
 allowed_importers = ["memclaw.setup"]

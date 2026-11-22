@@ -127,7 +127,7 @@ Today's file is never consolidated: it is still being written to, and marking it
 4. Saves a dated copy of the previous MEMORY.md in `.history/` (the last 60 are kept; the hidden directory isn't indexed or reachable by the file tools), then overwrites MEMORY.md with the result. Lines appended by hand while the backend was working are carried over below the result; if MEMORY.md was otherwise edited meanwhile, nothing is written and consolidation retries later.
 5. Records the date of the last file it included in `meta.json` so those files aren't processed again.
 
-All of this is `Consolidator` in `memclaw/memory/consolidation.py`, the only code that writes MEMORY.md. The agent creates it and calls `schedule()` after each reply; `memclaw consolidate` calls `consolidate(force=True, since=...)`.
+All of this is `Consolidator` in `memclaw/memory/consolidation.py`, the only code that writes MEMORY.md. The agent creates it and calls `schedule()` after each reply; `memclaw consolidate` creates one through `MemoryVault` with the configured backend, without starting the agent, and calls `consolidate(force=True, since=...)`.
 
 The result aims for about 6,000 characters, with absolute dates, in the language MEMORY.md already uses (English when it starts empty).
 
@@ -256,7 +256,7 @@ When you ask "show me that photo of the sunset," the agent runs `image_search`: 
 
 ## Where the Code Lives
 
-All of the above is the `memclaw/memory/` package. Other code imports what its `__init__.py` exports (`MemoryStore`, `MemoryIndex`, `HybridSearch`, `SearchResult`, `Consolidator`), never the modules inside:
+All of the above is the `memclaw/memory/` package. Other code imports what its `__init__.py` exports (`MemoryStore`, `MemoryIndex`, `HybridSearch`, `SearchResult`, `Consolidator`, `MemoryVault`), never the modules inside:
 
 | Module | What it does |
 |---|---|
@@ -265,6 +265,7 @@ All of the above is the `memclaw/memory/` package. Other code imports what its `
 | `index.py` | `MemoryIndex`: the SQLite database (chunks, embeddings and their cache, the FTS5 index, the image registry). The only code here that runs SQL |
 | `search.py` | `HybridSearch`: the search pipeline (merge, decay, MMR). It reads the index through `MemoryIndex` methods |
 | `consolidation.py`, `refs.py` | `Consolidator`: writes MEMORY.md and checks its references |
+| `vault.py` | `MemoryVault`: the notes and the index opened together, one method per one-off command (`memclaw save`, `search`, `index`, `consolidate`, `status`) |
 
 ---
 

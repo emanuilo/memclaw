@@ -6,7 +6,8 @@ from unittest.mock import patch
 from rich.console import Console
 
 from memclaw.openai_client import ProbeOutcome, ProbeReport
-from memclaw.setup import doctor, print_probe_report
+from memclaw.setup import doctor
+from memclaw.setup.doctor import print_probe_report
 
 
 def _report(chat_ok: bool) -> ProbeReport:
@@ -55,3 +56,16 @@ class TestCheckOpenAI:
         with patch.object(doctor, "probe_openai", _fail):
             doctor.check_openai("sk-1", console)
         assert "Skipping model check: offline" in console.export_text()
+
+
+class TestRunDoctor:
+    def test_prints_the_report_and_says_whether_all_models_work(self):
+        for chat_ok in (True, False):
+            console = _console()
+
+            async def _probe(_key, chat_ok=chat_ok):
+                return _report(chat_ok)
+
+            with patch.object(doctor, "probe_openai", _probe):
+                assert doctor.run_doctor("sk-1", console) is chat_ok
+            assert "OpenAI model access" in console.export_text()

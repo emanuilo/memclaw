@@ -50,6 +50,28 @@ def build_backend(config: "MemclawConfig") -> AgentBackend:
     return get_backend_class(resolve_backend_name(config))(config)
 
 
+def configuration_problem(config: "MemclawConfig") -> str | None:
+    """Why the backend *config* chooses can't run (an unknown name, missing
+    credentials), as a message for the user with Rich markup; None if it can."""
+    name = resolve_backend_name(config)
+    backend_cls = REGISTRY.get(name)
+    if backend_cls is None:
+        known = ", ".join(REGISTRY) or "(none)"
+        return (
+            f"unknown agent backend [bold]{name}[/bold] "
+            f"(set via AGENT_BACKEND). Available: {known}.\n"
+            "Run [bold]memclaw configure[/bold] to pick a valid backend."
+        )
+    if backend_cls.is_configured(config):
+        return None
+    return f"{backend_cls.configuration_help()}\nRun [bold]memclaw configure[/bold] to set it."
+
+
+def status_rows(config: "MemclawConfig") -> list[tuple[str, str]]:
+    """``(label, value)`` pairs `memclaw status` shows for the chosen backend."""
+    return get_backend_class(resolve_backend_name(config)).status_rows(config)
+
+
 __all__ = [
     "AgentBackend",
     "ClaudeAgentBackend",
@@ -58,7 +80,9 @@ __all__ = [
     "REGISTRY",
     "TurnResult",
     "build_backend",
+    "configuration_problem",
     "get_backend_class",
     "list_backends",
     "resolve_backend_name",
+    "status_rows",
 ]
