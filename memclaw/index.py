@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from openai import AsyncOpenAI
 
 from .config import MemclawConfig
+from .openai_client import OpenAIClient
 
 
 @dataclass
@@ -29,7 +29,7 @@ class MemoryIndex:
 
     def __init__(self, config: MemclawConfig):
         self.config = config
-        self._openai: AsyncOpenAI | None = None
+        self._openai: OpenAIClient | None = None
         self._init_db()
 
     def _init_db(self):
@@ -140,9 +140,9 @@ class MemoryIndex:
         """)
 
     @property
-    def openai(self) -> AsyncOpenAI:
+    def openai(self) -> OpenAIClient:
         if self._openai is None:
-            self._openai = AsyncOpenAI(api_key=self.config.openai.api_key)
+            self._openai = OpenAIClient(self.config.openai.api_key)
         return self._openai
 
     # ------------------------------------------------------------------
@@ -233,11 +233,8 @@ class MemoryIndex:
         # Fetch embeddings for uncached texts only
         if uncached_indices:
             uncached_texts = [texts[i] for i in uncached_indices]
-            response = await self.openai.embeddings.create(
-                model=model,
-                input=uncached_texts,
-            )
-            new_embeddings = [np.array(item.embedding, dtype=np.float32) for item in response.data]
+            vectors = await self.openai.embed(uncached_texts, model=model)
+            new_embeddings = [np.array(v, dtype=np.float32) for v in vectors]
 
             for idx, emb in zip(uncached_indices, new_embeddings):
                 results[idx] = emb

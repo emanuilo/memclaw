@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
@@ -48,18 +48,16 @@ class TestEmbeddingCacheBehavior:
     async def test_cache_miss_calls_api(self, idx: MemoryIndex):
         """On cache miss, the OpenAI API is called."""
         fake_emb = np.random.randn(1536).astype(np.float32)
-        mock_response = MagicMock()
-        mock_response.data = [MagicMock(embedding=fake_emb.tolist())]
+        vectors = [fake_emb.tolist()]
 
         with patch.object(idx, "_openai") as mock_openai:
-            mock_openai.embeddings = MagicMock()
-            mock_openai.embeddings.create = AsyncMock(return_value=mock_response)
+            mock_openai.embed = AsyncMock(return_value=vectors)
             idx._openai = mock_openai
 
             result = await idx.get_embeddings(["hello world"])
             assert len(result) == 1
             assert result[0].shape == (1536,)
-            mock_openai.embeddings.create.assert_called_once()
+            mock_openai.embed.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_api(self, idx: MemoryIndex):
@@ -76,15 +74,14 @@ class TestEmbeddingCacheBehavior:
         idx.db.commit()
 
         with patch.object(idx, "_openai") as mock_openai:
-            mock_openai.embeddings = MagicMock()
-            mock_openai.embeddings.create = AsyncMock()
+            mock_openai.embed = AsyncMock()
             idx._openai = mock_openai
 
             result = await idx.get_embeddings([text])
             assert len(result) == 1
             np.testing.assert_array_almost_equal(result[0], fake_emb, decimal=5)
             # API should NOT have been called
-            mock_openai.embeddings.create.assert_not_called()
+            mock_openai.embed.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cache_miss_on_different_model(self, idx: MemoryIndex):
@@ -101,17 +98,15 @@ class TestEmbeddingCacheBehavior:
         idx.db.commit()
 
         new_emb = np.random.randn(1536).astype(np.float32)
-        mock_response = MagicMock()
-        mock_response.data = [MagicMock(embedding=new_emb.tolist())]
+        vectors = [new_emb.tolist()]
 
         with patch.object(idx, "_openai") as mock_openai:
-            mock_openai.embeddings = MagicMock()
-            mock_openai.embeddings.create = AsyncMock(return_value=mock_response)
+            mock_openai.embed = AsyncMock(return_value=vectors)
             idx._openai = mock_openai
 
             await idx.get_embeddings([text])
             # API should have been called because model doesn't match
-            mock_openai.embeddings.create.assert_called_once()
+            mock_openai.embed.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_mixed_cache_hits_and_misses(self, idx: MemoryIndex):
@@ -128,12 +123,10 @@ class TestEmbeddingCacheBehavior:
         idx.db.commit()
 
         uncached_emb = np.random.randn(1536).astype(np.float32)
-        mock_response = MagicMock()
-        mock_response.data = [MagicMock(embedding=uncached_emb.tolist())]
+        vectors = [uncached_emb.tolist()]
 
         with patch.object(idx, "_openai") as mock_openai:
-            mock_openai.embeddings = MagicMock()
-            mock_openai.embeddings.create = AsyncMock(return_value=mock_response)
+            mock_openai.embed = AsyncMock(return_value=vectors)
             idx._openai = mock_openai
 
             result = await idx.get_embeddings([cached_text, uncached_text])
@@ -141,8 +134,8 @@ class TestEmbeddingCacheBehavior:
             # First result should be the cached one
             np.testing.assert_array_almost_equal(result[0], cached_emb, decimal=5)
             # API called with only the uncached text
-            call_args = mock_openai.embeddings.create.call_args
-            assert call_args.kwargs["input"] == [uncached_text]
+            call_args = mock_openai.embed.call_args
+            assert call_args.args[0] == [uncached_text]
 
     @pytest.mark.asyncio
     async def test_empty_input(self, idx: MemoryIndex):

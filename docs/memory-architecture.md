@@ -91,7 +91,7 @@ Details — credentials, document numbers, instructions, receipts — stay in th
 
 ### How Memories Get Saved
 
-The agent — not the handler, not a pre-processing step — decides what to save. When you send a text message, voice note, photo, or link, the raw content is passed to the agent with a note saying it hasn't been saved yet. The agent reads it and decides:
+The agent — not the chat platform's code, not a pre-processing step — decides what to save. When you send a text message, voice note, photo, or link, the raw content is passed to the agent with a note saying it hasn't been saved yet (the same prompt on every platform: `memclaw/bot/inbound.py`). The agent reads it and decides:
 
 - **Save it** if the content is useful (a fact, a note, a decision).
 - **Rephrase it** if the verbatim text is messy but the information matters.

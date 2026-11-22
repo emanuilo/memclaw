@@ -41,7 +41,7 @@ def _offline_embeddings(request, monkeypatch):
     """Unit tests never call OpenAI; tests/e2e uses the real API."""
     if f"{os.sep}e2e{os.sep}" in str(request.node.fspath):
         return
-    monkeypatch.setattr("memclaw.index.AsyncOpenAI", _FakeOpenAI)
+    monkeypatch.setattr("memclaw.openai_client.AsyncOpenAI", _FakeOpenAI)
 
 
 @pytest.fixture

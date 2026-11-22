@@ -11,6 +11,7 @@ import pytest
 
 from memclaw.agent import MemclawAgent
 from memclaw.memory_refs import check_references
+from memclaw.openai_client import OpenAIClient
 
 from .conftest import days_ago, write_daily
 
@@ -106,7 +107,7 @@ async def test_instruction_is_saved_and_followed(agent_vault):
 async def test_turn_survives_openai_outage(agent_vault):
     """Context search failing (bad OpenAI key) must not fail the message."""
     agent = await _agent(agent_vault)
-    agent.index.openai.api_key = "sk-invalid"
+    agent.index._openai = OpenAIClient("sk-invalid")
     try:
         reply, _ = await agent.handle("Just say hi.", chat_id="1")
         assert reply and reply != "I couldn't generate a response."
@@ -212,7 +213,7 @@ async def test_agent_follows_a_reference_for_an_exact_value(agent_vault):
         f"- HERE Maps API key → memory/{day.isoformat()}.md\n"
     )
     agent = await _agent(agent_vault)
-    agent.index.openai.api_key = "sk-invalid"
+    agent.index._openai = OpenAIClient("sk-invalid")
     try:
         reply, _ = await agent.handle("What's my HERE API key? I need the exact value.", chat_id="1")
         assert "-6ANtobEtBwi4s3mKHlqSPbM1VSbXlQdXkAo7tXNQoU" in reply

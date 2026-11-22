@@ -26,6 +26,12 @@ class TestQuestions:
         ]
         assert setup.questions("whatsapp") == setup.questions("terminal") == []
 
+    def test_platforms_come_from_the_bot_registry(self):
+        assert setup.PLATFORMS == [
+            ("telegram", "Telegram"), ("whatsapp", "WhatsApp"), ("slack", "Slack"),
+            ("terminal", "Terminal chat"),
+        ]
+
     def test_every_question_belongs_to_a_known_platform_or_none(self):
         platforms = {name for name, _ in setup.PLATFORMS}
         asked = setup.questions() + [s for p in platforms for s in setup.questions(p)]

@@ -1,4 +1,4 @@
-"""Probe the user's OpenAI key for access to every model Memclaw depends on.
+"""The one module that talks to OpenAI.
 
 Memclaw uses three OpenAI capabilities:
 
@@ -6,8 +6,10 @@ Memclaw uses three OpenAI capabilities:
   - chat (gpt-5-mini)                   — link summarization
   - audio.transcriptions (whisper-1)    — voice messages
 
-A brand-new project on the OpenAI platform may have any of these disabled.
-This module makes a minimal call to each one and reports which work.
+Everything else calls `OpenAIClient`. A brand-new project on the OpenAI
+platform may have any of these models disabled, so `probe_openai` (the
+`memclaw doctor` check) makes a minimal call to each one and reports which
+work.
 """
 
 from __future__ import annotations
@@ -16,12 +18,48 @@ import struct
 from dataclasses import dataclass
 
 from openai import AsyncOpenAI
-from rich.panel import Panel
-from rich.text import Text
 
 CHAT_MODEL = "gpt-5-mini"
 EMBEDDING_MODEL = "text-embedding-3-small"
 WHISPER_MODEL = "whisper-1"
+
+
+class OpenAIClient:
+    """The OpenAI calls Memclaw makes. Errors from the SDK are raised as is."""
+
+    def __init__(self, api_key: str):
+        self._sdk = AsyncOpenAI(api_key=api_key)
+
+    async def embed(self, texts: list[str], *, model: str = EMBEDDING_MODEL) -> list[list[float]]:
+        """One embedding vector per text, in order."""
+        response = await self._sdk.embeddings.create(model=model, input=texts)
+        return [item.embedding for item in response.data]
+
+    async def transcribe(self, audio: bytes, *, filename: str, mime_type: str) -> str:
+        """Speech to text with Whisper; *filename*'s extension tells OpenAI the format."""
+        result = await self._sdk.audio.transcriptions.create(
+            model=WHISPER_MODEL, file=(filename, audio, mime_type),
+        )
+        return result.text
+
+    async def chat(self, messages: list) -> str:
+        """A short answer from the small chat model ("" if it gives none).
+
+        *messages* are OpenAI chat messages: ``{"role": ..., "content": ...}``.
+        """
+        response = await self._sdk.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=messages,
+            reasoning_effort="low",
+            max_completion_tokens=300,
+        )
+        return response.choices[0].message.content or ""
+
+    async def close(self) -> None:
+        await self._sdk.close()
+
+
+# ── The `memclaw doctor` probe ───────────────────────────────────────
 
 
 @dataclass
@@ -63,28 +101,23 @@ def _short(err: BaseException, limit: int = 180) -> str:
     return msg if len(msg) <= limit else msg[:limit] + "..."
 
 
-async def _probe_embedding(client: AsyncOpenAI) -> ProbeOutcome:
+async def _probe_embedding(client: OpenAIClient) -> ProbeOutcome:
     try:
-        await client.embeddings.create(model=EMBEDDING_MODEL, input="ok")
+        await client.embed(["ok"])
         return ProbeOutcome("Embeddings (search)", EMBEDDING_MODEL, True)
     except Exception as exc:
         return ProbeOutcome("Embeddings (search)", EMBEDDING_MODEL, False, _short(exc))
 
 
-async def _probe_chat(client: AsyncOpenAI) -> ProbeOutcome:
+async def _probe_chat(client: OpenAIClient) -> ProbeOutcome:
     try:
-        await client.chat.completions.create(
-            model=CHAT_MODEL,
-            messages=[{"role": "user", "content": "ok"}],
-            reasoning_effort="low",
-            max_completion_tokens=300,
-        )
+        await client.chat([{"role": "user", "content": "ok"}])
         return ProbeOutcome("Chat (link summaries)", CHAT_MODEL, True)
     except Exception as exc:
         return ProbeOutcome("Chat (link summaries)", CHAT_MODEL, False, _short(exc))
 
 
-async def _probe_whisper(client: AsyncOpenAI) -> ProbeOutcome:
+async def _probe_whisper(client: OpenAIClient) -> ProbeOutcome:
     """Whisper is harder to probe — a real audio file is needed.
 
     We send 0.5s of silence and inspect the result:
@@ -93,10 +126,7 @@ async def _probe_whisper(client: AsyncOpenAI) -> ProbeOutcome:
       - Anything else  → treat as failure and surface the error.
     """
     try:
-        await client.audio.transcriptions.create(
-            model=WHISPER_MODEL,
-            file=("probe.wav", _silent_wav(), "audio/wav"),
-        )
+        await client.transcribe(_silent_wav(), filename="probe.wav", mime_type="audio/wav")
         return ProbeOutcome("Audio (voice messages)", WHISPER_MODEL, True)
     except Exception as exc:
         status = getattr(exc, "status_code", None) or getattr(
@@ -110,7 +140,7 @@ async def _probe_whisper(client: AsyncOpenAI) -> ProbeOutcome:
 
 
 async def probe_openai(api_key: str) -> ProbeReport:
-    client = AsyncOpenAI(api_key=api_key)
+    client = OpenAIClient(api_key)
     try:
         embedding = await _probe_embedding(client)
         chat = await _probe_chat(client)
@@ -118,32 +148,3 @@ async def probe_openai(api_key: str) -> ProbeReport:
     finally:
         await client.close()
     return ProbeReport(embedding=embedding, chat=chat, whisper=whisper)
-
-
-def print_probe_report(report: ProbeReport, console) -> None:
-    """Render a probe report as a Rich table-ish summary."""
-    body = Text()
-    for outcome in report:
-        marker = "[green]✓[/green]" if outcome.ok else "[red]✗[/red]"
-        line = f"{marker} {outcome.name}  [dim]({outcome.model})[/dim]"
-        if not outcome.ok and outcome.error:
-            line += f"\n  [red]{outcome.error}[/red]"
-        body.append_text(Text.from_markup(line))
-        body.append("\n")
-
-    if not report.all_ok:
-        body.append("\n", style="")
-        body.append_text(
-            Text.from_markup(
-                "[yellow]Enable the missing models for your project at[/yellow]\n"
-                "[bold]https://platform.openai.com/settings/organization/limits[/bold]"
-            )
-        )
-
-    console.print(
-        Panel(
-            body,
-            title="OpenAI model access",
-            border_style="green" if report.all_ok else "yellow",
-        )
-    )

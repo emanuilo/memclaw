@@ -7,6 +7,7 @@ import pytest
 
 from memclaw.agent import MemclawAgent
 from memclaw.index import MemoryIndex
+from memclaw.openai_client import OpenAIClient
 from memclaw.search import HybridSearch
 from memclaw.store import MemoryStore
 from memclaw.tools import ToolExecutor
@@ -233,7 +234,7 @@ async def test_context_survives_embedding_failure(vault, monkeypatch):
     """If OpenAI is unreachable, the per-turn context still builds (without
     memories) instead of failing the whole message."""
     agent = MemclawAgent(vault, backend=_NoBackend())
-    monkeypatch.setattr(agent.index.openai, "api_key", "sk-invalid")
+    monkeypatch.setattr(agent.index, "_openai", OpenAIClient("sk-invalid"))
     context = await agent.build_context("hello there")
     assert context.startswith("<context>") and context.endswith("</context>")
     agent._close_sync_only()
