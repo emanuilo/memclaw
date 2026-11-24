@@ -125,6 +125,7 @@ class FakeOpenAI:
         self.transcriptions: list[tuple] = []
         self.chats: list[dict] = []
         self.fail_transcription = False
+        self.fail_chat = False
         self.audio = SimpleNamespace(transcriptions=SimpleNamespace(create=self._transcribe))
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
 
@@ -136,6 +137,8 @@ class FakeOpenAI:
 
     async def _chat(self, **kwargs):
         self.chats.append(kwargs)
+        if self.fail_chat:
+            raise RuntimeError("quota exceeded")
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=SUMMARY))])
 
     async def close(self):
@@ -515,6 +518,16 @@ async def test_link_that_cannot_be_fetched_adds_nothing(chat):
     await chat.text("see https://example.com/elsewhere")
     assert [c["prompt"] for c in chat.agent.calls] == ["see https://example.com/elsewhere"]
     assert chat.env.openai.chats == []
+
+
+async def test_link_that_cannot_be_summarized_adds_nothing(chat):
+    """A failed summary is no summary, like a page that can't be fetched:
+    the error text never reaches the agent as if it were the page's summary."""
+    chat.env.openai.fail_chat = True
+    await chat.text(LINK_TEXT)
+    assert [c["prompt"] for c in chat.agent.calls] == [LINK_TEXT]
+    assert len(chat.env.openai.chats) == 1
+    assert chat.replies == ["Got it."]
 
 
 async def test_photo_with_a_link_in_the_caption(chat):

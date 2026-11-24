@@ -126,4 +126,4 @@ memclaw status        # vault overview
 memclaw doctor        # check your OpenAI key can reach every model Memclaw uses
 ```
 
-If voice messages aren't transcribed or link summaries come back empty, run `memclaw doctor`. It probes `text-embedding-3-small` (search), `gpt-5-mini` (link summaries) and `whisper-1` (voice) and tells you which ones your OpenAI project can use. The same check runs at the end of the setup wizard.
+If voice messages aren't transcribed or links arrive without a summary, run `memclaw doctor`. It probes `text-embedding-3-small` (search), `gpt-5-mini` (link summaries) and `whisper-1` (voice) and tells you which ones your OpenAI project can use. The same check runs at the end of the setup wizard.
