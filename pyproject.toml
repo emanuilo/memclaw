@@ -71,7 +71,7 @@ dev = [
 # code-shape-kit: the `code-shape` checks (CI and pre-commit hooks). It needs
 # Python 3.11.4+ while memclaw also supports 3.10, hence the marker.
 shape = [
-    "code-shape-kit[tools] @ git+https://github.com/emanuilo/code-shape-kit@v0.2.2 ; python_full_version >= '3.11.4'",
+    "code-shape-kit[tools] @ git+https://github.com/emanuilo/code-shape-kit@v0.3.0 ; python_full_version >= '3.11.4'",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -90,8 +90,8 @@ select = ["E4", "E7", "E9", "F"]
 # hooks. Known violations are listed in .code-shape/baseline.json: only new or
 # worse ones fail. Never edit the baseline by hand; fix the code, then run
 # `code-shape tighten`. The kit's default limits apply (see its
-# templates/shape.toml) unless [tool.shape.limits] below sets a stricter
-# one; don't raise one to make a change pass.
+# code_shape/templates/shape.toml) unless [tool.shape.limits] below sets a
+# stricter one; don't raise one to make a change pass.
 # ---------------------------------------------------------------------------
 [tool.shape]
 packages = ["memclaw"]
