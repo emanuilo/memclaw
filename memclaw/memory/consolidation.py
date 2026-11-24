@@ -41,6 +41,11 @@ _CONSOLIDATION_BUDGET_CHARS = 80000
 # A reply wrapped in a ```markdown fence despite the instructions.
 _FENCED_RE = re.compile(r"^```[\w-]*\n(.*?)\n?```$", re.DOTALL)
 
+# What the prompt's Format section requires of every MEMORY.md: it starts
+# with this title and has the index heading.
+_MEMORY_TITLE = "# Personal Memory"
+_INDEX_RE = re.compile(r"^## Index[ \t]*$", re.MULTILINE)
+
 
 _CONSOLIDATION_PROMPT = """\
 You maintain MEMORY.md, the user's permanent memory. It is loaded into the \
@@ -101,7 +106,8 @@ it has clearly expired.
 Format:
 - Markdown starting with "# Personal Memory"; profile sections (e.g. About, \
 People, Work & Projects, Health, Home & Pets, Finances, Preferences, Open \
-threads — only those with content), then "## Index".
+threads — only those with content), then "## Index" (always, even when \
+there is nothing to index yet).
 - References are written exactly as "→ memory/YYYY-MM-DD.md" (several \
 separated by commas) or "→ <file>.md" for the other notes, at the end of \
 the line.
@@ -126,6 +132,27 @@ def _strip_fence(text: str) -> str:
     text = text.strip()
     m = _FENCED_RE.match(text)
     return m.group(1).strip() if m else text
+
+
+def _check_memory_text(text: str) -> None:
+    """Raise unless *text* has what the prompt requires of a MEMORY.md: it
+    starts with the title and has the index heading.
+
+    A backend can return error text instead of raising ("API Error: ...",
+    Cursor's "I couldn't generate a response."), or a reply can come back
+    empty or cut off; written over MEMORY.md, it would replace the user's
+    whole profile. Raising treats it as the failed call it is: nothing is
+    written and the background run waits an hour, rather than paying for a
+    new call after every reply."""
+    if text.startswith(_MEMORY_TITLE) and _INDEX_RE.search(text):
+        return
+    preview = text.strip()[:80]
+    logger.warning(
+        "Consolidation reply is not a MEMORY.md (no \"{t}\" title or \"## Index\"), "
+        "MEMORY.md left as it was: {p!r}",
+        t=_MEMORY_TITLE, p=preview,
+    )
+    raise RuntimeError(f"Consolidation reply is not a MEMORY.md: {preview!r}")
 
 
 class Consolidator:
@@ -183,8 +210,6 @@ class Consolidator:
             system_prompt=_CONSOLIDATION_PROMPT,
             user_message=self._message(today, daily_text, existing_memory),
         ))
-        if not result_text:
-            return False
         refs = check_references(result_text, self.config.memory_dir)
         for ref in refs.dropped:
             logger.warning("Consolidation referenced a missing note, dropped: {r}", r=ref)
@@ -291,7 +316,11 @@ class Consolidator:
         """Write *new_memory* over MEMORY.md, keeping a dated copy of the old
         one. Lines someone appended by hand while consolidation was running
         are carried over; any other change meanwhile (an edit) means nothing
-        is written, and consolidation retries later."""
+        is written, and consolidation retries later.
+
+        Raises if *new_memory* isn't a MEMORY.md (an error message, a
+        placeholder, an empty or cut-off reply), like a failed backend call."""
+        _check_memory_text(new_memory)
         current = self._store.read_file(self.config.memory_file)
         if not current.startswith(existing_memory):
             logger.warning("MEMORY.md changed during consolidation; will retry later")
