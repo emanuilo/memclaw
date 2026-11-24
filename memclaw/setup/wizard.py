@@ -156,7 +156,7 @@ def run_setup(config: MemclawConfig, *, reconfigure: bool = False) -> None:
                      either way -- it depends only on the chosen platform.
     """
     existing = read_env_file()
-    _print_intro(reconfigure)
+    _print_intro(reconfigure=reconfigure)
 
     # Start from any previously-saved values so platform-scoped keys we don't
     # prompt for this round (because the user picked a different platform) are
@@ -181,7 +181,7 @@ def run_setup(config: MemclawConfig, *, reconfigure: bool = False) -> None:
     check_openai(values.get("OPENAI_API_KEY"), console)
 
 
-def _print_intro(reconfigure: bool) -> None:
+def _print_intro(*, reconfigure: bool) -> None:
     if reconfigure:
         console.print(
             Panel(
