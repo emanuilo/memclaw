@@ -2,7 +2,13 @@
 
 On first run, `memclaw` launches a setup wizard: it asks which front-end you want (Telegram, WhatsApp, Slack or Terminal) and which agent backend, prompts only for the keys those need, and saves them to `~/.memclaw/.env`. Run `memclaw configure` anytime to switch platform or backend, or to update keys.
 
-You can also set keys via environment variables or a `.env` in the current directory — these take the usual precedence over the saved config.
+You can also set any of them as environment variables. Where a value comes from, highest first:
+
+1. The environment of the shell that runs `memclaw`.
+2. A `.env` in the folder Memclaw is installed in or any folder above it (python-dotenv searches upward from the installed `memclaw` package, not from the folder you run `memclaw` in). In practice this only matters for a development install from a clone, where the clone's `.env` is picked up.
+3. `~/.memclaw/.env`, written by the wizard.
+
+A `.env` in the current folder is not read; to use one, export its variables into your shell first (e.g. `set -a; . ./.env; set +a`).
 
 ```bash
 memclaw --memory-dir ~/my-vault   # override storage location
