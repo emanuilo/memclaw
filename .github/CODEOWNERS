@@ -1,0 +1,18 @@
+# From code-shape-kit's templates/CODEOWNERS. With "Require review from Code
+# Owners" on in the branch protection rules, a pull request that changes the
+# code-shape rules can't be merged without the owner's approval: a red gate
+# can't be turned green by loosening them.
+
+# [tool.shape] (limits, banned APIs, output_modules, ...), [tool.importlinter]
+# (memclaw's layout rules), [tool.vulture] and the pinned kit version
+/pyproject.toml                         @emanuilo
+# the baseline: known violations (memclaw's is empty)
+/.code-shape/                           @emanuilo
+# the hooks that run `code-shape check` before a commit (git and Claude Code)
+/.githooks/                             @emanuilo
+/.claude/settings.json                  @emanuilo
+/.claude/hooks/                         @emanuilo
+# the CI gate itself (the `shape` job)
+/.github/workflows/ci.yml               @emanuilo
+# this file
+/.github/CODEOWNERS                     @emanuilo
