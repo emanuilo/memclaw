@@ -53,11 +53,11 @@ Via [`cursor-sdk`](https://pypi.org/project/cursor-sdk/). Install with `pip inst
 | `CURSOR_EFFORT` | Optional | Cursor reasoning level, for models that have one (set by `/effort`) |
 | `MEMCLAW_MCP_PORT` | For Cursor backend | Local MCP HTTP port (defaults to `17373`) |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
-| `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
+| `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs allowed to use the bot (empty = nobody) |
 | `SLACK_BOT_TOKEN` | For Slack bot | Slack bot token (`xoxb-...`) |
 | `SLACK_APP_TOKEN` | For Slack bot | Slack app-level token for Socket Mode (`xapp-...`) |
-| `SLACK_ALLOWED_CHANNELS` | For Slack bot | Comma-separated Slack channel IDs (optional) |
-| `SLACK_ALLOWED_USERS` | For Slack bot | Comma-separated Slack user IDs (optional — restricts who can DM/mention the bot) |
+| `SLACK_ALLOWED_CHANNELS` | Optional | Comma-separated Slack channel IDs the bot answers in (empty = any channel the allowed users write in, DMs included) |
+| `SLACK_ALLOWED_USERS` | For Slack bot | Comma-separated Slack user IDs who can DM/mention the bot (empty = nobody) |
 
 Search and memory tuning (weights, decay, chunk sizes) is listed in the [Memory Architecture](memory-architecture.md#configuration-reference) doc.
 

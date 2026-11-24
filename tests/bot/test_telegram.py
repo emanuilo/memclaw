@@ -366,3 +366,28 @@ class TestDescribeToolCall:
         assert describe_tool_call("unknown_tool", {"x": 1}) == "unknown_tool"
         long = describe_tool_call("file_read", {"file_path": "a" * 200})
         assert long.endswith("…") and len(long) <= len("Reading: ") + 80
+
+
+class TestStartBanner:
+    def _start(self, monkeypatch, tmp_path, allowed: str) -> str:
+        from memclaw.bot import console, telegram
+        from memclaw.config import MemclawConfig, TelegramSettings
+
+        monkeypatch.setattr(telegram, "log_to", lambda *a: None)
+        monkeypatch.setattr(telegram, "build_application", lambda config: MagicMock())
+        config = MemclawConfig(memory_dir=tmp_path, telegram=TelegramSettings(bot_token="1:a"))
+        config.telegram.allowed_user_ids = allowed  # after: an empty value would read the env
+        with console.capture() as captured:
+            telegram.run(config)
+        return " ".join(captured.get().split())
+
+    def test_empty_allowlist_warns_and_says_nobody(self, monkeypatch, tmp_path):
+        out = self._start(monkeypatch, tmp_path, "")
+        assert "allowed users: nobody" in out
+        assert "users: all" not in out
+        assert "ALLOWED_USER_IDS is empty, so nobody can use the bot" in out
+
+    def test_allowlist_is_shown_masked(self, monkeypatch, tmp_path):
+        out = self._start(monkeypatch, tmp_path, "100951236")
+        assert "allowed users: 100****36" in out
+        assert "Warning" not in out

@@ -158,7 +158,9 @@ def env(tmp_path, monkeypatch):
         memory_dir=tmp_path / "m",
         openai=OpenAISettings(api_key="sk-test"),
         telegram=TelegramSettings(bot_token="123:abc", allowed_user_ids="1"),
-        slack=SlackSettings(bot_token="xoxb-1", app_token="xapp-1", allowed_users="U1"),
+        slack=SlackSettings(
+            bot_token="xoxb-1", app_token="xapp-1", allowed_users="U1", allowed_channels="C1",
+        ),
     )
     return SimpleNamespace(config=config, openai=openai, monkeypatch=monkeypatch)
 
@@ -324,8 +326,8 @@ class SlackDriver:
             self.said.append(kw)
         await self.app.events[kind](event=event, say=say, client=None)
 
-    async def text(self, text, *, stranger=False, user=None):
-        user = user or ("U9" if stranger else "U1")
+    async def text(self, text, *, stranger=False):
+        user = "U9" if stranger else "U1"
         await self._event({"channel": "C1", "user": user, "text": text, "ts": "1.0"})
 
     async def photo(self, caption):
@@ -654,19 +656,30 @@ async def test_telegram_quotes_the_replied_message(env):
 
 
 async def test_telegram_empty_allowlist_blocks_everyone(env):
-    """Quirk: on Telegram an empty ALLOWED_USER_IDS lets nobody in..."""
+    """An empty ALLOWED_USER_IDS lets nobody in..."""
     env.config.telegram.allowed_user_ids = ""
     chat = TelegramDriver(env)
     await chat.text("hello")
     assert chat.agent.calls == [] and chat.replies == []
 
 
-async def test_slack_empty_allowlist_lets_everyone_in(env):
-    """...while on Slack an empty SLACK_ALLOWED_USERS lets everyone in."""
+async def test_slack_empty_allowlist_blocks_everyone(env):
+    """...and so does an empty SLACK_ALLOWED_USERS (WhatsApp has no
+    allowlist: only your own self-chat gets in)."""
     env.config.slack.allowed_users = ""
     chat = SlackDriver(env)
-    await chat.text("hello", user="U-anyone")
-    assert [c["prompt"] for c in chat.agent.calls] == ["hello"]
+    await chat.text("hello")
+    assert chat.agent.calls == [] and chat.replies == []
+
+
+async def test_slack_empty_channel_list_means_any_channel(env):
+    """An empty SLACK_ALLOWED_CHANNELS lets the allowed users in anywhere
+    (a DM included); strangers are still ignored."""
+    env.config.slack.allowed_channels = ""
+    chat = SlackDriver(env)
+    await chat._event({"channel": "D1", "user": "U1", "text": "in a DM", "ts": "1.0"})
+    await chat._event({"channel": "D9", "user": "U9", "text": "stranger", "ts": "1.0"})
+    assert [c["prompt"] for c in chat.agent.calls] == ["in a DM"]
 
 
 async def test_slack_allowlists(env):

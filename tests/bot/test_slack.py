@@ -14,8 +14,8 @@ async def test_new_message_resets_the_channel():
 
     handlers = SlackBot.__new__(SlackBot)
     handlers.config = MagicMock()
-    handlers.config.slack.allowed_channels_list = []
-    handlers.config.slack.allowed_users_list = []
+    handlers.config.slack.allowed_channels_list = ["C1"]
+    handlers.config.slack.allowed_users_list = ["U1"]
     handlers.inbound = Inbound.__new__(Inbound)
     handlers.inbound.agent = agent = MagicMock()
     agent.reset_conversation = AsyncMock()
@@ -29,3 +29,27 @@ async def test_new_message_resets_the_channel():
     agent.reset_conversation.assert_awaited_once_with("C1")
     agent.handle.assert_not_awaited()
     say.assert_awaited_once_with(text="Started a new conversation.", thread_ts="1.0")
+
+
+@pytest.mark.parametrize(("users", "channels", "warned", "shown"), [
+    ("", "C1", True, "allowed users: nobody; allowed channels: C1"),
+    ("U1", "", False, "allowed users: **; allowed channels: any"),
+    ("", "", True, "allowed users: nobody; allowed channels: any"),
+    ("U1", "C1", False, "allowed users: **; allowed channels: C1"),
+])
+def test_start_warns_only_about_an_empty_user_list(monkeypatch, tmp_path, users, channels, warned, shown):
+    from memclaw.bot import console, slack
+    from memclaw.config import MemclawConfig, SlackSettings
+
+    monkeypatch.setattr(slack, "log_to", lambda *a: None)
+    monkeypatch.setattr(slack, "SlackBot", lambda config: MagicMock(start=AsyncMock(), aclose=AsyncMock()))
+    config = MemclawConfig(memory_dir=tmp_path, slack=SlackSettings(bot_token="xoxb-1", app_token="xapp-1"))
+    # Set after construction: an empty value there would be read from the environment.
+    config.slack.allowed_users, config.slack.allowed_channels = users, channels
+    with console.capture() as captured:
+        slack.run(config)
+    out = " ".join(captured.get().split())
+
+    assert ("SLACK_ALLOWED_USERS is empty, so nobody can use the bot" in out) == warned
+    assert "SLACK_ALLOWED_CHANNELS" not in out
+    assert shown in out

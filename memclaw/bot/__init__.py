@@ -86,6 +86,19 @@ def require_setting(value: str, env_var: str) -> None:
         raise SystemExit(1)
 
 
+def allowlist_label(allowlist: list, env_var: str) -> str:
+    """How the start banner shows an allowlist. An empty one lets nobody in,
+    so it also prints a warning naming the setting to fill in."""
+    if allowlist:
+        return ", ".join(str(who) for who in allowlist)
+    console.print(
+        f"[yellow]Warning:[/yellow] {env_var} is empty, so nobody can use the bot. "
+        f"Set it to a comma-separated list of IDs with [bold]memclaw configure[/bold] "
+        f"(or in ~/.memclaw/.env) and restart."
+    )
+    return "nobody"
+
+
 def log_to(log_file: Path | None = None) -> None:
     """Log INFO to the terminal and, with a *log_file*, DEBUG to it (rotated)."""
     logger.remove()
