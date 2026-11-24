@@ -29,11 +29,11 @@ def build_memclaw_mcp_server(executor: "ToolExecutor") -> Server:
         for defn in TOOL_DEFINITIONS
     ]
 
-    @server.list_tools()  # type: ignore[untyped-decorator]
+    @server.list_tools()
     async def list_tools() -> list[Tool]:
         return cached_tools
 
-    @server.call_tool()  # type: ignore[untyped-decorator]
+    @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
         if name not in tool_names:
             raise ValueError(f"Tool {name!r} not found")
