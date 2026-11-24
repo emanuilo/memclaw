@@ -85,4 +85,4 @@ class CursorBridge:
         try:
             await client.aclose()
         except Exception as exc:
-            logger.warning("Error while closing the Cursor SDK bridge: {exc}", exc=exc)
+            logger.exception("Error while closing the Cursor SDK bridge: {exc}", exc=exc)

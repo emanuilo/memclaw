@@ -60,7 +60,7 @@ class ModelSelectionMixin:
             try:
                 await self.list_models()
             except Exception as exc:
-                logger.warning("Could not fetch the {b} model list: {exc}", b=self._label, exc=exc)
+                logger.exception("Could not fetch the {b} model list: {exc}", b=self._label, exc=exc)
                 return None
         return next((m for m in self._models if m.id == model_id), None)
 

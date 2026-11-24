@@ -69,9 +69,9 @@ dev = [
 # (pip >= 25.1) or `uv sync --extra dev --group shape`.
 [dependency-groups]
 # code-shape-kit: the `code-shape` checks (CI and pre-commit hooks). It needs
-# Python 3.11+ while memclaw also supports 3.10, hence the marker.
+# Python 3.11.4+ while memclaw also supports 3.10, hence the marker.
 shape = [
-    "code-shape-kit[tools] @ git+https://github.com/emanuilo/code-shape-kit@v0.1.3 ; python_version >= '3.11'",
+    "code-shape-kit[tools] @ git+https://github.com/emanuilo/code-shape-kit@v0.2.2 ; python_full_version >= '3.11.4'",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -101,6 +101,10 @@ tests = "tests"
 # from MemclawConfig. The Cursor hook script is copied out of the package and
 # run on its own, so it reads its env itself.
 config_modules = ["memclaw/config.py", "memclaw/defaults/cursor_hooks/*"]
+# The only modules that may print(): the kit's default entry points, plus the
+# Cursor hook script, which answers Cursor by printing JSON to stdout. The rest
+# of memclaw writes to the terminal through rich's console, and logs with loguru.
+output_modules = ["*/cli.py", "*/__main__.py", "memclaw/defaults/cursor_hooks/*"]
 baseline = ".code-shape/baseline.json"
 
 [tool.shape.limits]
@@ -115,6 +119,24 @@ fan_out = 8
 "sqlite3" = { msg = "Only the storage modules (memclaw/memory/index.py for the search index, memclaw/reminders.py) open SQLite; call their methods instead, or add the query there.", allowed = ["memclaw/memory/index.py", "memclaw/reminders.py"] }
 # Settings come from memclaw/config.py only (config_modules above bans os.environ elsewhere); .env files too.
 "dotenv" = { msg = "Only memclaw/config.py loads .env files. Use its read_env_file / update_env_file / reload_env_file, or add a setting there and read it from MemclawConfig.", allowed = ["memclaw/config.py"] }
+
+[tool.shape.error_boundaries]
+# Functions that deliberately catch every error and keep going without a
+# traceback (each with its reason; changes need the CODEOWNERS review). Not
+# for debt: a new catch-all is fixed in the code, not added here.
+"memclaw/agent.py:MemclawAgent.start_background_sync._sync_loop" = "Background index sync runs every minute and is often offline; a warning, not a traceback, each time."
+"memclaw/bot/telegram.py:_typing_loop" = "Best-effort typing indicator; a failed chat action must never stop the reply."
+"memclaw/bot/telegram.py:TelegramBot._send_response" = "Falls back to plain text when Telegram rejects the agent's Markdown."
+"memclaw/backends/base.py:report_tool_step" = "A failing progress callback must not break the agent's tool step."
+"memclaw/reminders.py:ReminderScheduler._tick" = "The reminder loop must keep running; each failure is logged and retried next poll."
+"memclaw/bot/links.py:LinkProcessor.fetch_content" = "Any fetch failure means 'no content'; the link is still saved."
+"memclaw/backends/claude/configure.py:ask_model_and_effort" = "If the model list can't be loaded, keep the current model and tell the user why."
+"memclaw/bot/terminal.py:chat" = "The terminal chat loop shows the error to the user and keeps going."
+"memclaw/setup/doctor.py:check_openai" = "Health check: the failure is shown to the user as the result."
+"memclaw/openai_client.py:_probe_embedding" = "Health probe: the failure is the result, reported to the user."
+"memclaw/openai_client.py:_probe_chat" = "Health probe: the failure is the result, reported to the user."
+"memclaw/openai_client.py:_probe_whisper" = "Health probe: the failure is the result, reported to the user."
+"memclaw/memory/vault.py:MemoryVault.sync_or_warn" = "Startup index sync is optional (e.g. offline); warn and let the bot start."
 
 [tool.shape.extra_args]
 # - dev tools live in the `dev` extra; docs/ holds a demo-capture script.

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
+
 from .catalog import find_tool
 from .context import ToolContext
 
@@ -26,4 +28,5 @@ class ToolExecutor:
         try:
             return await tool.run(self.context, tool_input)
         except Exception as e:
+            logger.exception("Tool {name} failed: {exc}", name=name, exc=e)
             return f"Error executing {name}: {e}"

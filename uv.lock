@@ -5,7 +5,8 @@ resolution-markers = [
     "python_full_version >= '3.15'",
     "python_full_version == '3.14.*'",
     "python_full_version >= '3.12' and python_full_version < '3.14'",
-    "python_full_version == '3.11.*'",
+    "python_full_version >= '3.11.4' and python_full_version < '3.12'",
+    "python_full_version >= '3.11' and python_full_version < '3.11.4'",
     "python_full_version < '3.11'",
 ]
 
@@ -517,21 +518,21 @@ wheels = [
 
 [[package]]
 name = "code-shape-kit"
-version = "0.1.3"
-source = { git = "https://github.com/emanuilo/code-shape-kit?rev=v0.1.3#2a860ef261b4ffede11fb20e604c16bbbdc004e1" }
+version = "0.2.2"
+source = { git = "https://github.com/emanuilo/code-shape-kit?rev=v0.2.2#4ca84f951d3094c2fb794a3b3272dec843aeb6a7" }
 dependencies = [
-    { name = "grimp", marker = "python_full_version >= '3.11'" },
+    { name = "grimp", marker = "python_full_version >= '3.11.4'" },
 ]
 
 [package.optional-dependencies]
 tools = [
-    { name = "complexipy", marker = "python_full_version >= '3.11'" },
-    { name = "deptry", marker = "python_full_version >= '3.11'" },
-    { name = "import-linter", marker = "python_full_version >= '3.11'" },
-    { name = "mypy", marker = "python_full_version >= '3.11'" },
-    { name = "pylint", marker = "python_full_version >= '3.11'" },
-    { name = "ruff", version = "0.17.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "vulture", marker = "python_full_version >= '3.11'" },
+    { name = "complexipy", marker = "python_full_version >= '3.11.4'" },
+    { name = "deptry", marker = "python_full_version >= '3.11.4'" },
+    { name = "import-linter", marker = "python_full_version >= '3.11.4'" },
+    { name = "mypy", marker = "python_full_version >= '3.11.4'" },
+    { name = "pylint", marker = "python_full_version >= '3.11.4'" },
+    { name = "ruff", version = "0.17.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11.4'" },
+    { name = "vulture", marker = "python_full_version >= '3.11.4'" },
 ]
 
 [[package]]
@@ -756,11 +757,11 @@ name = "deptry"
 version = "0.25.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click", marker = "python_full_version >= '3.11'" },
-    { name = "colorama", marker = "python_full_version >= '3.11' and sys_platform == 'win32'" },
-    { name = "packaging", marker = "python_full_version >= '3.11'" },
-    { name = "requirements-parser", marker = "python_full_version >= '3.11'" },
-    { name = "tomli", marker = "python_full_version >= '3.11' and python_full_version < '3.15'" },
+    { name = "click", marker = "python_full_version >= '3.11.4'" },
+    { name = "colorama", marker = "python_full_version >= '3.11.4' and sys_platform == 'win32'" },
+    { name = "packaging", marker = "python_full_version >= '3.11.4'" },
+    { name = "requirements-parser", marker = "python_full_version >= '3.11.4'" },
+    { name = "tomli", marker = "python_full_version >= '3.11.4' and python_full_version < '3.15'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b8/b2/50ccc99362ae7757342978b7ecb3b98e47fade721fd617d74db1948ec3a1/deptry-0.25.1.tar.gz", hash = "sha256:45c8cd982c85cd4faae573ddff6920de7eec735336db6973f26a765ae7950f7d", size = 509748, upload-time = "2026-03-18T23:22:18.139Z" }
 wheels = [
@@ -1091,9 +1092,9 @@ name = "import-linter"
 version = "2.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click", marker = "python_full_version >= '3.11'" },
-    { name = "grimp", marker = "python_full_version >= '3.11'" },
-    { name = "rich", marker = "python_full_version >= '3.11'" },
+    { name = "click", marker = "python_full_version >= '3.11.4'" },
+    { name = "grimp", marker = "python_full_version >= '3.11.4'" },
+    { name = "rich", marker = "python_full_version >= '3.11.4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/77/e1/2b459e6666297634e1f6461a51851eb50f64e571f4351cb4ad51fad312d5/import_linter-2.17.tar.gz", hash = "sha256:74a4640c96b71965624d296508c3274655d3e4c2593c27b8330dd0570ebd6886", size = 1423183, upload-time = "2026-11-18T11:33:10.54Z" }
 wheels = [
@@ -1114,7 +1115,7 @@ name = "isort"
 version = "9.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mypy-extensions", marker = "python_full_version >= '3.11'" },
+    { name = "mypy-extensions", marker = "python_full_version >= '3.11.4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/da/cf/068066b8fdab91cd40bcd63e483137908710a3d25a4d3a01b538be45d9d6/isort-9.0.2.tar.gz", hash = "sha256:d2298980ce44350f11d9d24c8150eaef1883431ec203dddbb4e9b5c3ceb54c70", size = 685196, upload-time = "2026-09-28T19:21:58.07Z" }
 wheels = [
@@ -1291,7 +1292,7 @@ name = "librt"
 version = "0.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mypy-extensions", marker = "python_full_version >= '3.11'" },
+    { name = "mypy-extensions", marker = "python_full_version >= '3.11.4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ed/82/9b31a8cd0fe33fde43132f43d2dab766976afc0d3d0763ea6082c4385b22/librt-0.17.0.tar.gz", hash = "sha256:fd18d1f708f78577556a7d76505048b9e3ad6ff61b8d9c91616a5a3f1e6c770b", size = 240190, upload-time = "2026-11-19T14:10:49.327Z" }
 wheels = [
@@ -1539,7 +1540,7 @@ dev = [
 
 [package.dev-dependencies]
 shape = [
-    { name = "code-shape-kit", extra = ["tools"], marker = "python_full_version >= '3.11'" },
+    { name = "code-shape-kit", extra = ["tools"], marker = "python_full_version >= '3.11.4'" },
 ]
 
 [package.metadata]
@@ -1570,7 +1571,7 @@ requires-dist = [
 provides-extras = ["cursor", "dev"]
 
 [package.metadata.requires-dev]
-shape = [{ name = "code-shape-kit", extras = ["tools"], marker = "python_full_version >= '3.11'", git = "https://github.com/emanuilo/code-shape-kit?rev=v0.1.3" }]
+shape = [{ name = "code-shape-kit", extras = ["tools"], marker = "python_full_version >= '3.11.4'", git = "https://github.com/emanuilo/code-shape-kit?rev=v0.2.2" }]
 
 [[package]]
 name = "multidict"
@@ -1715,11 +1716,11 @@ name = "mypy"
 version = "2.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ast-serialize", marker = "python_full_version >= '3.11'" },
-    { name = "librt", marker = "python_full_version >= '3.11' and platform_python_implementation != 'PyPy'" },
-    { name = "mypy-extensions", marker = "python_full_version >= '3.11'" },
-    { name = "pathspec", marker = "python_full_version >= '3.11'" },
-    { name = "typing-extensions", marker = "python_full_version >= '3.11'" },
+    { name = "ast-serialize", marker = "python_full_version >= '3.11.4'" },
+    { name = "librt", marker = "python_full_version >= '3.11.4' and platform_python_implementation != 'PyPy'" },
+    { name = "mypy-extensions", marker = "python_full_version >= '3.11.4'" },
+    { name = "pathspec", marker = "python_full_version >= '3.11.4'" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.11.4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4a/3c/78ecece71ee4b5445389a4ccd11627cfb9c69e4de554d11060171f376305/mypy-2.4.1.tar.gz", hash = "sha256:63b590965691e540a335fa74dadf31a7069142f6b72e234689bbd244edf55623", size = 4066728, upload-time = "2026-10-28T19:23:13.286Z" }
 wheels = [
@@ -1888,7 +1889,8 @@ resolution-markers = [
     "python_full_version >= '3.15'",
     "python_full_version == '3.14.*'",
     "python_full_version >= '3.12' and python_full_version < '3.14'",
-    "python_full_version == '3.11.*'",
+    "python_full_version >= '3.11.4' and python_full_version < '3.12'",
+    "python_full_version >= '3.11' and python_full_version < '3.11.4'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d7/9f/b8cef5bffa569759033adda9481211426f12f53299629b410340795c2514/numpy-2.4.4.tar.gz", hash = "sha256:2d390634c5182175533585cc89f3608a4682ccb173cc9bb940b2881c8d6f8fa0", size = 20731587, upload-time = "2026-03-29T13:22:01.298Z" }
 wheels = [
@@ -2441,13 +2443,13 @@ name = "pylint"
 version = "4.1.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "astroid", marker = "python_full_version >= '3.11'" },
-    { name = "colorama", marker = "python_full_version >= '3.11' and sys_platform == 'win32'" },
-    { name = "dill", marker = "python_full_version >= '3.11'" },
-    { name = "isort", marker = "python_full_version >= '3.11'" },
-    { name = "mccabe", marker = "python_full_version >= '3.11'" },
-    { name = "platformdirs", marker = "python_full_version >= '3.11'" },
-    { name = "tomlkit", marker = "python_full_version >= '3.11'" },
+    { name = "astroid", marker = "python_full_version >= '3.11.4'" },
+    { name = "colorama", marker = "python_full_version >= '3.11.4' and sys_platform == 'win32'" },
+    { name = "dill", marker = "python_full_version >= '3.11.4'" },
+    { name = "isort", marker = "python_full_version >= '3.11.4'" },
+    { name = "mccabe", marker = "python_full_version >= '3.11.4'" },
+    { name = "platformdirs", marker = "python_full_version >= '3.11.4'" },
+    { name = "tomlkit", marker = "python_full_version >= '3.11.4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8f/d7/bfea980ba1ea5666c7f774627f3a7159b98a21426a081dd2f05db8eb93b3/pylint-4.1.4.tar.gz", hash = "sha256:4c9176dc6c9f1b98b742195f01899b290369d5a27b4b41d1014c17f2f96b26f1", size = 1768302, upload-time = "2026-11-14T21:41:51.625Z" }
 wheels = [
@@ -2591,7 +2593,7 @@ name = "requirements-parser"
 version = "0.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging", marker = "python_full_version >= '3.11'" },
+    { name = "packaging", marker = "python_full_version >= '3.11.4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/89/1a/5f3c22d38bf1d87d1f4a961489d9eba35c4370a21395562d94410cdd0e73/requirements_parser-0.13.1.tar.gz", hash = "sha256:78811383b2089b6c5197a1431bc2c12ff950245edca39a23eea3460782038dd3", size = 22783, upload-time = "2026-06-18T07:52:25.291Z" }
 wheels = [
@@ -2769,7 +2771,8 @@ resolution-markers = [
     "python_full_version >= '3.15'",
     "python_full_version == '3.14.*'",
     "python_full_version >= '3.12' and python_full_version < '3.14'",
-    "python_full_version == '3.11.*'",
+    "python_full_version >= '3.11.4' and python_full_version < '3.12'",
+    "python_full_version >= '3.11' and python_full_version < '3.11.4'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/df/8e/6929d337aa5380aafc7355f3149f3ccfe55cba5fdd34a045697ebaceb5a0/ruff-0.17.6.tar.gz", hash = "sha256:2b04276561331300325040bdca21460770029ec574d4c479099e39e8ad1ed43c", size = 5374388, upload-time = "2026-11-19T15:56:27.106Z" }
 wheels = [

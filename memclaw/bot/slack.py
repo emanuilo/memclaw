@@ -200,7 +200,7 @@ class SlackBot:
                 resp.raise_for_status()
                 return resp.content
         except Exception as exc:
-            logger.error("Failed to download Slack file: {exc}", exc=exc)
+            logger.exception("Failed to download Slack file: {exc}", exc=exc)
             return None
 
     async def _upload_and_share_image(self, thread: _Thread, image_path: str, caption: str | None = None):
@@ -220,7 +220,7 @@ class SlackBot:
             )
             logger.debug("Uploaded image to Slack: {r}", r=result.get("ok"))
         except Exception as exc:
-            logger.error("Failed to upload image to Slack: {exc}", exc=exc)
+            logger.exception("Failed to upload image to Slack: {exc}", exc=exc)
 
     async def _send_response(self, thread: _Thread, response_text: str, found_images: list[dict]):
         """Send agent response: images first, then text."""

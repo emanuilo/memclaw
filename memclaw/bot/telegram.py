@@ -182,7 +182,7 @@ class TelegramBot:
                     caption=img.get("caption") or None,
                 )
             except Exception as e:
-                logger.error(f"Failed to send image {img.get('file_id')}: {e}")
+                logger.exception(f"Failed to send image {img.get('file_id')}: {e}")
 
         if response_text:
             try:

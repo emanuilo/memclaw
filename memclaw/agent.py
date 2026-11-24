@@ -108,7 +108,7 @@ class MemclawAgent:
         except Exception as exc:
             # E.g. OpenAI unreachable. The bot still works; the background
             # sync (or the next start) indexes what's missing.
-            logger.warning("Index sync at startup failed: {exc}", exc=exc)
+            logger.exception("Index sync at startup failed: {exc}", exc=exc)
         if include_backend:
             await self.backend.on_agent_start(self._tools)
             self._backend_started = True
@@ -171,7 +171,7 @@ class MemclawAgent:
         except Exception as exc:
             # E.g. OpenAI unreachable: answer without memories rather than
             # failing the message. memory_search reports its own errors.
-            logger.warning("Context memory search failed: {exc}", exc=exc)
+            logger.exception("Context memory search failed: {exc}", exc=exc)
             results = []
         results = [
             r for r in results if Path(r.file_path).name != self.config.memory_file.name

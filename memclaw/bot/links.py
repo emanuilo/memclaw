@@ -30,7 +30,7 @@ class LinkProcessor:
                 if parsed.scheme and parsed.netloc and url not in seen:
                     seen.add(url)
                     cleaned.append(url)
-            except Exception:
+            except ValueError:  # urlparse rejects e.g. a malformed IPv6 host
                 continue
         return cleaned
 
@@ -89,7 +89,7 @@ class LinkProcessor:
                 {"role": "user", "content": f"Summarize content from {url}:\n\n{content}"},
             ])
         except Exception as exc:
-            logger.warning("summarize failed for {url}: {exc}", url=url, exc=exc)
+            logger.exception("summarize failed for {url}: {exc}", url=url, exc=exc)
             return None
 
     async def process_links(self, text: str) -> list[dict]:

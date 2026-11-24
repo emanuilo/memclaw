@@ -170,7 +170,7 @@ class HybridSearch:
         combined: list[tuple[int, float, str]] = []
         for cid in set(v_scores) | set(k_scores):
             final = vw * v_scores.get(cid, 0.0) + tw * k_scores.get(cid, 0.0)
-            combined.append((cid, final, _match_type(cid in v_scores, cid in k_scores)))
+            combined.append((cid, final, _match_type(in_vector=cid in v_scores, in_keyword=cid in k_scores)))
         combined.sort(key=lambda x: x[1], reverse=True)
         return combined
 
@@ -303,7 +303,7 @@ def _normalise(vector_hits: list[tuple[int, float]]) -> dict[int, float]:
     }
 
 
-def _match_type(in_vector: bool, in_keyword: bool) -> str:
+def _match_type(*, in_vector: bool, in_keyword: bool) -> str:
     if in_vector and in_keyword:
         return "hybrid"
     return "vector" if in_vector else "keyword"

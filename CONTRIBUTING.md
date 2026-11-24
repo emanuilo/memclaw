@@ -13,7 +13,7 @@ pip install -U pip
 pip install -e ".[dev]" --group shape
 ```
 
-(`--group shape` adds the code-shape checks, see [Code Shape](#code-shape). It needs pip 25.1+ and Python 3.11+. With uv: `uv sync --extra dev --group shape`.)
+(`--group shape` adds the code-shape checks, see [Code Shape](#code-shape). It needs pip 25.1+ and Python 3.11.4+. With uv: `uv sync --extra dev --group shape`.)
 
 Copy the environment template and fill in your keys:
 
@@ -43,7 +43,9 @@ All tests should pass before submitting a PR. The test suite mocks external API 
 - **Sizes**: files (500 lines), classes (300), folders (12 modules, 4000 lines), nesting of folders.
 - **Functions and classes**: complexity, length, number of arguments, variables, attributes and public methods.
 - **Coupling**: environment variables or `.env` files read outside `config.py`, the OpenAI SDK or SQLite used outside their modules, private members (`obj._x`) used from outside, copy-pasted code, import cycles, modules that import too many others (more than 8 memclaw modules).
-- **Hygiene**: unused code, dependencies in `pyproject.toml` vs. what the code imports, and type errors (mypy).
+- **Hygiene**: unused code, dependencies in `pyproject.toml` vs. what the code imports, and type errors (mypy, also inside functions without type hints).
+- **Risky habits**: errors caught too broadly or swallowed (`except Exception`, an `except` that only passes), commented-out code, `print()` (see below), mutable default arguments (`def f(x=[])`), `from x import *`, `shell=True` / SQL built from strings / hard-coded passwords / `eval`, and `True`/`False` arguments passed by position (make them keyword-only: `def f(*, verbose: bool)`).
+- **Suppression comments**: every `# noqa`, `# type: ignore`, `# pylint: disable`, `# pragma: no cover` or `# nosec` is a finding. A `# type: ignore` that isn't needed any more is an error too.
 - **memclaw's layout rules** (see below).
 
 CI runs it on every PR. Locally:
@@ -52,7 +54,13 @@ CI runs it on every PR. Locally:
 - `code-shape report`: writes `code-shape-report.md` with all the numbers, the worst offenders and git-history trends. It never fails.
 - `code-shape tighten`: after a fix, records the improvement in the baseline. Commit the baseline together with the fix.
 
-**The baseline.** `.code-shape/baseline.json` lists the problems memclaw already had when the kit was adopted, so only new ones fail. It may only shrink. Never edit it by hand and don't re-run `code-shape baseline` to accept a new problem: fix the code, then run `code-shape tighten`. `# noqa` comments don't silence these checks, and the limits under `[tool.shape]` in `pyproject.toml` aren't raised to make a change pass. If a rule seems wrong for your case, say so in the PR.
+**The baseline.** `.code-shape/baseline.json` lists the problems memclaw already had when the kit was adopted, so only new ones fail. It may only shrink. Never edit it by hand and don't re-run `code-shape baseline` to accept a new problem: fix the code, then run `code-shape tighten`. Suppression comments don't silence these checks (they are findings themselves), and the limits under `[tool.shape]` in `pyproject.toml` aren't raised to make a change pass. If a rule seems wrong for your case, say so in the PR.
+
+**Printing.** Only the entry points (`cli.py`, `__main__.py`) and the Cursor hook script (which answers Cursor on stdout) may call `print()`: they are listed in `output_modules` under `[tool.shape]`. Everywhere else, write to the terminal with rich's `console` and log with loguru's `logger`.
+
+**Catching every error.** `except Exception` must log with `logger.exception(...)` (it keeps the traceback); `logger.error(f"... {e}")` doesn't count. The few functions that deliberately catch everything without a traceback (a loop that must keep running, a health check whose failure is the result) are listed with a reason in `[tool.shape.error_boundaries]` in `pyproject.toml`. That list is under CODEOWNERS review and is never for debt: a new catch-all is fixed in the code.
+
+**Who approves rule changes.** `.github/CODEOWNERS` makes the maintainer (`@emanuilo`) the owner of the files that set the rules: `pyproject.toml`, the baseline, the hooks and the CI workflow.
 
 **Unused code that isn't.** If the unused-code check (vulture) reports a name that a library uses by reflection (e.g. uvicorn reading `Server.should_exit`), add it to `ignore_names` under `[tool.vulture]` in `pyproject.toml`, with a one-line reason. Make sure nothing could call it first: unused code is usually really unused. Agents ask a human before adding a line.
 

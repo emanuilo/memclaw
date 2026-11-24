@@ -174,7 +174,7 @@ class MemoryIndex:
 
         # Compute content hashes and check cache
         hashes = [hashlib.sha256(t.encode()).hexdigest() for t in texts]
-        results: list[np.ndarray | None] = [None] * len(texts)
+        found: dict[int, np.ndarray] = {}
         uncached_indices: list[int] = []
 
         for i, h in enumerate(hashes):
@@ -183,7 +183,7 @@ class MemoryIndex:
                 (h, model),
             ).fetchone()
             if row is not None:
-                results[i] = self.deserialize_embedding(row[0])
+                found[i] = self.deserialize_embedding(row[0])
             else:
                 uncached_indices.append(i)
 
@@ -194,14 +194,14 @@ class MemoryIndex:
             new_embeddings = [np.array(v, dtype=np.float32) for v in vectors]
 
             for idx, emb in zip(uncached_indices, new_embeddings):
-                results[idx] = emb
+                found[idx] = emb
                 self.db.execute(
                     "INSERT OR REPLACE INTO embedding_cache (content_hash, embedding, model) VALUES (?, ?, ?)",
                     (hashes[idx], self.serialize_embedding(emb), model),
                 )
             self.db.commit()
 
-        return results  # type: ignore[return-value]
+        return [found[i] for i in range(len(texts))]
 
     async def get_embedding(self, text: str) -> np.ndarray:
         results = await self.get_embeddings([text])

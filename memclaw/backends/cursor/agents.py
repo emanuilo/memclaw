@@ -161,4 +161,4 @@ class ChatAgent:
         try:
             await agent.close()
         except Exception as exc:
-            logger.warning("Error while closing Cursor agent: {exc}", exc=exc)
+            logger.exception("Error while closing Cursor agent: {exc}", exc=exc)

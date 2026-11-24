@@ -135,7 +135,7 @@ class WhatsAppBot:
         try:
             image_bytes = await cli.download_any(ev.Message)
         except Exception as exc:
-            logger.error("Failed to download WhatsApp image: {exc}", exc=exc)
+            logger.exception("Failed to download WhatsApp image: {exc}", exc=exc)
             await cli.reply_message("Sorry, I couldn't download that image.", ev)
             return
 
@@ -154,7 +154,7 @@ class WhatsAppBot:
         try:
             audio_bytes = await cli.download_any(ev.Message)
         except Exception as exc:
-            logger.error("Failed to download WhatsApp audio: {exc}", exc=exc)
+            logger.exception("Failed to download WhatsApp audio: {exc}", exc=exc)
             await cli.reply_message("Sorry, I couldn't download that audio message.", ev)
             return
 
@@ -195,7 +195,7 @@ class WhatsAppBot:
             try:
                 await cli.send_message(chat, response_text)
             except Exception as exc:
-                logger.error("Failed to send WhatsApp message: {exc}", exc=exc)
+                logger.exception("Failed to send WhatsApp message: {exc}", exc=exc)
 
     @staticmethod
     async def _send_image(cli: NewAClient, chat, img: dict) -> str:
@@ -209,7 +209,7 @@ class WhatsAppBot:
         try:
             await cli.send_image(chat, media_ref, caption=img.get("caption") or None)
         except Exception as exc:
-            logger.error("Failed to send WhatsApp image: {exc}", exc=exc)
+            logger.exception("Failed to send WhatsApp image: {exc}", exc=exc)
         return ""
 
     # ── Lifecycle ────────────────────────────────────────────────────
