@@ -35,11 +35,9 @@ NEW_CONVERSATION = "Started a new conversation."
 SendText = Callable[[str, str], Awaitable[None]]  # (chat id, text)
 
 
-def is_allowed(who: object, allowlist: Collection, *, empty_allows_all: bool) -> bool:
-    """Whether *who* may use the bot. The platforms disagree on what an
-    empty allowlist means, so each one says (see their access checks)."""
-    if not allowlist:
-        return empty_allows_all
+def is_allowed(who: object, allowlist: Collection) -> bool:
+    """Whether *who* may use the bot: only those on the allowlist, so an
+    empty allowlist lets nobody in (on every platform that has one)."""
     return who in allowlist
 
 
@@ -150,7 +148,3 @@ class Inbound:
     async def aclose(self) -> None:
         await self.agent.aclose()
         self.scheduler.close()
-
-    def close(self) -> None:
-        self.scheduler.close()
-        self.agent.close()

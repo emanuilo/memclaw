@@ -108,7 +108,7 @@ Daily files accumulate over time. Consolidation is a periodic process that disti
 
 **When it runs:**
 
-- Automatically, in the background after a reply, once a past day has notes that aren't consolidated yet — in practice after your first message of the next day you wrote in (days without notes cost nothing; after a few quiet days it catches up in one call). `consolidation_threshold` (default 1) raises the number of pending days to wait for. At most one consolidation runs at a time; a failure is logged and retried after a reply an hour or more later. A failed backend call (network down, auth, rate limit) is a failure, not a reply: the error text the CLI returns is never written to MEMORY.md, and the consolidation marker doesn't move.
+- Automatically, in the background after a reply, once a past day has notes that aren't consolidated yet — in practice after your first message of the next day you wrote in (days without notes cost nothing; after a few quiet days it catches up in one call). `consolidation_threshold` (default 1) raises the number of pending days to wait for. At most one consolidation runs at a time; a failure is logged and retried after a reply an hour or more later. A failed backend call (network down, auth, rate limit) is a failure, not a reply: the error text the CLI returns is never written to MEMORY.md, and the consolidation marker doesn't move. The same goes for a reply that isn't a MEMORY.md (see step 4).
 - Manually, via the `memclaw consolidate` CLI command (which forces it regardless of count).
 
 Today's file is never consolidated: it is still being written to, and marking it done would skip everything saved later that day. It is picked up once the day is over.
@@ -125,8 +125,9 @@ Today's file is never consolidated: it is still being written to, and marking it
    - left out entirely: expired one-offs (verification codes, past events, finished trips' bookings), links saved to read later (they stay searchable), instructions for the assistant (they belong in AGENTS.md), small talk.
 
    A wrapping ```` ``` ```` fence in the reply is stripped, and every reference is checked: one to a note that doesn't exist is dropped, one whose note shares no word with the line is logged as unconfirmed (`memclaw/memory/refs.py`).
-4. Saves a dated copy of the previous MEMORY.md in `.history/` (the last 60 are kept; the hidden directory isn't indexed or reachable by the file tools), then overwrites MEMORY.md with the result. Lines appended by hand while the backend was working are carried over below the result; if MEMORY.md was otherwise edited meanwhile, nothing is written and consolidation retries later.
-5. Records the date of the last file it included in `meta.json` so those files aren't processed again.
+4. Checks the reply is a MEMORY.md: it must start with `# Personal Memory` and have a `## Index` heading, as the prompt requires (it asks for the index even when there's nothing to index yet). Anything else (error text a backend returned instead of failing, such as "API Error: Connection refused" or Cursor's "I couldn't generate a response.", an empty or cut-off reply) is logged with a short preview and treated as a failed call: nothing is written, and the background run waits an hour.
+5. Saves a dated copy of the previous MEMORY.md in `.history/` (the last 60 are kept; the hidden directory isn't indexed or reachable by the file tools), then overwrites MEMORY.md with the result. Lines appended by hand while the backend was working are carried over below the result; if MEMORY.md was otherwise edited meanwhile, nothing is written and consolidation retries later.
+6. Records the date of the last file it included in `meta.json` so those files aren't processed again.
 
 All of this is `Consolidator` in `memclaw/memory/consolidation.py`, the only code that writes MEMORY.md. The agent creates it and calls `schedule()` after each reply; `memclaw consolidate` creates one through `MemoryVault` with the configured backend, without starting the agent, and calls `consolidate(force=True, since=...)`.
 

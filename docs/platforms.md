@@ -26,7 +26,7 @@ Commands: `/new` starts a fresh conversation, `/model` shows the available model
 
 1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
 2. Get your Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot)).
-3. Run `memclaw`, pick **Telegram**, and enter the token and your user ID when asked.
+3. Run `memclaw`, pick **Telegram**, and enter the token and your user ID when asked. Only the IDs in `ALLOWED_USER_IDS` can use the bot; if it's empty, nobody can (the bot warns about it at start).
 
 ## WhatsApp
 
@@ -92,9 +92,9 @@ Connects via **Socket Mode** (WebSocket) — no public URL or webhook server nee
 
 2. **Install to Workspace** and copy the **Bot Token** (`xoxb-...`).
 3. Under **Basic Information → App-Level Tokens**, generate a token with `connections:write` scope and copy it (`xapp-...`).
-4. Run `memclaw`, pick **Slack**, and enter both tokens.
+4. Run `memclaw`, pick **Slack**, and enter both tokens and the users who may use it (`SLACK_ALLOWED_USERS`; find your Slack ID via **Profile → ••• → Copy member ID**).
 
-DM the bot directly or mention it in channels (`@Memclaw save this...`). Optionally restrict it to specific channels with `SLACK_ALLOWED_CHANNELS`, or to specific users with `SLACK_ALLOWED_USERS` (find your Slack ID via **Profile → ••• → Copy member ID**).
+DM the bot directly or mention it in channels (`@Memclaw save this...`). Only the users in `SLACK_ALLOWED_USERS` get an answer; if it's empty, nobody does (the bot warns about it at start). Optionally restrict it to specific channels with `SLACK_ALLOWED_CHANNELS`; left empty, the allowed users can use it in any channel and in DMs.
 
 ## Terminal
 
@@ -126,4 +126,4 @@ memclaw status        # vault overview
 memclaw doctor        # check your OpenAI key can reach every model Memclaw uses
 ```
 
-If voice messages aren't transcribed or link summaries come back empty, run `memclaw doctor`. It probes `text-embedding-3-small` (search), `gpt-5-mini` (link summaries) and `whisper-1` (voice) and tells you which ones your OpenAI project can use. The same check runs at the end of the setup wizard.
+If voice messages aren't transcribed or links arrive without a summary, run `memclaw doctor`. It probes `text-embedding-3-small` (search), `gpt-5-mini` (link summaries) and `whisper-1` (voice) and tells you which ones your OpenAI project can use. The same check runs at the end of the setup wizard.

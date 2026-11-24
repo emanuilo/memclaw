@@ -40,7 +40,7 @@ class _OneShotBackend:
         return True
 
     async def run_one_shot(self, *, system_prompt: str, user_message: str) -> str:
-        return "## Key Facts\n- Consolidated"
+        return "# Personal Memory\n\n## Key Facts\n- Consolidated\n\n## Index\n"
 
 
 @pytest.fixture

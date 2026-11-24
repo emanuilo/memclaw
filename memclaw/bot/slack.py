@@ -6,7 +6,6 @@ a message in between is shared with the other platforms (memclaw.bot.inbound).
 
 from __future__ import annotations
 
-import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +17,7 @@ from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
 from ..config import MemclawConfig
-from . import console, log_to, mask_user_id, require_setting
+from . import allowlist_label, console, log_to, mask_user_id, require_setting, run_until_stopped
 from .inbound import TRANSCRIPTION_FAILED, Inbound, is_allowed, save_media
 
 # Image MIME types we handle
@@ -78,13 +77,15 @@ class SlackBot:
             await self._route_event(event, say)
 
     # ── Access control ───────────────────────────────────────────────
-    # An empty SLACK_ALLOWED_CHANNELS / SLACK_ALLOWED_USERS lets everyone in.
+    # Only the users in SLACK_ALLOWED_USERS (empty lets nobody in), in the
+    # channels in SLACK_ALLOWED_CHANNELS (empty = any channel, DMs included).
 
     def _check_channel(self, channel: str) -> bool:
-        return is_allowed(channel, self.config.slack.allowed_channels_list, empty_allows_all=True)
+        channels = self.config.slack.allowed_channels_list
+        return not channels or is_allowed(channel, channels)
 
     def _check_user(self, user: str) -> bool:
-        return is_allowed(user, self.config.slack.allowed_users_list, empty_allows_all=True)
+        return is_allowed(user, self.config.slack.allowed_users_list)
 
     # ── Event routing ────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ class SlackBot:
 
         channel = event.get("channel", "")
         if not self._check_channel(channel):
+            logger.info("Ignoring Slack message in channel {c} (not in SLACK_ALLOWED_CHANNELS)", c=channel)
             return
 
         user = event.get("user", "unknown")
@@ -262,18 +264,10 @@ def run(config: MemclawConfig) -> None:
 
     bot = SlackBot(config)
 
+    users = allowlist_label([mask_user_id(u) for u in config.slack.allowed_users_list], "SLACK_ALLOWED_USERS")
+    channels = ", ".join(config.slack.allowed_channels_list) or "any"
     console.print(
         f"[green]Starting Memclaw Slack bot (Socket Mode)...[/green]  "
-        f"(allowed channels: {config.slack.allowed_channels_list or 'all'})"
+        f"(allowed users: {users}; allowed channels: {channels})"
     )
-
-    async def _run():
-        try:
-            await bot.start()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            await bot.aclose()
-            console.print("\nMemclaw Slack bot shut down.")
-
-    asyncio.run(_run())
+    run_until_stopped(bot.start, bot.aclose, "Slack")

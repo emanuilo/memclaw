@@ -65,3 +65,68 @@ class TestWhatsAppSelfChatOnly:
         assert check(None, out_to_friend) is False, "outgoing DM to friend must be ignored"
         assert check(None, in_from_friend) is False
         assert check(None, group) is False
+
+
+# ────────────────────────────────────────────────────────────────────
+# Shutdown: Ctrl+C runs the async shutdown (the AI backend's aclose)
+# ────────────────────────────────────────────────────────────────────
+
+class TestShutdown:
+    def _run(self, monkeypatch, tmp_path, idle) -> list[str]:
+        import tests.bot.test_parity  # noqa: F401  (stands in for neonize without libmagic)
+        import memclaw.bot.whatsapp as whatsapp
+        from memclaw.config import MemclawConfig
+
+        events: list[str] = []
+
+        class FakeInbound:
+            def __init__(self, config, platform):
+                pass
+
+            def deliver_reminders(self, send):
+                pass
+
+            async def start(self):
+                events.append("start")
+
+            async def aclose(self):
+                events.append("aclose")
+
+            def close(self):
+                events.append("close")
+
+        class FakeClient:
+            def __init__(self, path):
+                pass
+
+            def event(self, ev_type):
+                return lambda fn: fn
+
+            async def connect(self):
+                pass
+
+            async def idle(self):
+                await idle()
+
+        monkeypatch.setattr(whatsapp, "Inbound", FakeInbound)
+        monkeypatch.setattr(whatsapp, "NewAClient", FakeClient)
+        monkeypatch.setattr(whatsapp, "log_to", lambda *a: None)
+        whatsapp.run(MemclawConfig(memory_dir=tmp_path))
+        return events
+
+    def test_ctrl_c_shuts_the_backend_down(self, monkeypatch, tmp_path):
+        import asyncio
+        import os
+        import signal
+
+        async def ctrl_c():
+            os.kill(os.getpid(), signal.SIGINT)
+            await asyncio.sleep(5)
+
+        assert self._run(monkeypatch, tmp_path, ctrl_c) == ["start", "aclose"]
+
+    def test_disconnect_shuts_the_backend_down(self, monkeypatch, tmp_path):
+        async def disconnected():
+            pass
+
+        assert self._run(monkeypatch, tmp_path, disconnected) == ["start", "aclose"]

@@ -80,7 +80,7 @@ class TestRunSetup:
             "Slack bot token (xoxb-...) (required)",
             "Slack app-level token for Socket Mode (xapp-...) (required)",
             "Allowed Slack channel IDs (comma-separated) (optional)",
-            "Allowed Slack user IDs (comma-separated) (optional)",
+            "Allowed Slack user IDs (comma-separated) (required)",
         ]
         assert text == (
             "AGENT_BACKEND=claude\nCLAUDE_CODE_OAUTH_TOKEN=oat-token\n"

@@ -15,10 +15,14 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from loguru import logger
 
 from memclaw.config import ClaudeSettings, MemclawConfig, OpenAISettings
 from memclaw.memory import Consolidator, MemoryIndex, MemoryStore
 from memclaw.memory.consolidation import _CONSOLIDATION_BUDGET_CHARS as BUDGET
+
+# The smallest reply that is a MEMORY.md (the prompt's required headings).
+VALID = "# Personal Memory\n\n## Index\n"
 
 
 @pytest.fixture
@@ -59,6 +63,15 @@ def consolidator(cfg: MemclawConfig, index: MemoryIndex, fake_backend: FakeBacke
     return Consolidator(cfg, MemoryStore(cfg), index, fake_backend)
 
 
+@pytest.fixture
+def warnings_logged():
+    """The messages logged at WARNING or above while the test runs."""
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="WARNING")
+    yield messages
+    logger.remove(sink)
+
+
 def _daily(cfg: MemclawConfig, d: date, text: str) -> Path:
     path = cfg.daily_file(d)
     path.write_text(text)
@@ -88,7 +101,7 @@ class TestThreshold:
     async def test_runs_when_above_threshold(self, cfg, fake_backend, consolidator, index):
         """Consolidation should run when file count >= threshold."""
         cfg.memory.consolidation_threshold = 3
-        fake_backend.one_shot_response = "## Key Facts\n\n- Fact 0\n- Fact 1\n"
+        fake_backend.one_shot_response = "# Personal Memory\n\n## Key Facts\n\n- Fact 0\n- Fact 1\n\n## Index\n"
         for i in range(5):
             _daily(cfg, date(2025, 3, i + 1), f"# Day {i}\nImportant fact {i}")
         index.index_file = AsyncMock()
@@ -102,7 +115,7 @@ class TestThreshold:
     async def test_force_ignores_threshold(self, cfg, fake_backend, consolidator, index):
         """force=True should run consolidation even with 1 file."""
         cfg.memory.consolidation_threshold = 100
-        fake_backend.one_shot_response = "## Notes\n- One note"
+        fake_backend.one_shot_response = "# Personal Memory\n\n## Notes\n- One note\n\n## Index"
         _daily(cfg, date(2025, 3, 1), "# Single day\nJust one note")
         index.index_file = AsyncMock()
 
@@ -111,7 +124,7 @@ class TestThreshold:
     @pytest.mark.asyncio
     async def test_since_overrides_meta(self, cfg, fake_backend, consolidator, index):
         """since= takes the files after that date, whatever meta.json says."""
-        fake_backend.one_shot_response = "## Consolidated"
+        fake_backend.one_shot_response = VALID
         for i in range(1, 11):
             _daily(cfg, date(2025, 3, i), f"Content for day {i}")
         (cfg.memory_dir / "meta.json").write_text(json.dumps({"consolidated_through": "2025-03-01"}))
@@ -130,7 +143,7 @@ class TestThreshold:
 
     @pytest.mark.asyncio
     async def test_by_default_it_runs_once_a_day_has_passed(self, cfg, fake_backend, consolidator):
-        fake_backend.one_shot_response = "# Personal Memory\n- x"
+        fake_backend.one_shot_response = "# Personal Memory\n- x\n## Index"
         _daily(cfg, date.today(), "today")
         assert await consolidator.consolidate() is False  # today isn't over
         _daily(cfg, date.today() - timedelta(days=1), "yesterday")
@@ -138,7 +151,7 @@ class TestThreshold:
 
     @pytest.mark.asyncio
     async def test_todays_file_is_left_for_later(self, cfg, fake_backend, consolidator):
-        fake_backend.one_shot_response = "## Facts\n- x"
+        fake_backend.one_shot_response = "# Personal Memory\n## Facts\n- x\n## Index"
         _daily(cfg, date.today() - timedelta(days=1), "yesterday's note")
         _daily(cfg, date.today(), "today's note")
 
@@ -169,7 +182,7 @@ class TestMessage:
     @pytest.mark.asyncio
     async def test_content_limit(self, cfg, fake_backend, consolidator):
         """Content gathering should stop at the consolidation budget."""
-        fake_backend.one_shot_response = "## Consolidated"
+        fake_backend.one_shot_response = VALID
         for i in range(1, 6):
             _daily(cfg, date(2025, 3, i), "x" * (BUDGET // 3))
 
@@ -178,7 +191,7 @@ class TestMessage:
 
     @pytest.mark.asyncio
     async def test_files_past_the_budget_stay_unconsolidated(self, cfg, fake_backend, consolidator):
-        fake_backend.one_shot_response = "## Facts\n- x"
+        fake_backend.one_shot_response = "# Personal Memory\n## Facts\n- x\n## Index"
         for day in range(1, 6):
             _daily(cfg, date(2025, 3, day), f"day {day} " + "x" * (BUDGET // 3))
 
@@ -193,21 +206,21 @@ class TestMessage:
 
     @pytest.mark.asyncio
     async def test_single_oversized_file_is_truncated_not_stuck(self, cfg, fake_backend, consolidator):
-        fake_backend.one_shot_response = "## Facts\n- x"
+        fake_backend.one_shot_response = "# Personal Memory\n## Facts\n- x\n## Index"
         _daily(cfg, date(2025, 3, 1), "y" * (BUDGET + 20000))
         assert await consolidator.consolidate(force=True)
         assert _consolidated_through(cfg) == "2025-03-01"
 
     @pytest.mark.asyncio
     async def test_consolidation_is_told_todays_date(self, cfg, fake_backend, consolidator):
-        fake_backend.one_shot_response = "# Personal Memory"
+        fake_backend.one_shot_response = VALID
         _daily(cfg, date(2025, 3, 1), "note")
         await consolidator.consolidate(force=True)
         assert f"Today's date: {date.today().isoformat()}" in fake_backend.one_shot_calls[0]["user"]
 
     @pytest.mark.asyncio
     async def test_prompt_and_message_layout(self, cfg, fake_backend, consolidator):
-        fake_backend.one_shot_response = "# Personal Memory"
+        fake_backend.one_shot_response = VALID
         cfg.memory_file.write_text("# Personal Memory\n- old fact\n")
         _daily(cfg, date(2025, 3, 1), "note one")
         await consolidator.consolidate(force=True)
@@ -221,7 +234,7 @@ class TestMessage:
 
     @pytest.mark.asyncio
     async def test_other_notes_are_listed_for_the_index(self, cfg, fake_backend, consolidator):
-        fake_backend.one_shot_response = "# Personal Memory"
+        fake_backend.one_shot_response = VALID
         (cfg.memory_dir / "todos.md").write_text("# Todos\n- renew passport")
         _daily(cfg, date(2025, 3, 1), "note")
         await consolidator.consolidate(force=True)
@@ -243,12 +256,12 @@ class TestWriting:
         async def one_shot(**kwargs):
             with open(cfg.memory_file, "a") as f:  # appended by hand meanwhile
                 f.write("- Blood type 0 negative\n")
-            return "## Facts\n- consolidated"
+            return "# Personal Memory\n- consolidated\n## Index"
 
         fake_backend.run_one_shot = one_shot
         assert await consolidator.consolidate(force=True)
         memory = cfg.memory_file.read_text()
-        assert memory.startswith("## Facts\n- consolidated")
+        assert memory.startswith("# Personal Memory\n- consolidated\n## Index\n")
         assert "Blood type 0 negative" in memory
         history = list((cfg.memory_dir / ".history").glob("MEMORY-*.md"))
         assert [h.read_text() for h in history] == ["# Personal Memory\n"]
@@ -259,7 +272,7 @@ class TestWriting:
 
         async def one_shot(**kwargs):
             cfg.memory_file.write_text("# Edited by hand\n")
-            return "## Facts\n- consolidated"
+            return "# Personal Memory\n- consolidated\n## Index"
 
         fake_backend.run_one_shot = one_shot
         assert await consolidator.consolidate(force=True) is False
@@ -281,21 +294,45 @@ class TestWriting:
         assert not (cfg.memory_dir / "meta.json").exists()
         assert not (cfg.memory_dir / ".history").exists()
 
+    @pytest.mark.parametrize("reply", [
+        "API Error: Connection refused",  # a backend's error text, returned instead of raised
+        "I couldn't generate a response.",  # Cursor's placeholder for an empty result
+        "  \n",  # empty
+        "# Personal Memory\n\n## About\n- Ana, lives in",  # cut off before the index
+        "Here is the updated MEMORY.md:\n\n# Personal Memory\n\n## Index\n",  # preamble
+    ], ids=["error", "placeholder", "empty", "cut-off", "preamble"])
     @pytest.mark.asyncio
-    async def test_empty_reply_leaves_memory_untouched(self, cfg, fake_backend, consolidator):
+    async def test_a_reply_that_is_not_a_memory_file_is_rejected(
+        self, cfg, fake_backend, consolidator, reply, warnings_logged,
+    ):
+        """Raised like a failed backend call (so the background run waits an
+        hour), with MEMORY.md, .history/ and meta.json untouched."""
         _daily(cfg, date(2025, 3, 1), "note")
+        cfg.memory_file.write_text("# Personal Memory\n- old fact\n\n## Index\n")
         before = cfg.memory_file.read_text()
-        fake_backend.one_shot_response = "  \n"
-        assert await consolidator.consolidate(force=True) is False
+        fake_backend.one_shot_response = reply
+        with pytest.raises(RuntimeError, match="not a MEMORY.md"):
+            await consolidator.consolidate(force=True)
         assert cfg.memory_file.read_text() == before
         assert not (cfg.memory_dir / "meta.json").exists()
+        assert not (cfg.memory_dir / ".history").exists()
+        [warning] = [m for m in warnings_logged if "not a MEMORY.md" in m]
+        assert repr(reply.strip()[:80]) in warning
+
+    @pytest.mark.asyncio
+    async def test_a_valid_reply_is_written(self, cfg, fake_backend, consolidator):
+        _daily(cfg, date(2025, 3, 1), "note")
+        fake_backend.one_shot_response = "\n# Personal Memory\n\n## About\n- Ana\n\n## Index\n### Notes\n"
+        assert await consolidator.consolidate(force=True)
+        assert cfg.memory_file.read_text() == "# Personal Memory\n\n## About\n- Ana\n\n## Index\n### Notes\n"
+        assert _consolidated_through(cfg) == "2025-03-01"
 
     @pytest.mark.asyncio
     async def test_code_fence_is_stripped(self, cfg, fake_backend, consolidator):
-        fake_backend.one_shot_response = "```markdown\n## Facts\n- x\n```"
+        fake_backend.one_shot_response = "```markdown\n# Personal Memory\n- x\n## Index\n```"
         _daily(cfg, date(2025, 3, 1), "note")
         assert await consolidator.consolidate(force=True)
-        assert cfg.memory_file.read_text() == "## Facts\n- x\n"
+        assert cfg.memory_file.read_text() == "# Personal Memory\n- x\n## Index\n"
 
     @pytest.mark.asyncio
     async def test_references_to_missing_notes_are_dropped(self, cfg, fake_backend, consolidator):
@@ -314,7 +351,7 @@ class TestWriting:
         for i in range(65):
             (history / f"MEMORY-2025-01-01-{i:06d}.md").write_text(str(i))
         cfg.memory_file.write_text("latest")
-        fake_backend.one_shot_response = "# Personal Memory\n- next"
+        fake_backend.one_shot_response = "# Personal Memory\n- next\n## Index"
         _daily(cfg, date(2025, 3, 1), "note")
         assert await consolidator.consolidate(force=True)
         kept = sorted(history.glob("MEMORY-*.md"))
@@ -324,17 +361,17 @@ class TestWriting:
 
     @pytest.mark.asyncio
     async def test_indexing_failure_still_counts_as_done(self, cfg, fake_backend, consolidator, index):
-        fake_backend.one_shot_response = "# Personal Memory\n- x"
+        fake_backend.one_shot_response = "# Personal Memory\n- x\n## Index"
         _daily(cfg, date(2025, 3, 1), "note")
         index.index_file = AsyncMock(side_effect=RuntimeError("OpenAI down"))
         assert await consolidator.consolidate(force=True)
-        assert cfg.memory_file.read_text() == "# Personal Memory\n- x\n"
+        assert cfg.memory_file.read_text() == "# Personal Memory\n- x\n## Index\n"
         assert _consolidated_through(cfg) == "2025-03-01"
 
     @pytest.mark.asyncio
     async def test_unreadable_meta_starts_over(self, cfg, fake_backend, consolidator):
         (cfg.memory_dir / "meta.json").write_text("[1, 2]")
-        fake_backend.one_shot_response = "# Personal Memory\n- x"
+        fake_backend.one_shot_response = "# Personal Memory\n- x\n## Index"
         _daily(cfg, date(2025, 3, 1), "note")
         assert await consolidator.consolidate()
         assert json.loads((cfg.memory_dir / "meta.json").read_text()) == {"consolidated_through": "2025-03-01"}

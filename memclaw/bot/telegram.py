@@ -29,7 +29,7 @@ from telegram.ext import (
 from ..backends import AgentBackend
 from ..backends.base import ToolStep
 from ..config import MemclawConfig
-from . import console, log_to, mask_user_id, require_setting
+from . import allowlist_label, console, log_to, mask_user_id, require_setting
 from .commands import (
     load_models,
     resolve_model_arg,
@@ -160,9 +160,7 @@ class TelegramBot:
     def _allowed(self, update: Update) -> bool:
         """Only the users in ALLOWED_USER_IDS; an empty list lets nobody in."""
         user = update.effective_user
-        return user is not None and is_allowed(
-            user.id, self.config.telegram.allowed_user_ids_list, empty_allows_all=False,
-        )
+        return user is not None and is_allowed(user.id, self.config.telegram.allowed_user_ids_list)
 
     def _message(self, update: Update) -> Message | None:
         """The update's message, if it comes from an allowed user."""
@@ -377,9 +375,6 @@ class TelegramBot:
     async def aclose(self):
         await self.inbound.aclose()
 
-    def close(self):
-        self.inbound.close()
-
 
 Handler = Callable[[TelegramBot, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
 
@@ -458,10 +453,7 @@ def run(config: MemclawConfig) -> None:
 
     app = build_application(config)
 
-    allowed = config.telegram.allowed_user_ids_list
-    masked = [mask_user_id(u) for u in allowed] if allowed else "all"
-    console.print(
-        f"[green]Starting Memclaw Telegram bot...[/green]  "
-        f"(allowed users: {masked})"
-    )
+    masked = [mask_user_id(u) for u in config.telegram.allowed_user_ids_list]
+    users = allowlist_label(masked, "ALLOWED_USER_IDS")
+    console.print(f"[green]Starting Memclaw Telegram bot...[/green]  (allowed users: {users})")
     app.run_polling(allowed_updates=["message", "callback_query"])

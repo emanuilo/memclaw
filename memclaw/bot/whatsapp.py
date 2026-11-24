@@ -10,7 +10,6 @@ What happens to a message in between is shared with the other platforms
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from loguru import logger
@@ -19,7 +18,7 @@ from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
 from neonize.utils.jid import build_jid
 
 from ..config import MemclawConfig
-from . import console, log_to, mask_user_id
+from . import console, log_to, mask_user_id, run_until_stopped
 from .inbound import TRANSCRIPTION_FAILED, Inbound, save_media
 
 _MIME_TO_EXT = {
@@ -221,8 +220,8 @@ class WhatsAppBot:
         await self.client.connect()
         await self.client.idle()
 
-    def close(self):
-        self.inbound.close()
+    async def aclose(self):
+        await self.inbound.aclose()
 
 
 def run(config: MemclawConfig) -> None:
@@ -238,9 +237,4 @@ def run(config: MemclawConfig) -> None:
             "Open WhatsApp → Settings → Linked Devices → Link a Device, and scan it."
         )
 
-    try:
-        asyncio.run(bot.start())
-    except KeyboardInterrupt:
-        pass
-    finally:
-        bot.close()
+    run_until_stopped(bot.start, bot.aclose, "WhatsApp")

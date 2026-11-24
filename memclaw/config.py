@@ -166,10 +166,12 @@ class SlackSettings(Settings):
     app_token: str = setting(
         "SLACK_APP_TOKEN", secret=True, required=True,
         prompt="Slack app-level token for Socket Mode (xapp-...)")
+    # Empty = any channel (DMs included) the allowed users write in.
     allowed_channels: str = setting(
         "SLACK_ALLOWED_CHANNELS", prompt="Allowed Slack channel IDs (comma-separated)")
+    # Like ALLOWED_USER_IDS, an empty list lets nobody in.
     allowed_users: str = setting(
-        "SLACK_ALLOWED_USERS", prompt="Allowed Slack user IDs (comma-separated)")
+        "SLACK_ALLOWED_USERS", required=True, prompt="Allowed Slack user IDs (comma-separated)")
 
     @property
     def allowed_channels_list(self) -> list[str]:

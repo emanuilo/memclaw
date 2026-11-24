@@ -63,7 +63,7 @@ async def test_sync_or_warn_swallows_a_failing_sync(tmp_config: MemclawConfig):
 
 @pytest.mark.asyncio
 async def test_consolidate_writes_memory_md_with_the_backend_given(tmp_config: MemclawConfig):
-    backend = _OneShot("## Key Facts\n- Alex's birthday is March 3")
+    backend = _OneShot("# Personal Memory\n\n- Alex's birthday is March 3\n\n## Index\n")
     yesterday = date.today() - timedelta(days=1)
     with MemoryVault(tmp_config) as vault:
         # Today's note is still being written; consolidation takes the days before.

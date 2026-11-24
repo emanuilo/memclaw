@@ -2,7 +2,13 @@
 
 On first run, `memclaw` launches a setup wizard: it asks which front-end you want (Telegram, WhatsApp, Slack or Terminal) and which agent backend, prompts only for the keys those need, and saves them to `~/.memclaw/.env`. Run `memclaw configure` anytime to switch platform or backend, or to update keys.
 
-You can also set keys via environment variables or a `.env` in the current directory — these take the usual precedence over the saved config.
+You can also set any of them as environment variables. Where a value comes from, highest first:
+
+1. The environment of the shell that runs `memclaw`.
+2. A `.env` in the folder Memclaw is installed in or any folder above it (python-dotenv searches upward from the installed `memclaw` package, not from the folder you run `memclaw` in). In practice this only matters for a development install from a clone, where the clone's `.env` is picked up.
+3. `~/.memclaw/.env`, written by the wizard.
+
+A `.env` in the current folder is not read; to use one, export its variables into your shell first (e.g. `set -a; . ./.env; set +a`).
 
 ```bash
 memclaw --memory-dir ~/my-vault   # override storage location
@@ -53,11 +59,11 @@ Via [`cursor-sdk`](https://pypi.org/project/cursor-sdk/). Install with `pip inst
 | `CURSOR_EFFORT` | Optional | Cursor reasoning level, for models that have one (set by `/effort`) |
 | `MEMCLAW_MCP_PORT` | For Cursor backend | Local MCP HTTP port (defaults to `17373`) |
 | `TELEGRAM_BOT_TOKEN` | For Telegram bot | Your Telegram bot token |
-| `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs |
+| `ALLOWED_USER_IDS` | For Telegram bot | Comma-separated Telegram user IDs allowed to use the bot (empty = nobody) |
 | `SLACK_BOT_TOKEN` | For Slack bot | Slack bot token (`xoxb-...`) |
 | `SLACK_APP_TOKEN` | For Slack bot | Slack app-level token for Socket Mode (`xapp-...`) |
-| `SLACK_ALLOWED_CHANNELS` | For Slack bot | Comma-separated Slack channel IDs (optional) |
-| `SLACK_ALLOWED_USERS` | For Slack bot | Comma-separated Slack user IDs (optional — restricts who can DM/mention the bot) |
+| `SLACK_ALLOWED_CHANNELS` | Optional | Comma-separated Slack channel IDs the bot answers in (empty = any channel the allowed users write in, DMs included) |
+| `SLACK_ALLOWED_USERS` | For Slack bot | Comma-separated Slack user IDs who can DM/mention the bot (empty = nobody) |
 
 Search and memory tuning (weights, decay, chunk sizes) is listed in the [Memory Architecture](memory-architecture.md#configuration-reference) doc.
 

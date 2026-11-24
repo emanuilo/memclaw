@@ -1,4 +1,4 @@
-"""memclaw.bot.links: URLs in a message, and what a failed summary says."""
+"""memclaw.bot.links: URLs in a message, and what a failed summary gives."""
 from __future__ import annotations
 
 import pytest
@@ -18,7 +18,7 @@ def test_extract_urls():
 
 
 @pytest.mark.asyncio
-async def test_failed_summary_is_reported_as_the_summary():
-    """The error text becomes the summary the agent sees (as before)."""
+async def test_failed_summary_is_no_summary():
+    """None, as for a page that couldn't be fetched, so no link note is added."""
     links = LinkProcessor(_FailingOpenAI())
-    assert await links.summarize("page", "https://a.com") == "Could not summarize: quota"
+    assert await links.summarize("page", "https://a.com") is None

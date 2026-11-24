@@ -73,7 +73,10 @@ class LinkProcessor:
         text = re.sub(r"\s+", " ", text).strip()
         return text[:max_chars]
 
-    async def summarize(self, content: str, url: str) -> str:
+    async def summarize(self, content: str, url: str) -> str | None:
+        """The page's summary, or None if the summary call failed (logged),
+        the same as for a page that couldn't be fetched: the agent gets no
+        summary rather than the error text presented as one."""
         try:
             return await self.openai.chat([
                 {
@@ -85,11 +88,13 @@ class LinkProcessor:
                 },
                 {"role": "user", "content": f"Summarize content from {url}:\n\n{content}"},
             ])
-        except Exception as e:
-            return f"Could not summarize: {e}"
+        except Exception as exc:
+            logger.warning("summarize failed for {url}: {exc}", url=url, exc=exc)
+            return None
 
     async def process_links(self, text: str) -> list[dict]:
-        """Extract URLs, fetch content, summarize. Returns [{url, summary}]."""
+        """Extract URLs, fetch content, summarize. Returns [{url, summary}];
+        the summary is None when the page couldn't be fetched or summarized."""
         urls = self.extract_urls(text)
         results: list[dict] = []
 

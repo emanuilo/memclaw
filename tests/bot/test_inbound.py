@@ -17,10 +17,9 @@ def test_pipeline_never_saves_on_its_own():
 
 
 def test_is_allowed():
-    assert is_allowed("a", ["a", "b"], empty_allows_all=False)
-    assert not is_allowed("c", ["a", "b"], empty_allows_all=True)
-    assert is_allowed("c", [], empty_allows_all=True)
-    assert not is_allowed("c", [], empty_allows_all=False)
+    assert is_allowed("a", ["a", "b"])
+    assert not is_allowed("c", ["a", "b"])
+    assert not is_allowed("c", [])  # an empty allowlist lets nobody in
 
 
 class TestAgentsFile:
