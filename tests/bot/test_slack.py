@@ -42,7 +42,8 @@ def test_start_warns_only_about_an_empty_user_list(monkeypatch, tmp_path, users,
     from memclaw.config import MemclawConfig, SlackSettings
 
     monkeypatch.setattr(slack, "log_to", lambda *a: None)
-    monkeypatch.setattr(slack, "SlackBot", lambda config: MagicMock(start=AsyncMock(), aclose=AsyncMock()))
+    bot = MagicMock(start=AsyncMock(), aclose=AsyncMock())
+    monkeypatch.setattr(slack, "SlackBot", lambda config: bot)
     config = MemclawConfig(memory_dir=tmp_path, slack=SlackSettings(bot_token="xoxb-1", app_token="xapp-1"))
     # Set after construction: an empty value there would be read from the environment.
     config.slack.allowed_users, config.slack.allowed_channels = users, channels
@@ -53,3 +54,4 @@ def test_start_warns_only_about_an_empty_user_list(monkeypatch, tmp_path, users,
     assert ("SLACK_ALLOWED_USERS is empty, so nobody can use the bot" in out) == warned
     assert "SLACK_ALLOWED_CHANNELS" not in out
     assert shown in out
+    bot.aclose.assert_awaited_once()  # the async shutdown ran

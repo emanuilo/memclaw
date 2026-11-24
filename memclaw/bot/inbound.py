@@ -148,7 +148,3 @@ class Inbound:
     async def aclose(self) -> None:
         await self.agent.aclose()
         self.scheduler.close()
-
-    def close(self) -> None:
-        self.scheduler.close()
-        self.agent.close()

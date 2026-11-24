@@ -375,9 +375,6 @@ class TelegramBot:
     async def aclose(self):
         await self.inbound.aclose()
 
-    def close(self):
-        self.inbound.close()
-
 
 Handler = Callable[[TelegramBot, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
 

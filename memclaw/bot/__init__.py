@@ -14,7 +14,9 @@ chat SDK) is only imported when that platform is started.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -97,6 +99,23 @@ def allowlist_label(allowlist: list, env_var: str) -> str:
         f"(or in ~/.memclaw/.env) and restart."
     )
     return "nobody"
+
+
+def run_until_stopped(start: Callable[[], Awaitable[object]], aclose: Callable[[], Awaitable[object]],
+                      name: str) -> None:
+    """Run *start* until it returns or Ctrl+C, then always await *aclose*
+    (the bot's async shutdown: consolidation, the AI backend, reminders)."""
+    async def main() -> None:
+        try:
+            await start()
+        finally:
+            await aclose()
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    console.print(f"\nMemclaw {name} bot shut down.")
 
 
 def log_to(log_file: Path | None = None) -> None:

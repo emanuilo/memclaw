@@ -6,7 +6,6 @@ a message in between is shared with the other platforms (memclaw.bot.inbound).
 
 from __future__ import annotations
 
-import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +17,7 @@ from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
 from ..config import MemclawConfig
-from . import allowlist_label, console, log_to, mask_user_id, require_setting
+from . import allowlist_label, console, log_to, mask_user_id, require_setting, run_until_stopped
 from .inbound import TRANSCRIPTION_FAILED, Inbound, is_allowed, save_media
 
 # Image MIME types we handle
@@ -271,14 +270,4 @@ def run(config: MemclawConfig) -> None:
         f"[green]Starting Memclaw Slack bot (Socket Mode)...[/green]  "
         f"(allowed users: {users}; allowed channels: {channels})"
     )
-
-    async def _run():
-        try:
-            await bot.start()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            await bot.aclose()
-            console.print("\nMemclaw Slack bot shut down.")
-
-    asyncio.run(_run())
+    run_until_stopped(bot.start, bot.aclose, "Slack")
