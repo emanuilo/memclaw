@@ -130,10 +130,7 @@ class ReminderScheduler:
                 raise
             except Exception as exc:
                 logger.exception("Reminder tick failed: {exc}", exc=exc)
-            try:
-                await asyncio.sleep(self.poll_interval)
-            except asyncio.CancelledError:
-                raise
+            await asyncio.sleep(self.poll_interval)
 
     async def _tick(self):
         now = datetime.now()

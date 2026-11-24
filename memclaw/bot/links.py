@@ -30,7 +30,7 @@ class LinkProcessor:
                 if parsed.scheme and parsed.netloc and url not in seen:
                     seen.add(url)
                     cleaned.append(url)
-            except Exception:
+            except ValueError:  # urlparse rejects e.g. a malformed IPv6 host
                 continue
         return cleaned
 
