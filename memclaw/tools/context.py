@@ -60,6 +60,6 @@ async def index_written(ctx: ToolContext, path: Path) -> str:
     try:
         await ctx.index.index_file(path)
     except Exception as exc:
-        logger.warning("Indexing {p} failed, will retry on next sync: {exc}", p=path, exc=exc)
+        logger.exception("Indexing {p} failed, will retry on next sync: {exc}", p=path, exc=exc)
         return " (search indexing is delayed; it will be searchable soon)"
     return ""

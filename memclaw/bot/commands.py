@@ -18,7 +18,7 @@ async def load_models(backend: AgentBackend) -> list:
     try:
         return await backend.list_models()
     except Exception as exc:
-        logger.warning("Could not fetch the model list: {exc}", exc=exc)
+        logger.exception("Could not fetch the model list: {exc}", exc=exc)
         return []
 
 

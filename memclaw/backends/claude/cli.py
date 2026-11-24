@@ -158,7 +158,7 @@ class ClaudeCli:
                 await client.connect()
                 return client
             except Exception as exc:
-                logger.warning(
+                logger.exception(
                     "Could not resume Claude session {id} ({exc}); starting a fresh one",
                     id=resume, exc=exc,
                 )
@@ -176,7 +176,7 @@ class ClaudeCli:
         try:
             await client.disconnect()
         except Exception as exc:
-            logger.warning("Error while disconnecting Claude CLI: {exc}", exc=exc)
+            logger.exception("Error while disconnecting Claude CLI: {exc}", exc=exc)
 
     async def reset(self, session_key: str) -> None:
         session = self._sessions.get(session_key)

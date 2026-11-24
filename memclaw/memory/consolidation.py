@@ -222,7 +222,7 @@ class Consolidator:
         try:
             await self._index.index_file(self.config.memory_file)
         except Exception as exc:
-            logger.warning("Indexing MEMORY.md after consolidation failed: {exc}", exc=exc)
+            logger.exception("Indexing MEMORY.md after consolidation failed: {exc}", exc=exc)
         remaining = len(unconsolidated) - len(included)
         logger.info(
             "Consolidation complete: {n} files → MEMORY.md (through {d}){more}",
