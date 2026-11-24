@@ -1,4 +1,4 @@
-# From code-shape-kit's templates/CODEOWNERS. With "Require review from Code
+# From code-shape-kit's code_shape/templates/CODEOWNERS. With "Require review from Code
 # Owners" on in the branch protection rules, a pull request that changes the
 # code-shape rules can't be merged without the owner's approval: a red gate
 # can't be turned green by loosening them.
