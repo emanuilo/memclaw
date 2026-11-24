@@ -7,8 +7,8 @@ from typing import Any, Mapping
 
 from loguru import logger
 
-from .base import ProgressCallback, TurnResult, report_tool_step
-from .mcp_tools import MCP_SERVER_NAME
+from ..base import ProgressCallback, TurnResult, report_tool_step
+from ..mcp_tools import MCP_SERVER_NAME
 
 
 def normalize_tool_call(name: str, args: Any) -> tuple[str, Any]:
@@ -274,6 +274,68 @@ def _handle_sdk_message(message: Any, *, pending_tools: dict[str, str]) -> str:
     return ""
 
 
+def _is_running_tool_call(message: Any) -> bool:
+    return getattr(message, "type", None) == "tool_call" and str(
+        getattr(message, "status", "")
+    ) == "running"
+
+
+class _RunStream:
+    """What a run's event stream has shown so far: the latest assistant
+    text, the tool calls still running, and the calls reported as steps."""
+
+    def __init__(self, on_tool: ProgressCallback | None) -> None:
+        self.last_text = ""
+        self.pending_tools: dict[str, str] = {}
+        self._reported: set[str] = set()
+        self._on_tool = on_tool
+
+    async def handle(self, message: Any) -> None:
+        turn_text = _handle_sdk_message(message, pending_tools=self.pending_tools)
+        if turn_text:
+            self.last_text = turn_text
+        if _is_running_tool_call(message):
+            await self._report_step(message)
+
+    async def _report_step(self, message: Any) -> None:
+        """Report a running tool call as a progress step, once per call."""
+        name, args = normalize_tool_call(
+            getattr(message, "name", ""), getattr(message, "args", None),
+        )
+        call_id = str(getattr(message, "call_id", "") or len(self._reported))
+        if call_id in self._reported:
+            return
+        self._reported.add(call_id)
+        await report_tool_step(self._on_tool, len(self._reported), name, args)
+
+    def warn_unfinished(self) -> None:
+        for call_id, name in self.pending_tools.items():
+            tool_name, _ = normalize_tool_call(name, {})
+            logger.warning(
+                "Tool {name} started but never completed (call_id={call_id}). "
+                "It may have been blocked by a Cursor hook or failed before MCP execution.",
+                name=tool_name,
+                call_id=call_id or "(unknown)",
+            )
+
+
+def _count_turns(
+    wait_result: Any, *, max_turns: int, usage_tracker: RunUsageTracker | None,
+) -> int:
+    """The run's turn count (at least 1), warning when it passed *max_turns*."""
+    reported_turns = getattr(wait_result, "num_turns", 0) or 0
+    tracked_turns = int(usage_tracker.totals.get("turn_count") or 0) if usage_tracker else 0
+    num_turns = max(tracked_turns, reported_turns, 1)
+    if num_turns > max_turns:
+        logger.warning(
+            "Cursor SDK reported {reported} turns (Memclaw max_turns={max}); "
+            "the SDK does not expose a turn cap — tighten prompts or hooks if needed.",
+            reported=num_turns,
+            max=max_turns,
+        )
+    return num_turns
+
+
 async def collect_run_result(
     run: Any,
     *,
@@ -282,57 +344,21 @@ async def collect_run_result(
     on_tool: ProgressCallback | None = None,
 ) -> TurnResult:
     """Drain the run stream for logging and return a normalized TurnResult."""
-    last_text = ""
-    pending_tools: dict[str, str] = {}
-    reported: set[str] = set()
-
+    stream = _RunStream(on_tool)
     async for event in run.events():
         message = getattr(event, "sdk_message", None)
         if message is not None:
-            turn_text = _handle_sdk_message(message, pending_tools=pending_tools)
-            if turn_text:
-                last_text = turn_text
-            if getattr(message, "type", None) == "tool_call" and str(
-                getattr(message, "status", "")
-            ) == "running":
-                name, args = normalize_tool_call(
-                    getattr(message, "name", ""), getattr(message, "args", None),
-                )
-                call_id = str(getattr(message, "call_id", "") or len(reported))
-                if call_id not in reported:
-                    reported.add(call_id)
-                    await report_tool_step(on_tool, len(reported), name, args)
-
-    for call_id, name in pending_tools.items():
-        tool_name, _ = normalize_tool_call(name, {})
-        logger.warning(
-            "Tool {name} started but never completed (call_id={call_id}). "
-            "It may have been blocked by a Cursor hook or failed before MCP execution.",
-            name=tool_name,
-            call_id=call_id or "(unknown)",
-        )
+            await stream.handle(message)
+    stream.warn_unfinished()
 
     wait_result = await run.wait()
     wait_text = extract_run_text(wait_result)
-    if len(wait_text) > len(last_text):
-        last_text = wait_text
-    elif not last_text:
+    # The streamed text, unless the final result says more.
+    last_text = stream.last_text
+    if len(wait_text) > len(last_text) or not last_text:
         last_text = wait_text
 
-    reported_turns = getattr(wait_result, "num_turns", 0) or 0
-    num_turns = max(
-        int(getattr(usage_tracker, "totals", {}).get("turn_count") or 0) if usage_tracker else 0,
-        reported_turns,
-        1,
-    )
-    if num_turns > max_turns:
-        logger.warning(
-            "Cursor SDK reported {reported} turns (Memclaw max_turns={max}); "
-            "the SDK does not expose a turn cap — tighten prompts or hooks if needed.",
-            reported=num_turns,
-            max=max_turns,
-        )
-
+    num_turns = _count_turns(wait_result, max_turns=max_turns, usage_tracker=usage_tracker)
     result = TurnResult(text=last_text, num_turns=num_turns)
     if usage_tracker is not None:
         usage_tracker.apply_to_result(result)

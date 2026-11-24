@@ -102,13 +102,14 @@ class HttpMcpServer:
         )
 
         listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        handed_over = False
         try:
             listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listen_sock.bind((host, port))
             listen_sock.listen(2048)
             self._port = int(listen_sock.getsockname()[1])
             self._listen_sock = listen_sock
-            listen_sock = None
+            handed_over = True
         except OSError as exc:
             await self.stop()
             raise OSError(
@@ -117,14 +118,14 @@ class HttpMcpServer:
                 f"({exc})"
             ) from exc
         finally:
-            if listen_sock is not None:
+            if not handed_over:
                 listen_sock.close()
 
         uvicorn_config = uvicorn.Config(
             starlette_app,
             host=host,
             port=self._port,
-            fd=self._listen_sock.fileno(),
+            fd=listen_sock.fileno(),
             log_level="warning",
         )
         self._uvicorn_server = uvicorn.Server(uvicorn_config)

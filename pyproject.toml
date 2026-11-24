@@ -148,7 +148,7 @@ ignore_names = [
 "chat platforms" = { terms = ["telegram", "slack", "whatsapp"], home = "memclaw/bot/__init__.py" }
 "voice transcription" = { terms = ["whisper", "transcri"], home = "memclaw/bot/inbound.py" }
 "images" = { terms = ["image_save", "image_search", "platform_image"], home = "memclaw/memory/index.py" }
-"agent tools" = { terms = ["TOOL_DEFINITIONS", "ToolExecutor"], home = "memclaw/tools.py" }
+"agent tools" = { terms = ["TOOL_DEFINITIONS", "ToolExecutor"], home = "memclaw/tools/catalog.py" }
 "conversations / sessions" = { terms = ["SessionStore", "session_key", "reset_session"], home = "memclaw/sessions.py" }
 "setup wizard" = { terms = ["run_setup", "wizard", "needs_setup"], home = "memclaw/setup/wizard.py" }
 "links" = { terms = ["LinkProcessor", "process_links"], home = "memclaw/bot/links.py" }
@@ -286,6 +286,21 @@ layers = [
 exhaustive = true
 
 [[tool.importlinter.contracts]]
+id = "tools-via-package"
+name = "Only memclaw.tools imports its own modules: everyone else uses what memclaw.tools exports (TOOL_DEFINITIONS, ToolExecutor, ToolContext, describe_tool_call)"
+type = "protected"
+protected_modules = [
+    "memclaw.tools.catalog",
+    "memclaw.tools.context",
+    "memclaw.tools.executor",
+    "memclaw.tools.files",
+    "memclaw.tools.images",
+    "memclaw.tools.memory",
+    "memclaw.tools.reminders",
+]
+allowed_importers = ["memclaw.tools"]
+
+[[tool.importlinter.contracts]]
 id = "setup-via-package"
 name = "Only memclaw.setup imports its own modules: everyone else uses what memclaw.setup exports (run_setup, needs_setup, print_logo, run_doctor)"
 type = "protected"
@@ -304,11 +319,9 @@ id = "backend-internals-private"
 name = "Only memclaw.backends itself imports the concrete backends (everyone else goes through memclaw.backends / memclaw.backends.base)"
 type = "protected"
 protected_modules = [
+    # Packages: their modules are protected with them.
     "memclaw.backends.claude",
-    "memclaw.backends.claude_models",
     "memclaw.backends.cursor",
-    "memclaw.backends.cursor_hooks",
-    "memclaw.backends.cursor_sdk_adapter",
     "memclaw.backends.mcp_bridge",
     "memclaw.backends.mcp_tools",
     "memclaw.backends.model_selection",

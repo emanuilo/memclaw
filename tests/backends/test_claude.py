@@ -7,11 +7,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from memclaw.backends import claude as claude_backend
+from memclaw.backends.claude import cli as claude_cli
+from memclaw.backends.claude import configure as claude_configure
+from memclaw.backends.claude import cost as claude_cost
+from memclaw.backends.claude import settings as claude_settings
 from memclaw.backends.base import TurnRequest
 from memclaw.backends.claude import ClaudeAgentBackend
 from memclaw.backends.model_selection import ModelInfo
 from memclaw.config import ClaudeSettings
+
+# Where the backend looks ClaudeSDKClient up.
+_SDK_CLIENT = "memclaw.backends.claude.cli.ClaudeSDKClient"
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -87,19 +93,19 @@ def _model_info(model_id: str, *, effort_levels: list[str] | None = None):
 class TestAuthMode:
     def test_subscription_when_oauth_set(self, claude_config):
         cfg = claude_config(oauth="oauth-token")
-        assert claude_backend._claude_auth_mode(cfg) == "subscription"
+        assert claude_settings.claude_auth_mode(cfg) == "subscription"
 
     def test_api_key_when_only_api_key_set(self, claude_config):
         cfg = claude_config(api_key="sk-ant-test")
-        assert claude_backend._claude_auth_mode(cfg) == "api_key"
+        assert claude_settings.claude_auth_mode(cfg) == "api_key"
 
     def test_oauth_wins_when_both_set(self, claude_config):
         cfg = claude_config(oauth="oauth-token", api_key="sk-ant-test")
-        assert claude_backend._claude_auth_mode(cfg) == "subscription"
+        assert claude_settings.claude_auth_mode(cfg) == "subscription"
 
     def test_empty_when_neither_set(self, claude_config):
         cfg = claude_config()
-        assert claude_backend._claude_auth_mode(cfg) == ""
+        assert claude_settings.claude_auth_mode(cfg) == ""
 
     def test_bills_per_token_only_for_api_key(self, claude_config):
         sub = ClaudeAgentBackend(claude_config(oauth="oauth-token"))
@@ -118,7 +124,7 @@ class TestBuildEnv:
             "CLAUDE_CODE_USE_BEDROCK": "1",
             "PATH": "/usr/bin",
         }, clear=True):
-            env = claude_backend._build_env(cfg)
+            env = claude_settings.build_env(cfg)
 
         # Stale credentials are dropped; the chosen one is set.
         assert "ANTHROPIC_API_KEY" not in env
@@ -131,14 +137,14 @@ class TestBuildEnv:
     def test_injects_api_key_when_configured(self, claude_config):
         cfg = claude_config(api_key="my-api-key")
         with patch.dict(os.environ, {}, clear=True):
-            env = claude_backend._build_env(cfg)
+            env = claude_settings.build_env(cfg)
         assert env["ANTHROPIC_API_KEY"] == "my-api-key"
         assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
 
     def test_no_credential_injected_when_unconfigured(self, claude_config):
         cfg = claude_config()
         with patch.dict(os.environ, {}, clear=True):
-            env = claude_backend._build_env(cfg)
+            env = claude_settings.build_env(cfg)
         assert "ANTHROPIC_API_KEY" not in env
         assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
 
@@ -167,7 +173,7 @@ class TestRunOneShot:
     async def test_returns_text(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         ctx_factory, client = _mock_sdk_client("hello world")
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=ctx_factory):
+        with patch(_SDK_CLIENT, side_effect=ctx_factory):
             text = await backend.run_one_shot(
                 system_prompt="be nice", user_message="hi",
             )
@@ -184,7 +190,7 @@ class TestRunOneShot:
         ctx_factory, _client = _mock_sdk_client(
             "API Error: Connection refused", error="unknown", is_error=True,
         )
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=ctx_factory):
+        with patch(_SDK_CLIENT, side_effect=ctx_factory):
             with pytest.raises(RuntimeError, match="Connection refused"):
                 await backend.run_one_shot(system_prompt="s", user_message="u")
 
@@ -192,18 +198,18 @@ class TestRunOneShot:
     async def test_error_result_raises(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         ctx_factory, _client = _mock_sdk_client("partial", is_error=True)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=ctx_factory):
+        with patch(_SDK_CLIENT, side_effect=ctx_factory):
             with pytest.raises(RuntimeError):
                 await backend.run_one_shot(system_prompt="s", user_message="u")
 
 
 def _executor(cfg):
-    from memclaw.tools import ToolExecutor
+    from memclaw.tools import ToolContext, ToolExecutor
 
-    return ToolExecutor(
+    return ToolExecutor(ToolContext(
         config=cfg, store=MagicMock(), index=MagicMock(),
         search=MagicMock(), found_images=[], platform="test",
-    )
+    ))
 
 
 class _FakeClients:
@@ -249,7 +255,7 @@ class TestRunTurn:
     async def test_returns_turn_result(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(api_key="x"))
         fake = _FakeClients("done", session_id="sess-1")
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             result = await _turn(backend, _executor(backend.config))
 
         assert result.text == "done"
@@ -266,7 +272,7 @@ class TestRunTurn:
         cfg = claude_config(api_key="x")
         cfg.claude.model = "claude-opus-5"
         backend = ClaudeAgentBackend(cfg)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=_FakeClients()):
+        with patch(_SDK_CLIENT, side_effect=_FakeClients()):
             result = await _turn(backend, _executor(cfg))
 
         # 100 input tokens at $5/M + 50 output tokens at $25/M (Opus 5).
@@ -277,7 +283,7 @@ class TestRunTurn:
         backend = ClaudeAgentBackend(claude_config(api_key="x"))
         fake = _FakeClients(costs=[0.01, 0.025])
         executor = _executor(backend.config)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             first = await _turn(backend, executor)
             second = await _turn(backend, executor, resume="sess-1")
 
@@ -290,17 +296,17 @@ class TestRunTurn:
         # token-based estimate is used instead.
         backend = ClaudeAgentBackend(claude_config(api_key="x"))
         fake = _FakeClients(costs=[5.0])
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             result = await _turn(backend, _executor(backend.config), resume="sess-1")
 
-        input_per_m, output_per_m = claude_backend._prices_per_m(backend.model)
+        input_per_m, output_per_m = claude_cost._prices_per_m(backend.model)
         assert result.cost_usd == pytest.approx((100 * input_per_m + 50 * output_per_m) / 1_000_000)
 
     @pytest.mark.asyncio
     async def test_session_options_are_locked_down(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, _executor(backend.config), max_turns=7)
 
         options = fake.options[0]
@@ -309,7 +315,7 @@ class TestRunTurn:
         assert options.tools == []
         assert options.permission_mode == "dontAsk"
         assert options.verbatim_prompts is True
-        assert options.allowed_tools == claude_backend._ALLOWED_TOOLS
+        assert options.allowed_tools == claude_cli.ALLOWED_TOOLS
         assert all(t.startswith("mcp__memclaw__") for t in options.allowed_tools)
         assert options.disallowed_tools == []
         assert options.system_prompt == "sys"
@@ -321,7 +327,7 @@ class TestRunTurn:
     async def test_context_block_is_prefixed_to_the_message(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, _executor(backend.config),
                         context="<context>ctx</context>", message="hi there")
 
@@ -332,7 +338,7 @@ class TestRunTurn:
     async def test_image_turn_streams_context_in_the_text_part(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, _executor(backend.config),
                         context="<context>ctx</context>", message="a photo",
                         image_b64="aGVsbG8=", image_media_type="image/png")
@@ -352,7 +358,7 @@ class TestPersistentSessions:
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
         executor = _executor(backend.config)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, executor, message="one")
             await _turn(backend, executor, message="two", resume="sess-1")
 
@@ -367,7 +373,7 @@ class TestPersistentSessions:
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
         executor = _executor(backend.config)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, executor, key="telegram:1")
             await _turn(backend, executor, key="telegram:2")
         assert len(fake.clients) == 2
@@ -376,7 +382,7 @@ class TestPersistentSessions:
     async def test_resume_id_reaches_the_cli(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, _executor(backend.config), resume="old-session")
         assert fake.options[0].resume == "old-session"
 
@@ -384,7 +390,7 @@ class TestPersistentSessions:
     async def test_failed_resume_falls_back_to_a_fresh_session(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients("fresh", session_id="new-session", fail_resume=True)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             result = await _turn(backend, _executor(backend.config), resume="gone")
 
         assert [o.resume for o in fake.options] == ["gone", None]
@@ -396,7 +402,7 @@ class TestPersistentSessions:
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
         executor = _executor(backend.config)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, executor)
             await backend.reset_session("telegram:1")
             fake.clients[0].disconnect.assert_awaited_once()
@@ -415,7 +421,7 @@ class TestPersistentSessions:
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
         executor = _executor(backend.config)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, executor)
             fake.clients[0].query = AsyncMock(side_effect=RuntimeError("CLI died"))
             with pytest.raises(RuntimeError):
@@ -435,7 +441,7 @@ class TestPersistentSessions:
         backend._models = [_model_info("claude-opus-5", effort_levels=["low", "medium"])]
         fake = _FakeClients()
         executor = _executor(backend.config)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, executor)
             await backend.set_model("claude-opus-5")
             # The live client is only replaced on the next turn.
@@ -452,7 +458,7 @@ class TestPersistentSessions:
         backend = ClaudeAgentBackend(claude_config(oauth="x"))
         fake = _FakeClients()
         executor = _executor(backend.config)
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, executor, key="a")
             await _turn(backend, executor, key="b")
         await backend.on_agent_shutdown()
@@ -485,7 +491,7 @@ class TestModelSelection:
     async def test_list_models_uses_the_configured_credential(self, claude_config):
         backend = ClaudeAgentBackend(claude_config(oauth="tok"))
         fetch = AsyncMock(return_value=self.MODELS)
-        with patch("memclaw.backends.claude.fetch_models", fetch):
+        with patch("memclaw.backends.claude.backend.fetch_models", fetch):
             assert await backend.list_models() == self.MODELS
         fetch.assert_awaited_once_with("subscription", "tok")
 
@@ -539,7 +545,7 @@ class TestModelSelection:
         is fixed by hand, so nothing is switched or saved."""
         backend = self._backend(claude_config)
         before = backend.model, backend.effort
-        with patch("memclaw.backends.claude.fetch_models",
+        with patch("memclaw.backends.claude.backend.fetch_models",
                    AsyncMock(side_effect=httpx.ConnectError("offline"))):
             with pytest.raises(ValueError, match="Couldn't load the model list"):
                 await backend.set_model("claude-opsu-5")
@@ -582,12 +588,12 @@ class TestPrices:
         ("claude-haiku-4-5-20251001", (1.0, 5.0)),  # dated snapshot
     ])
     def test_known_models(self, model, prices):
-        assert claude_backend._prices_per_m(model) == prices
+        assert claude_cost._prices_per_m(model) == prices
 
     @pytest.mark.parametrize("model", ["opus", "claude-future-9"])
     def test_unknown_model_uses_the_default_models_price(self, model):
-        assert claude_backend._prices_per_m(model) == claude_backend._prices_per_m(
-            claude_backend._DEFAULT_MODEL,
+        assert claude_cost._prices_per_m(model) == claude_cost._prices_per_m(
+            claude_settings.DEFAULT_MODEL,
         )
 
 
@@ -598,59 +604,59 @@ class TestPrices:
 class TestResolveModel:
     def test_falls_back_to_default_when_unset(self, claude_config):
         cfg = claude_config(oauth="x")
-        assert claude_backend._resolve_model(cfg) == claude_backend._DEFAULT_MODEL
+        assert claude_settings.resolve_model(cfg) == claude_settings.DEFAULT_MODEL
 
     def test_configured_model_wins(self, claude_config):
         cfg = claude_config(oauth="x")
         cfg.claude.model = "claude-opus-5"
-        assert claude_backend._resolve_model(cfg) == "claude-opus-5"
+        assert claude_settings.resolve_model(cfg) == "claude-opus-5"
 
     def test_blank_value_falls_back(self, claude_config):
         cfg = claude_config(oauth="x")
         cfg.claude.model = "   "
-        assert claude_backend._resolve_model(cfg) == claude_backend._DEFAULT_MODEL
+        assert claude_settings.resolve_model(cfg) == claude_settings.DEFAULT_MODEL
 
 
 class TestResolveEffort:
     def test_unset_gives_the_default_on_the_default_model(self, claude_config):
         cfg = claude_config(oauth="x")
-        assert claude_backend._resolve_effort(cfg) == claude_backend._DEFAULT_EFFORT == "medium"
+        assert claude_settings.resolve_effort(cfg) == claude_settings.DEFAULT_EFFORT == "medium"
 
     def test_unset_gives_none_on_another_model(self, claude_config):
         """Another model may not take an effort at all, so leave it to the model."""
         cfg = claude_config(oauth="x")
         cfg.claude.model = "claude-haiku-4-5"
-        assert claude_backend._resolve_effort(cfg) is None
+        assert claude_settings.resolve_effort(cfg) is None
 
     def test_known_level_passes_through(self, claude_config):
         cfg = claude_config(oauth="x")
         cfg.claude.effort = "xhigh"
-        assert claude_backend._resolve_effort(cfg) == "xhigh"
+        assert claude_settings.resolve_effort(cfg) == "xhigh"
 
     def test_case_and_padding_are_normalised(self, claude_config):
         cfg = claude_config(oauth="x")
         cfg.claude.effort = "  HIGH  "
-        assert claude_backend._resolve_effort(cfg) == "high"
+        assert claude_settings.resolve_effort(cfg) == "high"
 
     def test_level_the_sdk_does_not_know_is_ignored(self, claude_config):
         """A typo in ~/.memclaw/.env must not reach the CLI as an argument."""
         cfg = claude_config(oauth="x")
         cfg.claude.model = "claude-opus-5"
         cfg.claude.effort = "ultra"
-        assert claude_backend._resolve_effort(cfg) is None
+        assert claude_settings.resolve_effort(cfg) is None
 
 
 class TestConsolidationEffort:
     def test_other_model_without_effort_gets_none(self, claude_config):
         cfg = claude_config(oauth="x")
         cfg.claude.consolidation_model = "claude-haiku-4-5"
-        assert claude_backend._resolve_consolidation(cfg) == ("claude-haiku-4-5", None)
+        assert claude_settings.resolve_consolidation(cfg) == ("claude-haiku-4-5", None)
 
     def test_configured_effort_is_used_on_any_model(self, claude_config):
         cfg = claude_config(oauth="x")
         cfg.claude.consolidation_model = "claude-sonnet-5-5"
         cfg.claude.consolidation_effort = "high"
-        assert claude_backend._resolve_consolidation(cfg) == ("claude-sonnet-5-5", "high")
+        assert claude_settings.resolve_consolidation(cfg) == ("claude-sonnet-5-5", "high")
 
 
 class TestStatusRows:
@@ -687,7 +693,7 @@ class TestOptionsCarryModelAndEffort:
             seen["options"] = options
             return ctx_factory()
 
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=_capture):
+        with patch(_SDK_CLIENT, side_effect=_capture):
             await backend.run_one_shot(system_prompt="s", user_message="u")
 
         assert seen["options"].model == "claude-opus-5"
@@ -707,7 +713,7 @@ class TestOptionsCarryModelAndEffort:
             seen["options"] = options
             return ctx_factory()
 
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=_capture):
+        with patch(_SDK_CLIENT, side_effect=_capture):
             await backend.run_one_shot(system_prompt="s", user_message="u")
 
         assert seen["options"].model == "claude-opus-5-5"
@@ -724,7 +730,7 @@ class TestOptionsCarryModelAndEffort:
             seen["options"] = options
             return ctx_factory()
 
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=_capture):
+        with patch(_SDK_CLIENT, side_effect=_capture):
             await backend.run_one_shot(system_prompt="s", user_message="u")
 
         options = seen["options"]
@@ -754,9 +760,9 @@ def _ask(models, *, existing=None, answers=("1",),
         prompts.append({"text": text, **kwargs})
         return answers[len(prompts) - 1]
 
-    with patch("memclaw.backends.claude.fetch_models", fetch), \
+    with patch("memclaw.backends.claude.configure.fetch_models", fetch), \
             patch("memclaw.terminal_input.Prompt.ask", side_effect=_prompt):
-        values, drops = ClaudeAgentBackend._ask_model_and_effort(
+        values, drops = claude_configure.ask_model_and_effort(
             console, existing or {}, auth_mode="api_key", credential="sk-ant-test",
             settings=ClaudeSettings(),   # loads CLAUDE_MODEL / CLAUDE_EFFORT from the shell
         )
@@ -900,8 +906,8 @@ def _wizard(*, answers, credential="", existing=None, models=None,
 
     with patch("memclaw.terminal_input.Prompt.ask",
                side_effect=lambda *a, **k: next(answer_iter)), \
-            patch("memclaw.backends.claude.masked_input", return_value=credential), \
-            patch("memclaw.backends.claude.fetch_models", fetch):
+            patch("memclaw.backends.claude.configure.masked_input", return_value=credential), \
+            patch("memclaw.backends.claude.configure.fetch_models", fetch):
         values, drops = ClaudeAgentBackend.wizard_setup(
             MagicMock(), existing or {}, config=MagicMock(claude=ClaudeSettings()),
         )
@@ -968,7 +974,7 @@ class TestToolSteps:
         async def on_tool(step):
             steps.append(step)
 
-        with patch("memclaw.backends.claude.ClaudeSDKClient", side_effect=fake):
+        with patch(_SDK_CLIENT, side_effect=fake):
             await _turn(backend, _executor(backend.config))  # builds the client
             client = fake.clients[0]
             original = client.receive_response.side_effect
@@ -1001,3 +1007,135 @@ class TestToolSteps:
             raise RuntimeError("telegram down")
 
         await report_tool_step(broken, 1, "memory_save", {})  # no exception
+
+
+class _ScriptedClient:
+    """A connected client that answers every query with *messages*."""
+
+    def __init__(self, messages):
+        self.messages = messages
+        self.queries: list = []
+
+    async def connect(self):
+        pass
+
+    async def disconnect(self):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def query(self, prompt):
+        self.queries.append(prompt)
+
+    def receive_response(self):
+        async def _gen():
+            for msg in self.messages:
+                yield msg
+        return _gen()
+
+
+def _result_message(**kw):
+    from claude_agent_sdk import ResultMessage
+
+    fields = dict(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
+                  num_turns=3, session_id="s-9", total_cost_usd=None, usage=None, result=None)
+    fields.update(kw)
+    return ResultMessage(**fields)
+
+
+def _logged():
+    from loguru import logger
+
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(f"{m.record['level'].name} {m.record['message']}"),
+                      filter=lambda r: r["level"].name != "DEBUG")
+    return lines, lambda: logger.remove(sink)
+
+
+class TestReplyReading:
+    """How the CLI's messages become a turn's result or a one-shot answer."""
+
+    @pytest.mark.asyncio
+    async def test_turn_reply(self, claude_config):
+        from claude_agent_sdk import AssistantMessage, TextBlock, ToolUseBlock
+
+        messages = [
+            AssistantMessage(content=[
+                TextBlock(text="Let me "), TextBlock(text="check."),
+                ToolUseBlock(id="1", name="mcp__memclaw__file_read", input={"file_path": "x" * 400}),
+                ToolUseBlock(id="2", name="OtherTool", input={}),
+            ], model="m"),
+            AssistantMessage(content=[], model="m"),
+            _result_message(
+                total_cost_usd=0.5, result="the result text",
+                usage={"input_tokens": 7, "output_tokens": None, "cache_read_input_tokens": 3},
+            ),
+        ]
+        client = _ScriptedClient(messages)
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
+        steps = []
+
+        async def on_tool(step):
+            steps.append((step.index, step.name, step.summary))
+
+        lines, stop = _logged()
+        try:
+            with patch(_SDK_CLIENT, return_value=client):
+                result = await _turn(backend, _executor(backend.config), on_tool=on_tool)
+        finally:
+            stop()
+        assert client.queries == ["<context>now</context>\n\nhello"]
+        assert (result.text, result.session_id, result.num_turns) == ("Let me check.", "s-9", 3)
+        assert (result.input_tokens, result.output_tokens) == (7, 0)
+        assert (result.cache_read_tokens, result.cache_creation_tokens) == (3, 0)
+        assert result.cost_usd == 0.5
+        assert steps == [(1, "file_read", "Reading: " + "x" * 79 + "…"), (2, "OtherTool", "OtherTool")]
+        args = ('{"file_path": "' + "x" * 400)[:300] + "..."
+        assert lines == [f"INFO Tool call: file_read({args})", "INFO Tool call: OtherTool({})"]
+
+    @pytest.mark.asyncio
+    async def test_turn_reply_falls_back_to_the_result_text(self, claude_config):
+        client = _ScriptedClient([_result_message(session_id="", result="only here")])
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
+        with patch(_SDK_CLIENT, return_value=client):
+            result = await _turn(backend, _executor(backend.config))
+        assert (result.text, result.session_id, result.input_tokens) == ("only here", None, 0)
+
+    @pytest.mark.asyncio
+    async def test_one_shot_answer(self, claude_config):
+        from claude_agent_sdk import AssistantMessage, TextBlock
+
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
+        client = _ScriptedClient([
+            AssistantMessage(content=[TextBlock(text="a")], model="m"),
+            AssistantMessage(content=[TextBlock(text="b")], model="m"),
+            _result_message(result="ignored"),
+        ])
+        with patch(_SDK_CLIENT, return_value=client):
+            assert await backend.run_one_shot(system_prompt="s", user_message="u") == "ab"
+        client = _ScriptedClient([_result_message(result="from result")])
+        with patch(_SDK_CLIENT, return_value=client):
+            assert await backend.run_one_shot(system_prompt="s", user_message="u") == "from result"
+
+    @pytest.mark.asyncio
+    async def test_one_shot_errors(self, claude_config):
+        from claude_agent_sdk import AssistantMessage, TextBlock
+
+        backend = ClaudeAgentBackend(claude_config(oauth="x"))
+        client = _ScriptedClient([
+            AssistantMessage(content=[TextBlock(text="E" * 300)], model="m", error="rate_limit"),
+            _result_message(is_error=True, subtype="error_during_execution"),
+        ])
+        with patch(_SDK_CLIENT, return_value=client):
+            with pytest.raises(RuntimeError) as err:
+                await backend.run_one_shot(system_prompt="s", user_message="u")
+        assert str(err.value) == f"Claude one-shot failed (rate_limit): {'E' * 200}"
+        client = _ScriptedClient([_result_message(is_error=True, subtype="error_max_turns")])
+        with patch(_SDK_CLIENT, return_value=client):
+            with pytest.raises(RuntimeError) as err:
+                await backend.run_one_shot(system_prompt="s", user_message="u")
+        assert str(err.value) == "Claude one-shot failed (error_max_turns): "

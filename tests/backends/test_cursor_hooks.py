@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from memclaw.backends.cursor_hooks import (
+from memclaw.backends.cursor.hooks import (
     cursor_hook_script_path,
     cursor_hooks_installed,
     cursor_hooks_json_path,

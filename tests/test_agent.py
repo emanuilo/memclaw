@@ -619,7 +619,7 @@ class TestConcurrentChats:
         async def run_turn(request, tool_executor):
             key = request.session_key
             await asyncio.sleep(0.05)  # the other chat's message arrives meanwhile
-            seen[key] = tool_executor.chat_id
+            seen[key] = tool_executor.context.chat_id
             return TurnResult(text="ok", session_id=f"s-{key}")
 
         fake_backend.run_turn = run_turn

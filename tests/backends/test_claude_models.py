@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from memclaw.backends import claude_models
-from memclaw.backends.claude_models import fetch_models
+from memclaw.backends.claude import models as claude_models
+from memclaw.backends.claude.models import fetch_models
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ def _mock_httpx(payload: dict | None = None, *, calls: list | None = None,
     ctx.__aenter__ = AsyncMock(return_value=client)
     ctx.__aexit__ = AsyncMock(return_value=None)
 
-    return patch("memclaw.backends.claude_models.httpx.AsyncClient",
+    return patch("memclaw.backends.claude.models.httpx.AsyncClient",
                  MagicMock(return_value=ctx))
 
 
@@ -247,3 +247,12 @@ class TestNoCache:
 
         assert len(calls) == 2
         assert calls[1]["headers"]["Authorization"] == "Bearer second-token"
+
+
+class TestSdkEffort:
+    def test_known_levels_pass_through(self):
+        for level in claude_models.SDK_EFFORT_LEVELS:
+            assert claude_models.sdk_effort(level) == level
+
+    def test_none_stays_none(self):
+        assert claude_models.sdk_effort(None) is None
